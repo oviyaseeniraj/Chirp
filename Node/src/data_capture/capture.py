@@ -3,7 +3,7 @@ import time
 import numpy as np
 import scipy.io as sio
 import logging
-from ..radar.daq import DataAcquisition
+from ..radar.daq_new import DataAcquisition
 from ..radar.processing.rdm import RangeDoppler
 from ..radar import config
 
@@ -92,7 +92,7 @@ class CaptureSession:
                        For raw, we might want to just stack them.
         """
         import re
-        
+        rdm = RangeDoppler()
         # Find all .npy files
         npy_files = [f for f in os.listdir(input_dir) if f.endswith(".npy")]
         
@@ -125,13 +125,15 @@ class CaptureSession:
             data = np.load(file_path)
             
             if data_type == "raw":
-                # Raw data from the radar is interleaved IQ, usually uint16 in the buffer
-                # but physically represents signed values. View as int16.
-                data_int = data.view(np.int16)
-                # Convert to complex: I + jQ (interleaved)
-                # We use float32 for the complex components.
-                data = data_int[0::2].astype(np.float32) + 1j * data_int[1::2].astype(np.float32)
-            
+                # # Raw data from the radar is interleaved IQ, usually uint16 in the buffer
+                # # but physically represents signed values. View as int16.
+                # # Convert to complex: I + jQ (interleaved)
+                # # We use float32 for the complex components.
+                # data = data_int[0::2].astype(np.float32) + 1j * data_int[1::2].astype(np.float32)
+                rdm.set_buffer(np.array(frame_data, dtype=np.float32))
+                cube = rdm.shape_cube_vect()  
+                data = data.reshape((config.TX, config.RX, config.SLOW_TIME, config.FAST_TIME))
+                data = data.transpose(2,1,0,3)
             # TFG.py Re-shaping logic check:
             # TFG.py: 
             #   frame_data = daq.process_v6().copy()

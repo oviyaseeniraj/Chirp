@@ -1,0 +1,4 @@
+aiomqtt
+asyncpg
+typing-extensions
+uuid

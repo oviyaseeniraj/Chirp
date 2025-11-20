@@ -245,6 +245,7 @@ python3 /home/fusionsense/calibrate.py /path/to/data_directory
 
 ## Quick Reference - Git-Based Workflow
 
+### Single Jetson Testing:
 ```bash
 # 1. On Jetson: Update code from git
 ssh fusionsense@169.231.215.235
@@ -268,4 +269,35 @@ make clean && make
 scp -r fusionsense@169.231.215.235:~/Documents/Chirp/Node/test/non_thread/frame_data/calibration_output ~/Desktop/radar_results
 open ~/Desktop/radar_results
 ```
+
+### Multi-Radar Calibration (Automated):
+
+**Step 1: Start data collection on both Jetsons**
+```bash
+# Terminal 1 - Patrick (169.231.215.235)
+ssh fusionsense@169.231.215.235
+cd ~/Documents/Chirp/Node/test/non_thread
+rm -f frame_data/*.json && ./test 100
+
+# Terminal 2 - Mike (169.231.22.160) - start simultaneously
+ssh fusionsense@169.231.22.160
+cd ~/Documents/Chirp/Node/test/non_thread
+rm -f frame_data/*.json && ./test 100
+```
+
+**Step 2: After both finish, run the automated script on your Mac**
+```bash
+# One command does everything!
+cd /Users/oseeniraj/Chirp/Self-Calibration/Simulation/Single-Target
+./collect_radar_calibration.sh
+```
+
+The script automatically:
+- ✅ Copies Patrick's data from 169.231.215.235
+- ✅ Copies Mike's data from 169.231.22.160
+- ✅ Verifies both datasets
+- ✅ Combines and uploads to Patrick
+- ✅ Runs calibration remotely
+- ✅ Downloads results with timestamp
+- ✅ Opens results folder
 

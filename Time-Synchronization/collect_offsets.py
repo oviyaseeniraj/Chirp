@@ -123,15 +123,24 @@ def collect_samples(num_samples, interval_s, output_file):
         if i < num_samples - 1:
             time.sleep(interval_s)
     
+    # Get the directory where this script is located
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    # Build path to data/jsons relative to script location
+    jsons_dir = os.path.join(script_dir, 'data', 'jsons')
+    
+    # Extract just the filename and put it in the jsons directory
+    base_name = os.path.basename(output_file)
+    full_output_path = os.path.join(jsons_dir, base_name)
+
     # Save to file
-    with open(output_file, 'w') as f:
+    with open(full_output_path, 'w') as f:
         json.dump(samples, f, indent=2)
     
     print()
     print(f"✓ Collected {len(samples)} samples")
-    print(f"✓ Saved to {output_file}")
+    print(f"✓ Saved to {full_output_path}")
     print()
-    print("Run analysis: python3 analyze_offsets.py " + output_file)
+    print("Run analysis: python3 analyze_offsets.py " + full_output_path)
 
 if __name__ == '__main__':
     import sys

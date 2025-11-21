@@ -8,6 +8,8 @@ import json
 import numpy as np
 import sys
 from scipy import stats
+from scipy.stats import gaussian_kde
+import os
 
 def load_data(filename):
     """Load JSON data."""
@@ -195,10 +197,11 @@ def analyze_offsets(filename):
     
     return data, offset_us, filtered_us
 
-def plot_data(filename):
+def plot_histogram(filename):
     """Generate plots if matplotlib available."""
     try:
         import matplotlib.pyplot as plt
+        import os
     except ImportError:
         print("Matplotlib not available. Skipping plots.")
         return
@@ -247,7 +250,94 @@ def plot_data(filename):
     
     plt.tight_layout()
     
-    plot_file = filename.replace('.json', '_plot.png')
+    # Get the directory where this script is located
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    # Build path to data/histograms relative to script location
+    histograms_dir = os.path.join(script_dir, 'data', 'histograms')
+    
+    base_name = os.path.basename(filename).replace('.json', '_histogram.png')
+    plot_file = os.path.join(histograms_dir, base_name)
+    plt.savefig(plot_file, dpi=300)
+    print(f"Plots saved to: {plot_file}")
+    
+    plt.show()
+
+def plot_pdf(filename):
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:
+            print("Matplotlib not available. Skipping plots.")
+            return
+        
+    data, offset_us, filtered_us = analyze_offsets(filename)
+    
+    fig, axes = plt.subplots(2, 2, figsize=(12, 8))
+
+    # Time series (unchanged)
+    ax = axes[0, 0]
+    ax.plot(offset_us, marker='o', markersize=2, linestyle='-', linewidth=0.5)
+    ax.axhline(np.mean(offset_us), color='r', linestyle='--', label=f'Mean: {np.mean(offset_us):.1f} μs')
+    ax.axhline(np.median(offset_us), color='g', linestyle='--', label=f'Median: {np.median(offset_us):.1f} μs')
+    ax.set_xlabel('Sample Number')
+    ax.set_ylabel('Offset (μs)')
+    ax.set_title('Clock Offset Over Time')
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    
+    # PDF using KDE (MODIFIED)
+    ax = axes[0, 1]
+    # Create KDE
+    kde = gaussian_kde(offset_us)
+    # Create smooth x-axis range
+    x_range = np.linspace(offset_us.min(), offset_us.max(), 1000)
+    # Evaluate PDF
+    pdf_values = kde(x_range)
+    
+    # Plot PDF
+    ax.plot(x_range, pdf_values, linewidth=2, color='blue', label='PDF (KDE)')
+    ax.fill_between(x_range, pdf_values, alpha=0.3)
+    ax.axvline(np.mean(offset_us), color='r', linestyle='--', linewidth=2, label=f'Mean')
+    ax.axvline(np.median(offset_us), color='g', linestyle='--', linewidth=2, label=f'Median')
+    ax.set_xlabel('Offset (μs)')
+    ax.set_ylabel('Probability Density')
+    ax.set_title('Offset Probability Density Function')
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    
+    # Q-Q plot (unchanged)
+    ax = axes[1, 0]
+    stats.probplot(offset_us, dist="norm", plot=ax)
+    ax.set_title('Q-Q Plot (Normality Test)')
+    ax.grid(True, alpha=0.3)
+    
+    # Filtered PDF (MODIFIED)
+    ax = axes[1, 1]
+    # Create KDE for filtered data
+    kde_filtered = gaussian_kde(filtered_us)
+    # Create smooth x-axis range
+    x_range_filtered = np.linspace(filtered_us.min(), filtered_us.max(), 1000)
+    # Evaluate PDF
+    pdf_filtered = kde_filtered(x_range_filtered)
+    
+    # Plot PDF
+    ax.plot(x_range_filtered, pdf_filtered, linewidth=2, color='green', label='PDF (KDE)')
+    ax.fill_between(x_range_filtered, pdf_filtered, alpha=0.3, color='green')
+    ax.axvline(np.mean(filtered_us), color='r', linestyle='--', linewidth=2, label=f'Mean: {np.mean(filtered_us):.1f} μs')
+    ax.set_xlabel('Offset (μs)')
+    ax.set_ylabel('Probability Density')
+    ax.set_title('Filtered Offset PDF (Outliers Removed)')
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    
+    # Get the directory where this script is located
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    # Build path to data/histograms relative to script location
+    pdfs_dir = os.path.join(script_dir, 'data', 'pdfs')
+
+    base_name = os.path.basename(filename).replace('.json', '_pdf.png')
+    plot_file = os.path.join(pdfs_dir, base_name)
     plt.savefig(plot_file, dpi=300)
     print(f"Plots saved to: {plot_file}")
     
@@ -261,7 +351,8 @@ if __name__ == '__main__':
     filename = sys.argv[1]
     
     if '--plot' in sys.argv:
-        plot_data(filename)
+        plot_histogram(filename)
+        plot_pdf(filename)
     else:
         analyze_offsets(filename)
 

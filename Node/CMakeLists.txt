@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.28)
 project(ChirpNode CXX)
 
 set(CMAKE_CXX_STANDARD  20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(OpenCV 4 REQUIRED)
 
@@ -27,6 +28,7 @@ add_executable(test_data_acquisition
     test/DataAcquisition/test_data_acquisition.cpp
 )
 
+
 # target_include_directories(test_data_acquisition PRIVATE
 #     include
 # )
@@ -40,6 +42,14 @@ add_executable(non_thread
 )
 
 target_link_libraries(non_thread
+    fusionsense
+)
+
+add_executable(playground
+    test/Playground/playground.cpp
+)
+
+target_link_libraries(playground
     fusionsense
 )
 

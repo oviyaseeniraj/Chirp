@@ -21,8 +21,8 @@ apt-get install -y chrony
 
 echo ""
 echo "[2/4] Which Jetson is this?"
-echo "  1) Master/Server (169.231.16.241)"
-echo "  2) Slave/Client (169.231.209.82)"
+echo "  1) Patrick - Master/Server (169.231.215.235)"
+echo "  2) Mike - Slave/Client (169.231.22.160)"
 read -p "Enter choice [1-2]: " choice
 
 if [ "$choice" = "1" ]; then
@@ -74,8 +74,8 @@ EOF
     echo ""
     
 elif [ "$choice" = "2" ]; then
-    read -p "[3/4] Enter Master IP [169.231.16.241]: " master_ip
-    master_ip=${master_ip:-169.231.16.241}
+    read -p "[3/4] Enter Patrick's Master IP [169.231.215.235]: " master_ip
+    master_ip=${master_ip:-169.231.215.235}
     
     echo ""
     echo "[4/4] Configuring as NTP Client..."
@@ -137,4 +137,55 @@ echo "Monitoring commands:"
 echo "  chronyc sources    - Show time sources"
 echo "  chronyc tracking   - Show sync status and offset"
 echo "  chronyc sourcestats - Show source statistics"
+echo ""
+
+# Compile radar test executable
+echo "=========================================="
+echo "Compiling Radar Test Executable"
+echo "=========================================="
+echo ""
+
+RADAR_DIR="/home/fusionsense/Documents/Chirp/Node/test/non_thread"
+
+if [ -d "$RADAR_DIR" ]; then
+    echo "Found radar directory at: $RADAR_DIR"
+    echo "Compiling test executable..."
+    
+    cd $RADAR_DIR
+    make clean
+    make
+    
+    if [ -f "./test" ]; then
+        echo "✓ Test executable compiled successfully!"
+        echo ""
+        echo "Test executable location: $RADAR_DIR/test"
+    else
+        echo "✗ Compilation failed. Check errors above."
+    fi
+else
+    echo "✗ Radar directory not found at: $RADAR_DIR"
+    echo "  Clone the repo first:"
+    echo "    cd ~/Documents"
+    echo "    git clone https://github.com/oviyaseeniraj/Chirp.git"
+    echo "    cd Chirp && git checkout real-time"
+fi
+
+echo ""
+echo "=========================================="
+echo "Quick Setup Guide:"
+echo "=========================================="
+echo ""
+echo "On Patrick's Jetson (169.231.215.235):"
+echo "  sudo ./CHRONY_SETUP.sh"
+echo "  Select: 1 (Master/Server)"
+echo ""
+echo "On Mike's Jetson (169.231.22.160):"
+echo "  sudo ./CHRONY_SETUP.sh"
+echo "  Select: 2 (Slave/Client)"
+echo "  Press Enter to use Patrick as master"
+echo ""
+echo "After both are configured, verify sync:"
+echo "  On Mike: chronyc tracking"
+echo "  Look for offset < 1ms"
+echo ""
 

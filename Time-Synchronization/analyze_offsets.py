@@ -187,12 +187,16 @@ def analyze_offsets(filename):
         'mean_frequency_ppm': float(np.mean(frequency_ppm)),
         'std_frequency_ppm': float(np.std(frequency_ppm)),
     }
-    
-    summary_file = filename.replace('.json', '_summary.json')
-    with open(summary_file, 'w') as f:
+
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    jsons_dir = os.path.join(script_dir, 'data', 'jsons')
+    base_name = os.path.basename(filename).replace('.json', '_summary.json')
+    full_output_path = os.path.join(jsons_dir, base_name)
+
+    with open(full_output_path, 'w') as f:
         json.dump(summary, f, indent=2)
     
-    print(f"Summary saved to: {summary_file}")
+    print(f"Summary saved to: {full_output_path}")
     print()
     
     return data, offset_us, filtered_us

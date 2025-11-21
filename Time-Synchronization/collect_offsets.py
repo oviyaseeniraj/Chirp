@@ -8,6 +8,7 @@ import subprocess
 import time
 import json
 from datetime import datetime
+import os
 
 def parse_chrony_tracking():
     """Parse chronyc tracking output and extract key metrics."""

@@ -26,7 +26,7 @@ using namespace rapidjson;
 
 #define IQ_BYTES 2 
 
-#define IP				"169.231.216.203" // server IP
+#define IP				"169.231.215.235" // server IP
 #define SERVER_PORT		1210 
 #define MAXLINE 		1024
 
@@ -41,7 +41,7 @@ class JSON_TCP {
 	FILE* fp;
 	FILE* fp_in;
 	string fname;
-	const char *path = "/home/fusionsense/repos/AVR/RadarPipeline/test/non_thread/frame_data";
+	const char *path = "/home/fusionsense/Documents/Chirp/Node/test/non_thread/frame_data";
 	char buffer[MAXLINE];
 	int n;
 	const char *exit_msg = "Patrick Demo Complete";
@@ -69,6 +69,7 @@ class JSON_TCP {
 		    d.Accept(writer);
 
 		    fclose(fp);
+		    printf("Frame %d saved: Angle=%.1f°, Range=%.2fm\n", frame, angle, range);
 		}
 
 		void send_file_data(string fname, float angle, float range, auto duration) {
@@ -137,20 +138,27 @@ class JSON_TCP {
 		    auto duration_udp_process = duration_cast<milliseconds>(stop - start_time);		    
 		    
 			fname = format("%s/%s_Frame%d.json", path, node, frame);
-		    send_file_data(fname, angle, range, duration_udp_process); // Send file to server
-		    printf("\nFrame Data Sent To Server\n\n");
+		    write_json(fname, angle, range, duration_udp_process); // Write JSON file locally
 		    
 		    frame++;
 		}
 		
-		void end_stream() {
-			memset(&buffer, 0, sizeof(buffer));
-			strcpy(buffer, exit_msg);
-			n = sendto(clientSd, buffer, MAXLINE, 0, (struct sockaddr*)&servaddr, sizeof(servaddr));
-			close(clientSd);
-			printf("Demo Complete!\n");
-			printf("Connection Closed...\n\n");
+	void end_stream() {
+		printf("\n=== Data Collection Complete ===\n");
+		printf("Saved %d frames to: %s\n\n", frame - 1, path);
+	}
+	
+	void run_calibration() {
+		printf("\n=== Running Calibration ===\n");
+		// Call Python calibration script with data directory
+		string cmd = format("python3 /home/fusionsense/calibrate.py %s", path);
+		int ret = system(cmd.c_str());
+		if (ret == 0) {
+			printf("Calibration complete! Check %s/calibration_output/\n", path);
+		} else {
+			printf("Calibration failed (exit code: %d)\n", ret);
 		}
+	}
 };
 
 // Base class used for other modules

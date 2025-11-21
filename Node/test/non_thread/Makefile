@@ -2,9 +2,9 @@ CXX = g++
 CXXFLAGS = -std=c++14 -Wall -Wextra -pedantic
 LDFLAGS = -lfftw3f -pthread -lm `pkg-config --cflags --libs opencv4`
 
-SRCS = test_mod.cpp
+SRCS = test.cpp
 OBJS = $(SRCS:.cpp=.o)
-EXEC = test_mod
+EXEC = test
 
 .PHONY: all clean
 

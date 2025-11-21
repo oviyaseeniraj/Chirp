@@ -40,7 +40,7 @@ int main(int argc, char const *argv[])
         daq.process();
         rdm.process();
         std::cout << "Frame " << i << " Range: " << *range_visualizeptr << std::endl;
-        std::cout << "Frame " << i << "Angle: " << *ang_visualizeptr << std::endl;
+        std::cout << "Frame " << i << " Angle: " << *ang_visualizeptr << std::endl;
         i++;
     }
     return 0;

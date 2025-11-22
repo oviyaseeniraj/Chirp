@@ -1,0 +1,13 @@
+FROM python:3.10-slim
+
+WORKDIR /app
+
+# Install dependencies
+RUN pip install --no-cache-dir asyncpg numpy scipy scikit-learn
+
+# Copy calibration processor
+COPY services/calibration_processor.py .
+
+# Run the processor
+CMD ["python3", "calibration_processor.py"]
+

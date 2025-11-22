@@ -69,6 +69,26 @@ services:
       POSTGRES_DB: mqttdata
     restart: always
 
+  calibration_processor:
+    build: 
+      context: .
+      dockerfile: Dockerfile.calibration
+    container_name: calibration_processor
+    depends_on:
+      - nanomq
+      - db
+      - ingest
+    environment:
+      PYTHONUNBUFFERED: 1              # Disable Python output buffering for logs
+      POSTGRES_HOST: db
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: mqttdata
+      CALIBRATION_WINDOW: 50           # Use last N frames for calibration
+      CHECK_INTERVAL: 2.0              # Check for new frames every N seconds
+      MIN_RADARS: 2                    # Minimum number of radars required
+    restart: always
+
   # pgadmin:
   #   image: dpage/pgadmin4:latest
   #   container_name: pgadmin

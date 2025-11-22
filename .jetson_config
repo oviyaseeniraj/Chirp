@@ -1,0 +1,26 @@
+# Jetson Configuration
+# Used by various scripts in this repository
+
+# Master node (chrony time server)
+MASTER_IP="169.231.217.90"
+MASTER_NAME="Master"
+
+# Slave node(s)
+SLAVE_IP="169.231.22.160"
+SLAVE_NAME="Slave"
+
+# SSH configuration
+SSH_USER="fusionsense"
+
+# Data collection paths
+CHIRP_DIR="~/Documents/Chirp"
+TEST_DIR="~/Documents/Chirp/Node/test/non_thread"
+FRAME_DATA_DIR="~/Documents/Chirp/Node/test/non_thread/frame_data"
+
+# MQTT configuration
+MQTT_BROKER="169.231.217.90"  # Usually the master node
+MQTT_PORT="1883"
+
+# Default collection parameters
+DEFAULT_NUM_FRAMES="100"
+

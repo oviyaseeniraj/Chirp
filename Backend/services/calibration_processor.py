@@ -509,19 +509,24 @@ async def run_calibration_on_frames(pool, frame_start, frame_end):
         print(f"  ✗ Insufficient radars with valid tracks")
         return False
     
-    # Run calibration on each track combination
+    # Run calibration on each track combination for ALL radar pairs
     print(f"\n  Running multi-target calibration...")
     all_calibrations = []
     
-    # For each pair of radars
-    radar_pairs = [(all_radar_tracks.keys().__iter__().__next__(), 
-                    list(all_radar_tracks.keys())[1])]  # Just first pair for now
+    # Get all radar pairs (i, j) where i != j
+    radar_list = list(all_radar_tracks.keys())
+    radar_pairs = [(radar_list[i], radar_list[j]) 
+                   for i in range(len(radar_list)) 
+                   for j in range(len(radar_list)) 
+                   if i != j]
+    
+    print(f"  Calibrating {len(radar_pairs)} radar pairs: {radar_pairs}")
     
     for radar_i, radar_j in radar_pairs:
         tracks_i = all_radar_tracks[radar_i]
         tracks_j = all_radar_tracks[radar_j]
         
-        # Try all track combinations
+        # Try all track combinations for this pair
         for track_id_i, trajectory_i in tracks_i.items():
             for track_id_j, trajectory_j in tracks_j.items():
                 # Ensure same length (truncate to shorter)
@@ -537,49 +542,67 @@ async def run_calibration_on_frames(pool, frame_start, frame_end):
                     trajectories = {radar_i: traj_i, radar_j: traj_j}
                     P_opt, theta_opt, resid = closed_form_calibration(trajectories)
                     
-                    # Store calibration result with metadata
-                    all_calibrations.append({
-                        'ref_radar': radar_i,
-                        'target_radar': radar_j,
-                        'track_i': track_id_i,
-                        'track_j': track_id_j,
-                        'P_optimal': P_opt,
-                        'theta_optimal': theta_opt,
-                        'residuals': resid,
-                        'num_frames': min_len
-                    })
+                    # Extract pairwise result
+                    pair_key = (radar_i, radar_j)
+                    if pair_key in P_opt:
+                        all_calibrations.append({
+                            'ref_radar': radar_i,
+                            'target_radar': radar_j,
+                            'track_i': track_id_i,
+                            'track_j': track_id_j,
+                            'position': P_opt[pair_key],
+                            'orientation': theta_opt[pair_key],
+                            'residual': resid[pair_key],
+                            'num_frames': min_len
+                        })
                 except Exception as e:
-                    print(f"    Warning: Calibration failed for tracks {track_id_i}-{track_id_j}: {e}")
+                    print(f"    Warning: Calibration failed for {radar_i}-{radar_j}, "
+                          f"tracks {track_id_i}-{track_id_j}: {e}")
                     continue
     
     if not all_calibrations:
         print(f"  ✗ No successful calibrations")
         return False
     
-    # Select best calibration (lowest residual)
-    best_calibration = min(all_calibrations, 
-                          key=lambda c: min(c['residuals'].values()))
+    # Group by radar pair and select best calibration for each pair
+    from collections import defaultdict
+    best_per_pair = defaultdict(lambda: {'residual': float('inf')})
+    
+    for calib in all_calibrations:
+        pair_key = (calib['ref_radar'], calib['target_radar'])
+        if calib['residual'] < best_per_pair[pair_key]['residual']:
+            best_per_pair[pair_key] = calib
     
     print(f"\n  ✓ Multi-target calibration complete!")
     print(f"  Total track combinations tested: {len(all_calibrations)}")
-    print(f"  Best calibration:")
+    print(f"  Best calibration for each radar pair:\n")
     
-    P_optimal = best_calibration['P_optimal']
-    theta_optimal = best_calibration['theta_optimal']
-    residuals = best_calibration['residuals']
-    num_frames = best_calibration['num_frames']
-    
-    for (ref_radar, target_radar), position in P_optimal.items():
-        orientation = theta_optimal[(ref_radar, target_radar)]
-        residual = residuals[(ref_radar, target_radar)]
+    # Store all best pairwise calibrations
+    for pair_key, calib in best_per_pair.items():
+        ref_radar = calib['ref_radar']
+        target_radar = calib['target_radar']
+        position = calib['position']
+        orientation = calib['orientation']
+        residual = calib['residual']
+        num_frames = calib['num_frames']
+        
         print(f"    {ref_radar} → {target_radar}: "
               f"P=({position.real:.2f}, {position.imag:.2f})m, "
               f"θ={orientation:.1f}°, residual={residual:.3f}")
-        print(f"    Using tracks: {best_calibration['track_i']} ↔ {best_calibration['track_j']} "
-              f"({num_frames} frames)")
+        print(f"      Using tracks: {calib['track_i']} ↔ {calib['track_j']} ({num_frames} frames)")
+        
+        # Store each pairwise calibration
+        P_optimal = {pair_key: position}
+        theta_optimal = {pair_key: orientation}
+        residuals = {pair_key: residual}
+        await store_calibration_results(pool, P_optimal, theta_optimal, residuals, num_frames)
     
-    # Store best results
-    await store_calibration_results(pool, P_optimal, theta_optimal, residuals, num_frames)
+    # Print summary
+    num_pairs = len(best_per_pair)
+    num_radars = len(all_radar_tracks)
+    expected_pairs = num_radars * (num_radars - 1)  # Directed pairs
+    print(f"\n  Summary: Calibrated {num_pairs}/{expected_pairs} radar pairs")
+    print(f"  Mean residual: {np.mean([c['residual'] for c in best_per_pair.values()]):.3f}")
     
     # Mark processed
     await mark_frames_processed(pool, frame_start, frame_end)

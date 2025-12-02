@@ -47,9 +47,6 @@ logdir /var/log/chrony
 # Enable kernel synchronization
 rtcsync
 
-# Increase polling interval for stability
-maxpoll 6
-
 # Smooth time adjustments
 smoothtime 400 0.001
 

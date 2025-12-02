@@ -98,9 +98,8 @@ logdir /var/log/chrony
 # Enable kernel synchronization
 rtcsync
 
-# Allow larger adjustments
+# Allow larger adjustments for local network sync
 maxdistance 10.0
-maxdelay 0.1
 
 # Smooth time adjustments
 smoothtime 400 0.001

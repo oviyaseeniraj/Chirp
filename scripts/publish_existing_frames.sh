@@ -64,3 +64,4 @@ echo ""
 echo "Check database:"
 echo "   docker exec postgres psql -U user -d mqttdata -c \"SELECT radar_name, COUNT(*), MAX(frame_number) FROM radar_frames GROUP BY radar_name;\""
 
+

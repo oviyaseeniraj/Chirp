@@ -21,9 +21,10 @@ apt-get install -y chrony
 
 echo ""
 echo "[2/4] Which Jetson is this?"
-echo "  1) Patrick - Master/Server (169.231.215.235)"
-echo "  2) Mike - Slave/Client (169.231.22.160)"
-read -p "Enter choice [1-2]: " choice
+echo "  1) Master/Server (Primary time source)"
+echo "  2) Slave/Client #1"
+echo "  3) Slave/Client #2"
+read -p "Enter choice [1-3]: " choice
 
 if [ "$choice" = "1" ]; then
     echo ""
@@ -73,15 +74,19 @@ EOF
     echo "  sudo chronyc clients"
     echo ""
     
-elif [ "$choice" = "2" ]; then
-    read -p "[3/4] Enter Patrick's Master IP [169.231.215.235]: " master_ip
-    master_ip=${master_ip:-169.231.215.235}
+elif [ "$choice" = "2" ] || [ "$choice" = "3" ]; then
+    read -p "[3/4] Enter Master IP address: " master_ip
+    
+    if [ -z "$master_ip" ]; then
+        echo "[ERROR] Master IP is required"
+        exit 1
+    fi
     
     echo ""
-    echo "[4/4] Configuring as NTP Client..."
+    echo "[4/4] Configuring as NTP Client (Slave #$((choice-1)))..."
     
     cat > /etc/chrony/chrony.conf <<EOF
-# Chrony NTP Client Configuration
+# Chrony NTP Client Configuration (Slave #$((choice-1)))
 # ================================
 
 # Use local master as time source
@@ -117,7 +122,7 @@ EOF
     
     echo ""
     echo "=========================================="
-    echo "✓ Client configured successfully!"
+    echo "✓ Slave #$((choice-1)) configured successfully!"
     echo "=========================================="
     echo ""
     echo "Verify with:"
@@ -172,20 +177,28 @@ fi
 
 echo ""
 echo "=========================================="
-echo "Quick Setup Guide:"
+echo "Quick Setup Guide (3-Node Configuration):"
 echo "=========================================="
 echo ""
-echo "On Patrick's Jetson (169.231.215.235):"
+echo "On Master Jetson:"
 echo "  sudo ./CHRONY_SETUP.sh"
 echo "  Select: 1 (Master/Server)"
 echo ""
-echo "On Mike's Jetson (169.231.22.160):"
+echo "On Slave Jetson #1:"
 echo "  sudo ./CHRONY_SETUP.sh"
-echo "  Select: 2 (Slave/Client)"
-echo "  Press Enter to use Patrick as master"
+echo "  Select: 2 (Slave/Client #1)"
+echo "  Enter Master IP when prompted"
 echo ""
-echo "After both are configured, verify sync:"
-echo "  On Mike: chronyc tracking"
+echo "On Slave Jetson #2:"
+echo "  sudo ./CHRONY_SETUP.sh"
+echo "  Select: 3 (Slave/Client #2)"
+echo "  Enter Master IP when prompted"
+echo ""
+echo "After all are configured, verify sync:"
+echo "  On each Slave: chronyc tracking"
 echo "  Look for offset < 1ms"
+echo ""
+echo "On Master, check connected clients:"
+echo "  chronyc clients"
 echo ""
 

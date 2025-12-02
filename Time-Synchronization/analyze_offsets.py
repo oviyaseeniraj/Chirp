@@ -10,11 +10,20 @@ import sys
 from scipy import stats
 from scipy.stats import gaussian_kde
 import os
+from datetime import datetime
+from itertools import combinations
 
 def load_data(filename):
-    """Load JSON data."""
+    """Load JSON data (handles both old and new format)."""
     with open(filename, 'r') as f:
-        return json.load(f)
+        data = json.load(f)
+    
+    # Handle new format with metadata
+    if isinstance(data, dict) and 'samples' in data:
+        return data['samples'], data.get('metadata', {})
+    # Handle old format (list of samples)
+    else:
+        return data, {}
 
 def modified_z_score(data):
     """Calculate modified Z-scores for outlier detection."""
@@ -33,8 +42,11 @@ def analyze_offsets(filename):
     print()
     
     # Load data
-    data = load_data(filename)
+    data, metadata = load_data(filename)
     print(f"Loaded {len(data)} samples from {filename}")
+    if metadata:
+        print(f"Node ID: {metadata.get('node_id', 'Unknown')}")
+        print(f"Collection period: {metadata.get('start_time', 'N/A')} to {metadata.get('end_time', 'N/A')}")
     print()
     
     # Extract offset arrays
@@ -199,7 +211,7 @@ def analyze_offsets(filename):
     print(f"Summary saved to: {full_output_path}")
     print()
     
-    return data, offset_us, filtered_us
+    return data, offset_us, filtered_us, metadata
 
 def plot_histogram(filename):
     """Generate plots if matplotlib available."""
@@ -210,7 +222,8 @@ def plot_histogram(filename):
         print("Matplotlib not available. Skipping plots.")
         return
     
-    data, offset_us, filtered_us = analyze_offsets(filename)
+    data, offset_us, filtered_us, metadata = analyze_offsets(filename)
+    node_id = metadata.get('node_id', 'Unknown') if metadata else 'Unknown'
     
     fig, axes = plt.subplots(2, 2, figsize=(12, 8))
     
@@ -273,7 +286,8 @@ def plot_pdf(filename):
             print("Matplotlib not available. Skipping plots.")
             return
         
-    data, offset_us, filtered_us = analyze_offsets(filename)
+    data, offset_us, filtered_us, metadata = analyze_offsets(filename)
+    node_id = metadata.get('node_id', 'Unknown') if metadata else 'Unknown'
     
     fig, axes = plt.subplots(2, 2, figsize=(12, 8))
 
@@ -347,16 +361,144 @@ def plot_pdf(filename):
     
     plt.show()
 
+def compare_nodes(filenames):
+    """Compare offset data from multiple slave nodes."""
+    print("="*60)
+    print("MULTI-NODE COMPARISON")
+    print("="*60)
+    print()
+    
+    if len(filenames) < 2:
+        print("Error: Need at least 2 files to compare")
+        return
+    
+    nodes_data = []
+    for filename in filenames:
+        data, metadata = load_data(filename)
+        offset_us = np.array([s['offset_us'] for s in data])
+        node_id = metadata.get('node_id', os.path.basename(filename)) if metadata else os.path.basename(filename)
+        nodes_data.append({
+            'filename': filename,
+            'node_id': node_id,
+            'data': data,
+            'offset_us': offset_us,
+            'metadata': metadata
+        })
+    
+    # Summary table
+    print("─" * 80)
+    print(f"{'Node ID':<20} {'Samples':<10} {'Mean (μs)':<15} {'Std (μs)':<15} {'Range (μs)':<15}")
+    print("─" * 80)
+    
+    for node in nodes_data:
+        print(f"{node['node_id']:<20} "
+              f"{len(node['offset_us']):<10} "
+              f"{np.mean(node['offset_us']):+.2f}{'':<9} "
+              f"{np.std(node['offset_us']):.2f}{'':<10} "
+              f"{np.ptp(node['offset_us']):.2f}")
+    print()
+    
+    # Statistical comparison
+    print("─" * 60)
+    print("STATISTICAL COMPARISON")
+    print("─" * 60)
+    
+    # Pairwise t-tests
+    for (node1, node2) in combinations(nodes_data, 2):
+        t_stat, p_value = stats.ttest_ind(node1['offset_us'], node2['offset_us'])
+        print(f"{node1['node_id']} vs {node2['node_id']}:")
+        print(f"  T-statistic: {t_stat:+.4f}")
+        print(f"  P-value: {p_value:.6f}")
+        print(f"  Significantly different: {'Yes' if p_value < 0.05 else 'No'} (α=0.05)")
+        
+        # Mean difference
+        mean_diff = np.mean(node1['offset_us']) - np.mean(node2['offset_us'])
+        print(f"  Mean difference: {mean_diff:+.2f} μs")
+        print()
+    
+    # Plot comparison if matplotlib available
+    try:
+        import matplotlib.pyplot as plt
+        
+        fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+        
+        # Time series overlay
+        ax = axes[0, 0]
+        for node in nodes_data:
+            ax.plot(node['offset_us'], label=node['node_id'], alpha=0.7, linewidth=1)
+        ax.set_xlabel('Sample Number')
+        ax.set_ylabel('Offset (μs)')
+        ax.set_title('Clock Offset Over Time (All Nodes)')
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        
+        # Box plot comparison
+        ax = axes[0, 1]
+        box_data = [node['offset_us'] for node in nodes_data]
+        box_labels = [node['node_id'] for node in nodes_data]
+        ax.boxplot(box_data, labels=box_labels)
+        ax.set_ylabel('Offset (μs)')
+        ax.set_title('Offset Distribution Comparison')
+        ax.grid(True, alpha=0.3)
+        
+        # Histogram overlay
+        ax = axes[1, 0]
+        for node in nodes_data:
+            ax.hist(node['offset_us'], bins=30, alpha=0.5, label=node['node_id'], edgecolor='black')
+        ax.set_xlabel('Offset (μs)')
+        ax.set_ylabel('Count')
+        ax.set_title('Offset Histogram Comparison')
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        
+        # Violin plot
+        ax = axes[1, 1]
+        parts = ax.violinplot(box_data, positions=range(len(nodes_data)), 
+                             showmeans=True, showmedians=True)
+        ax.set_xticks(range(len(nodes_data)))
+        ax.set_xticklabels(box_labels)
+        ax.set_ylabel('Offset (μs)')
+        ax.set_title('Offset Distribution (Violin Plot)')
+        ax.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        
+        # Save plot
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        histograms_dir = os.path.join(script_dir, 'data', 'histograms')
+        plot_file = os.path.join(histograms_dir, 
+                                f"comparison_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png")
+        plt.savefig(plot_file, dpi=300)
+        print(f"Comparison plot saved to: {plot_file}")
+        plt.show()
+        
+    except ImportError:
+        print("Matplotlib not available. Skipping plots.")
+    
+    print()
+
 if __name__ == '__main__':
     if len(sys.argv) < 2:
-        print("Usage: python3 analyze_offsets.py <data_file.json> [--plot]")
+        print("Usage:")
+        print("  Single node:   python3 analyze_offsets.py <data_file.json> [--plot]")
+        print("  Multi-node:    python3 analyze_offsets.py --compare <file1.json> <file2.json> [file3.json ...]")
         sys.exit(1)
     
-    filename = sys.argv[1]
-    
-    if '--plot' in sys.argv:
-        plot_histogram(filename)
-        plot_pdf(filename)
+    if '--compare' in sys.argv:
+        # Multi-node comparison mode
+        compare_idx = sys.argv.index('--compare')
+        filenames = [arg for arg in sys.argv[compare_idx+1:] if not arg.startswith('--')]
+        if len(filenames) < 2:
+            print("Error: --compare requires at least 2 data files")
+            sys.exit(1)
+        compare_nodes(filenames)
     else:
-        analyze_offsets(filename)
+        # Single node analysis mode
+        filename = sys.argv[1]
+        
+        if '--plot' in sys.argv:
+            plot_histogram(filename)
+            plot_pdf(filename)
+        else:
+            analyze_offsets(filename)
 

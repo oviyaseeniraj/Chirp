@@ -41,9 +41,6 @@ manual
 # Allow clients on local network
 allow 169.231.0.0/16
 
-# Serve time even if not synchronized to external source
-local stratum 8
-
 # Log directory
 logdir /var/log/chrony
 
@@ -100,10 +97,6 @@ logdir /var/log/chrony
 
 # Enable kernel synchronization
 rtcsync
-
-# Increase polling frequency for faster convergence
-minpoll 0
-maxpoll 4
 
 # Allow larger adjustments
 maxdistance 10.0

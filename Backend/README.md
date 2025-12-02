@@ -57,39 +57,38 @@ t=5.1s:  Mike sends frame #50
 
 ## Multi-Target Tracking with Kalman Filtering
 
-The calibration processor now includes Extended Kalman Filter (EKF) tracking for robust multi-target scenarios:
+The calibration processor now includes Extended Kalman Filter (EKF) tracking for robust multi-radar, multi-target scenarios.
 
-**Features:**
-- ✅ **EKF for polar→Cartesian conversion** with proper uncertainty propagation
-- ✅ **DBSCAN clustering** to distinguish multiple targets per frame
-- ✅ **Track association** using Mahalanobis distance gating
-- ✅ **Per-target calibration** - tests all track combinations and selects best fit
+**Key Features:**
+- ✅ **Scales to N radars** - calibrates all pairwise relationships (2, 3, 4+ nodes)
+- ✅ **Multi-target per scene** - handles multiple people/objects moving simultaneously
+- ✅ **EKF for polar→Cartesian** - proper uncertainty propagation from measurements
+- ✅ **DBSCAN clustering** - separates distinct targets in each frame
+- ✅ **Track association** - maintains target identity using Mahalanobis gating
+- ✅ **Best-fit selection** - tests all track combinations per radar pair
 
-**Benefits for multi-target scenarios:**
-1. **Target distinction**: Separates multiple people/objects moving in the scene
-2. **Noise reduction**: Kalman filtering smooths measurements
-3. **Track continuity**: Maintains target identity across frames
-4. **Best-fit selection**: Automatically chooses most consistent track pairing
+**Calibration Output:**
+- 2 radars → 2 directed pairs (A→B, B→A)
+- 3 radars → 6 directed pairs (all combinations)
+- N radars → N×(N-1) directed pairs
 
-**Configuration (environment variables):**
-```bash
-SIGMA_RANGE=0.035           # Range measurement noise (m)
-SIGMA_AZIMUTH=30            # Azimuth measurement noise (deg)
-DBSCAN_EPS=0.5             # Clustering epsilon (m)
-MIN_TRACK_LENGTH=10        # Minimum frames for valid track
-```
+**📖 See [KALMAN_FILTERING.md](KALMAN_FILTERING.md) for:**
+- Quick start guide
+- Debugging tips
+- Parameter tuning
+- 3-radar example output
 
-**Example output:**
+**Example (2 radars, multi-target):**
 ```
 Running Kalman filtering for multi-target tracking...
   Patrick: 3 valid tracks detected
   Mike: 2 valid tracks detected
 
-Running multi-target calibration...
-  Total track combinations tested: 6
-  Best calibration:
-    Patrick → Mike: P=(40.12, -0.23)m, θ=89.8°, residual=0.156
-    Using tracks: 2 ↔ 1 (45 frames)
+Calibrating 2 radar pairs...
+Best calibration for each radar pair:
+  Patrick → Mike: P=(40.12, -0.23)m, θ=89.8°, residual=0.156
+  Mike → Patrick: P=(-40.08, 0.21)m, θ=-90.2°, residual=0.148
+Summary: Calibrated 2/2 radar pairs, Mean residual: 0.152
 ```
 
 ## Quick Start

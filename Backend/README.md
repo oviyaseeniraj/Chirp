@@ -118,10 +118,15 @@ See [TEST_WITHOUT_JETSONS.md](TEST_WITHOUT_JETSONS.md) for details.
 
 #### Manual (one Jetson at a time):
 ```bash
-# On each Jetson
-ssh fusionsense@169.231.215.235
+# On each Jetson - NOTE: pass the node name as 2nd argument!
+ssh fusionsense@169.231.216.36
 cd ~/Documents/Chirp/Node/test/non_thread
-./test 100
+./test 100 Master          # Creates Master_Frame1.json, Master_Frame2.json, etc.
+
+# On second Jetson
+ssh fusionsense@169.231.22.160
+cd ~/Documents/Chirp/Node/test/non_thread
+./test 100 Slave           # Creates Slave_Frame1.json, Slave_Frame2.json, etc.
 
 # Publish to MQTT
 cd ~/Documents/Chirp/Node
@@ -135,14 +140,181 @@ cd /Users/oseeniraj/Chirp
 ./scripts/trigger_all_jetsons.sh
 
 # Your Jetsons:
-#   Master: 169.231.217.90 (chrony time server)
+#   Master: 169.231.216.36
 #   Slave:  169.231.22.160
+```
+
+## Test Binary CLI Arguments
+
+The `./test` binary supports configurable node naming via command-line arguments:
+
+```bash
+# Usage options:
+./test                              # 100 frames, node name = "Node"
+./test <num_frames>                 # Custom frame count, node name = "Node"
+./test <num_frames> <node_name>     # Custom frames AND node name ⭐
+./test <max_SNR> <min_SNR>          # SNR threshold mode
+
+# Examples:
+./test 100 Master     # Collect 100 frames, save as Master_Frame1.json, etc.
+./test 50 Slave       # Collect 50 frames, save as Slave_Frame1.json, etc.
+./test 200 Radar3     # Collect 200 frames, save as Radar3_Frame1.json, etc.
+```
+
+**Why this matters:** The node name is embedded in:
+1. **JSON filename:** `{NodeName}_Frame{N}.json`
+2. **JSON content:** `{"Node": "Master", "Frame Number": 1, ...}`
+3. **MQTT topic:** `radar/{NodeName}/frame`
+4. **Database:** `radar_name` column in `radar_frames` table
+
+**How `trigger_all_jetsons.sh` uses this:**
+```bash
+# The script automatically passes the node name from JETSON_NAMES array:
+JETSON_NAMES=("Master" "Slave")
+JETSON_IPS=("169.231.216.36" "169.231.22.160")
+
+# Results in these SSH commands:
+ssh fusionsense@169.231.216.36 "xvfb-run -a ./test 100 Master"
+ssh fusionsense@169.231.22.160 "xvfb-run -a ./test 100 Slave"
+```
+
+## C++ Implementation Details
+
+The `JSON_TCP` class in `Node/src/rpl/implementation.cpp` was modified to support configurable node names:
+
+```cpp
+// Before (hardcoded):
+const char *node = "Patrick";  // Always saved as Patrick_Frame1.json
+
+// After (configurable):
+class JSON_TCP {
+    string node_name;
+public:
+    JSON_TCP(const string& name = "Node") : node_name(name) { }
+    void setNodeName(const string& name) { node_name = name; }
+    string getNodeName() const { return node_name; }
+    // ...
+};
+```
+
+**In `test.cpp`:**
+```cpp
+// Parse CLI arguments
+std::string node_name = "Node";
+if (argc >= 3) {
+    node_name = argv[2];
+}
+
+// Pass to JSON_TCP
+JSON_TCP tcp(node_name);
+// or: tcp.setNodeName(node_name);
 ```
 
 ### 3. Monitor Calibration
 ```bash
 docker logs -f calibration_processor
 ```
+
+## `trigger_all_jetsons.sh` Quick Reference
+
+### Usage
+```bash
+cd /path/to/Chirp
+./scripts/trigger_all_jetsons.sh
+```
+
+### What It Does
+1. ✅ Checks SSH connectivity to all Jetsons
+2. ✅ Checks/installs `xvfb` (needed for headless GUI)
+3. ✅ Optionally cleans old frame data
+4. ✅ Triggers `./test <frames> <node_name>` on all Jetsons simultaneously
+5. ✅ Optionally starts MQTT publishers
+
+### Configuration (edit script lines 7-8)
+```bash
+JETSON_NAMES=("Master" "Slave")              # Names used in JSON files
+JETSON_IPS=("169.231.216.36" "169.231.22.160")  # IP addresses
+```
+
+### What to Watch in Docker Logs
+
+```bash
+# Watch calibration processor
+docker logs -f calibration_processor
+```
+
+**✅ Good signs:**
+```
+Radar status:
+  Master: frame #50
+  Slave: frame #50
+TRIGGER: All 2 radars have reached frame #50
+Running Kalman filtering...
+  Master: 1 valid tracks detected
+  Slave: 1 valid tracks detected
+✓ Calibration complete!
+```
+
+**⚠️ Warning signs:**
+```
+# Only one radar has data
+Radar status:
+  Master: frame #50
+  Slave: frame #0          # ← Slave not sending data
+
+# Waiting for sync
+Min frame across radars: 45 (need 50 for trigger)
+
+# No tracks detected
+Master: 0 valid tracks detected   # ← No motion/targets in FOV
+```
+
+**❌ Error signs:**
+```
+# Database connection failed
+asyncpg.exceptions.ConnectionError
+
+# Missing frames
+Calibration failed - missing frames 23, 24, 25
+```
+
+### Verify Data in Database
+```bash
+# Check frame counts per radar
+docker exec postgres psql -U user -d mqttdata -c "
+SELECT radar_name, COUNT(*) as frames, MAX(frame_number) as max_frame 
+FROM radar_frames 
+GROUP BY radar_name;"
+
+# Expected output:
+#  radar_name | frames | max_frame
+# ------------+--------+-----------
+#  Master     |    100 |       100
+#  Slave      |    100 |       100
+
+# Check recent frames
+docker exec postgres psql -U user -d mqttdata -c "
+SELECT radar_name, frame_number, angle, range_m 
+FROM radar_frames 
+ORDER BY id DESC LIMIT 10;"
+
+# Check calibration results
+docker exec postgres psql -U user -d mqttdata -c "
+SELECT ref_radar, target_radar, position_x, position_y, orientation_deg, residual 
+FROM calibration_results 
+ORDER BY timestamp DESC LIMIT 5;"
+```
+
+### Troubleshooting
+
+| Problem | Check | Fix |
+|---------|-------|-----|
+| SSH fails | `ssh fusionsense@IP` | Check network/keys |
+| xvfb error | Script offers to install | Say yes to install |
+| No frames in DB | `docker logs ingest` | Check MQTT connection |
+| Only 1 radar in DB | Check both Jetsons ran | Re-run trigger script |
+| No calibration trigger | Need MIN_RADARS (default 2) | Wait for all radars |
+| High residual (>1.0) | Poor calibration quality | More frames, better target motion |
 
 Output:
 ```
@@ -196,6 +368,8 @@ Backend/
 ├── services/                    # Service implementations
 │   ├── calibration_processor.py # Frame-based calibration (NEW)
 │   ├── ingest.py                # MQTT → Database (MODIFIED)
+│   ├── test_publisher.py        # Simulated radar data for testing
+│   ├── inject_real_frames.py    # Inject real JSON frames into MQTT
 │   ├── keygen.py                # Node registration
 │   └── publisher.py             # Demo publisher
 │
@@ -209,9 +383,17 @@ Backend/
 
 Node/
 ├── src/rpl/
+│   ├── implementation.cpp       # JSON_TCP class with configurable node name
 │   └── mqtt_publisher.py        # Jetson frame publisher
+├── test/non_thread/
+│   ├── test.cpp                 # Main binary (CLI: ./test <frames> <node_name>)
+│   ├── test                     # Compiled binary
+│   └── frame_data/              # Output JSON frames
 └── scripts/
     └── mqtt_publish_frames.sh   # Bash wrapper
+
+scripts/
+└── trigger_all_jetsons.sh       # ⭐ Triggers all Jetsons with unique node names
 ```
 
 ## Database Schema

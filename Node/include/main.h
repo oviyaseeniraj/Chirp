@@ -16,8 +16,16 @@
 
 #define n_pi 3.14159265358979323846
 
-#define FAST_TIME 512                                  // Initializes the number of fast time samples | # of range samples
-#define SLOW_TIME 64                                   // Initializes the number of slow time samples | # of doppler samples
+// Initializes the number of fast time samples | # of range samples
+
+#ifndef FAST_TIME
+#define FAST_TIME 512 
+#endif 
+
+#ifndef SLOW_TIME
+#define SLOW_TIME 64
+#endif
+                                   // Initializes the number of slow time samples | # of doppler samples
 #define RX 4                                           // # of Rx
 #define TX 3                                           // # of Tx
 #define IQ 2                                           // Types of IQ (I and Q)

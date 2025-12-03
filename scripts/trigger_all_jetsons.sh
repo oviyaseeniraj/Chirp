@@ -110,8 +110,9 @@ for i in "${!JETSON_NAMES[@]}"; do
     
     echo "Starting $name ($ip)..."
     
-    # SSH and run test in background
-    ssh "$SSH_USER@$ip" "cd $TEST_DIR && ./test $NUM_FRAMES" &
+    # SSH and run test in background, passing node name as argument
+    # Usage: ./test <num_frames> <node_name>
+    ssh "$SSH_USER@$ip" "cd $TEST_DIR && ./test $NUM_FRAMES $name" &
     pids+=($!)
     
     # Small delay to stagger SSH connections

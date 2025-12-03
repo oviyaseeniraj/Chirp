@@ -4,12 +4,15 @@
 #define OUTPUT_SIZE 0
 int main(int argc, char* argv[])
 {   
-
+    // Parse node name from command line (default: "Node")
+    std::string node_name = "Node";
+    int num_frames = 100;
+    
     // CONSTRUCTOR INITIATION
     DataAcquisition daq;
     RangeDoppler rdm("blackman");
     Visualizer vis(INPUT_SIZE,OUTPUT_SIZE);
-    JSON_TCP tcp;  // For saving data and running calibration
+    JSON_TCP tcp(node_name);  // For saving data and running calibration
 
     // BUFFER POINTER INITIATION
     uint16_t *in_bufferptr    = daq.getBufferPointer();
@@ -32,21 +35,35 @@ int main(int argc, char* argv[])
     auto frame_rdm = rdm.getFramePointer();
     daq.setFramePointer(frame_rdm);
     
-    // OTHER PARAMS
-    int num_frames = 100;  // Collect 100 frames for calibration
-    if (argc > 1){
-        if(argc == 2){
-            num_frames = std::stoi(argv[1]);
-        } else if(argc == 3){
-            float max = std::stof(argv[1]);
-            float min = std::stof(argv[2]);
-            rdm.setSNR(max,min);
+    // PARSE COMMAND LINE ARGUMENTS
+    // Usage: ./test [num_frames] [node_name]
+    //    or: ./test [max_SNR] [min_SNR]
+    if (argc >= 2) {
+        // Check if first arg is a number (frames) or contains a decimal (SNR)
+        std::string arg1 = argv[1];
+        if (arg1.find('.') != std::string::npos) {
+            // SNR mode: ./test max_SNR min_SNR
+            if (argc == 3) {
+                float max = std::stof(argv[1]);
+                float min = std::stof(argv[2]);
+                rdm.setSNR(max, min);
+            } else {
+                std::cout << "Usage:\n";
+                std::cout << "  ./test                              (100 frames, default node)\n";
+                std::cout << "  ./test <num_frames>                 (custom frames, default node)\n";
+                std::cout << "  ./test <num_frames> <node_name>     (custom frames and node name)\n";
+                std::cout << "  ./test <max_SNR> <min_SNR>          (SNR thresholds)\n";
+                return 1;
+            }
         } else {
-            std::cout << "Usage:\n";
-            std::cout << "  ./test                    (100 frames, default SNR)\n";
-            std::cout << "  ./test <num_frames>       (custom frame count)\n";
-            std::cout << "  ./test <max_SNR> <min_SNR>\n";
-            return 1;
+            // Frame count mode
+            num_frames = std::stoi(argv[1]);
+            
+            // Optional node name as second argument
+            if (argc >= 3) {
+                node_name = argv[2];
+                tcp.setNodeName(node_name);
+            }
         }
     }
     vis.setWaitTime(1);   
@@ -54,6 +71,7 @@ int main(int argc, char* argv[])
     rdm.process();
     
     std::cout << "\n=== Starting Data Collection ===\n";
+    std::cout << "Node: " << tcp.getNodeName() << "\n";
     std::cout << "Collecting " << num_frames << " frames...\n\n";
     
     for(int i = 0; i < num_frames; i++){

@@ -5,7 +5,7 @@ set -e
 
 # Configuration - Add your Jetson IPs and names here (parallel arrays for bash 3.2 compatibility)
 JETSON_NAMES=("Master" "Slave")
-JETSON_IPS=("169.231.217.90" "169.231.22.160")
+JETSON_IPS=("169.231.216.36" "169.231.22.160")
 # To add more Jetsons:
 # JETSON_NAMES=("Master" "Slave" "Node3" "Node4")
 # JETSON_IPS=("169.231.217.90" "169.231.22.160" "169.231.xxx.xxx" "169.231.xxx.xxx")
@@ -70,6 +70,42 @@ echo ""
 echo -e "${GREEN}✓ All Jetsons reachable${NC}"
 echo ""
 
+# Check if xvfb is installed (needed for headless GUI)
+echo "Checking xvfb installation..."
+xvfb_missing=()
+for i in "${!JETSON_NAMES[@]}"; do
+    name="${JETSON_NAMES[$i]}"
+    ip="${JETSON_IPS[$i]}"
+    if ! ssh "$SSH_USER@$ip" "which xvfb-run" &>/dev/null; then
+        xvfb_missing+=("$name")
+    fi
+done
+
+if [ ${#xvfb_missing[@]} -gt 0 ]; then
+    echo -e "${YELLOW}⚠ xvfb not installed on: ${xvfb_missing[*]}${NC}"
+    echo "  The test binary has a GUI that needs a virtual display."
+    echo "  Install with: sudo apt-get install -y xvfb"
+    echo ""
+    read -p "Try to install xvfb on missing Jetsons? [Y/n] " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+        for name in "${xvfb_missing[@]}"; do
+            for i in "${!JETSON_NAMES[@]}"; do
+                if [ "${JETSON_NAMES[$i]}" = "$name" ]; then
+                    ip="${JETSON_IPS[$i]}"
+                    echo "  Installing xvfb on $name..."
+                    ssh "$SSH_USER@$ip" "sudo apt-get update -qq && sudo apt-get install -y -qq xvfb" &
+                fi
+            done
+        done
+        wait
+        echo -e "${GREEN}✓ xvfb installed${NC}"
+    else
+        echo -e "${RED}Warning: Test may fail without xvfb${NC}"
+    fi
+fi
+echo ""
+
 # Clean old data (optional)
 read -p "Clean old frame data before starting? [y/N] " -n 1 -r
 echo
@@ -112,7 +148,8 @@ for i in "${!JETSON_NAMES[@]}"; do
     
     # SSH and run test in background, passing node name as argument
     # Usage: ./test <num_frames> <node_name>
-    ssh "$SSH_USER@$ip" "cd $TEST_DIR && ./test $NUM_FRAMES $name" &
+    # Use xvfb-run to handle headless GUI (Visualizer component)
+    ssh "$SSH_USER@$ip" "cd $TEST_DIR && xvfb-run -a ./test $NUM_FRAMES $name" &
     pids+=($!)
     
     # Small delay to stagger SSH connections

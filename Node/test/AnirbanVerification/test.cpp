@@ -16,7 +16,6 @@ uint16_t input_buffer[ INPUT_FRAMES*FRAME_SIZE ];
 
 int main(int argc, char* argv[])
 {   
-
     RangeDoppler rdm("blackman");
     Visualizer vis(INPUT_SIZE,OUTPUT_SIZE);
     //std::string input_file("./output_DAQ2.txt");
@@ -63,8 +62,7 @@ int main(int argc, char* argv[])
     {
         std::cerr << "Error: Could not open file " << input_file << std::endl;
     }
-
-
+    
     // BUFFER POINTER INITIATION
     uint16_t *in_bufferptr    = input_buffer;
     float    *in_visualizeptr = rdm.getBufferPointer();

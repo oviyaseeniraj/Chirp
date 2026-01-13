@@ -17,7 +17,7 @@ popd
     #TODO: setup FTDI rules
 # Install dependencies
 sudo apt install -y libfftw3-dev libopencv-dev libeigen3-dev libfmt-dev network-manager 
-#TODO: Figure out where to 
+#TODO: Figure out where to make the symlinks for libraries if needed
 # network setup
 INTERFACE=$(nmcli device status | grep ethernet | awk '{print $1}' | head -n 1)
 # sometimes the interface is unavailable, this is the only way I have found to make sure it works

@@ -19,10 +19,10 @@ popd
 sudo apt install -y libfftw3-dev libopencv-dev libeigen3-dev libfmt-dev network-manager 
 #TODO: Figure out where to 
 # network setup
-    # find ethernet device
-    # dunno if all ethernets are eth0
-    # ip addr add dev eth0 192.168.33.30/24
-    # use nmcli connection ... https://wiki.archlinux.org/title/NetworkManager
+INTERFACE=$(nmcli device status | grep ethernet | awk '{print $1}' | head -n 1)
+# sometimes the interface is unavailable, this is the only way I have found to make sure it works
+sudo ip addr add dev $INTERFACE 192.168.33.30/24
+sudo nmcli con mod $INTERFACE ipv4.addresses 192.168.33.30/24
 # avahi setup
 
 # Radar Permissions

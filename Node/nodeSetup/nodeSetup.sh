@@ -14,8 +14,11 @@ cp ftd2xx.h /usr/local/include/
 cp WinTypes.h /usr/local/include/  
 ldconfig -v
 popd
-    #TODO: setup FTDI rules
+#TODO: setup FTDI rules
+sudo mv 99-ftdi.rules /etc/udev/rules.d/99-ftdi.rules    
 # Install dependencies
+sudo apt update
+sudo apt upgrade -y
 sudo apt install -y libfftw3-dev libopencv-dev libeigen3-dev libfmt-dev network-manager 
 #TODO: Figure out where to make the symlinks for libraries if needed
 # network setup

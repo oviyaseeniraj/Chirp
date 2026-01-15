@@ -12,10 +12,10 @@ OBJS = $(SRCS:.cpp=.o)
 all: $(APP)
 
 $(APP): $(OBJS)
-	$(CXX) $(OBJS) -o $(APP) $(CXXFLAGS)
+	$(CXX) $(OBJS) -o $(APP) $(CXXFLAGS) $(DYNAMIC_LIB) 
 
 %.o: %.cpp
-	$(CXX) -c $< -o $@ $(CXXFLAGS)
+	$(CXX) -c $< -o $@ $(CXXFLAGS) $(DYNAMIC_LIB) 
 
 clean:
 	-rm -f $(OBJS) $(APP)

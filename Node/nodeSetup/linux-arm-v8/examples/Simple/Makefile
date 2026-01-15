@@ -6,7 +6,7 @@ APP = simpleConfig
 all: $(APP)
 
 $(APP): config.c	
-	$(CC) config.c -o $(APP) $(CFLAGS)
+	$(CC) config.c -o $(APP) $(CFLAGS) $(DYNAMIC_LIB) 
 	
 clean:
 	-rm -f *.o ; rm $(APP)

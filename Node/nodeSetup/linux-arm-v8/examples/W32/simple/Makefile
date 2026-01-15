@@ -6,7 +6,7 @@ APP = w32_simple
 all: $(APP)
 
 $(APP): main.c	
-	$(CC) main.c -o $(APP) $(CFLAGS) -g
+	$(CC) main.c -o $(APP) $(CFLAGS) $(DYNAMIC_LIB)  -g
 	
 clean:
 	-rm -f *.o ; rm $(APP)

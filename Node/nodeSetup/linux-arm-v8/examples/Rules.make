@@ -4,26 +4,29 @@ DEPENDENCIES := -lftd2xx -lpthread
 # Determine the operating system
 UNAME := $(shell uname)
 
-# Additional dependencies based on OS
-ifeq ($(UNAME), Darwin)
-	DEPENDENCIES += -lobjc -framework IOKit -framework CoreFoundation
-else
-	DEPENDENCIES += -lrt
-endif
-
 # Current working directory
+TOPDIR := $(CURDIR)
 CURRENT_DIR := $(TOPDIR)/../build
 
-# Embed in the executable a run-time path to libftd2xx
+# Additional dependencies and static lib path based on OS
 ifeq ($(UNAME), Darwin)
-LINKER_OPTIONS := -Wl,-rpath,$(CURRENT_DIR)
+    DEPENDENCIES += -lobjc -framework IOKit -framework CoreFoundation
+    STATIC_LIB_PATH := $(CURRENT_DIR)/libftd2xx.a
+    LINKER_OPTIONS := -Wl,-rpath,$(CURRENT_DIR)
 else
-LINKER_OPTIONS := -Wl,-rpath /usr/local/lib
+    DEPENDENCIES += -lrt
+    STATIC_LIB_PATH := /usr/local/lib/libftd2xx.a
+    LINKER_OPTIONS := -Wl,-rpath,/usr/local/lib
 endif
 
 # Compiler flags
+CFLAGS := -Wall -Wextra
+
+# Dynamic and static linking options
 ifeq ($(UNAME), Darwin)
-CFLAGS = -Wall -Wextra $(DEPENDENCIES) $(LINKER_OPTIONS) -L$(CURRENT_DIR)
+    DYNAMIC_LIB := $(DEPENDENCIES) $(LINKER_OPTIONS) -L$(CURRENT_DIR)
+    STATIC_LIB := $(LINKER_OPTIONS) -L$(CURRENT_DIR) $(STATIC_LIB_PATH)
 else
-CFLAGS = -Wall -Wextra $(DEPENDENCIES) $(LINKER_OPTIONS) -L/usr/local/lib
+    DYNAMIC_LIB := $(DEPENDENCIES) $(LINKER_OPTIONS) -L/usr/local/lib
+    STATIC_LIB := $(LINKER_OPTIONS) -L/usr/local/lib $(STATIC_LIB_PATH)
 endif

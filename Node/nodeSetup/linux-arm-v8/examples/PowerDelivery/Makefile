@@ -9,7 +9,7 @@ all: $(APPS)
 
 # Pattern rule for compiling .c files into executables
 %: %.c
-	$(CC) $< -o $@ $(CFLAGS)
+	$(CC) $< -o $@ $(CFLAGS) $(DYNAMIC_LIB) 
 
 clean:
 	-rm -f *.o $(APPS)

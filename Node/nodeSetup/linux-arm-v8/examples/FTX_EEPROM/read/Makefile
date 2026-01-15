@@ -6,7 +6,7 @@ APP = ftx_eeprom_read
 all: $(APP)
 
 $(APP): ftx-eeprom-read.c	
-	$(CC) ftx-eeprom-read.c -o $(APP) $(CFLAGS)
+	$(CC) ftx-eeprom-read.c -o $(APP) $(CFLAGS) $(DYNAMIC_LIB) 
 	
 clean:
 	-rm -f *.o ; rm $(APP)

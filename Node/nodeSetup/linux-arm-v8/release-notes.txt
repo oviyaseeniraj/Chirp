@@ -1,6 +1,17 @@
 libftd2xx Release Notes
+
+1.4.34
+Resolved issue where FT_Read was returning FT_IO_ERROR without checking the correct LIBUSB_ERROR status.
+Fixed URB submission conflict issue.
+Addressed potential memory overflow condition.
+Resolved transfer timeout handling issue.
+Integrated libusb 1.0.29 enhancements into the D2XX driver.
+
 1.4.33
 Removed ZLP code which is specific to FT4222.
+Resolved the 15-second delay issue with FT_CreateDeviceInfoList on macOS (Bug ID: 407) by integrating the fix from libusb 1.0.22, now included in libusb 1.0.27.
+Build with DEFINES += -D_TIME_BITS=64 -D_FILE_OFFSET_BITS=64 for ARMv7 hard-float to enable 64-bit time_t. (Bug ID: 469 )
+		(Bug Y2038: GLIBC 64-bit time_t on 32-bit platforms)
 
 1.4.32
 Update libusb 1.0.22 to 1.0.27.

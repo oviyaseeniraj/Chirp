@@ -71,7 +71,7 @@ int main(int argc, char *argv[])
 		return 1;
 	}
 #endif
-while(i < 5){
+while(i < 1025){
     ftStatus = FT_CreateDeviceInfoList(&numDevs);
     if (ftStatus != FT_OK) 
     {

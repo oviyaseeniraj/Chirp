@@ -20,6 +20,15 @@ using namespace rapidjson;
 #define SIZE_W_IQ TX*RX*FAST_TIME*SLOW_TIME*IQ  // Size of the total number of separate IQ sampels from ONE frame
 #define SIZE TX*RX*FAST_TIME*SLOW_TIME          // Size of the total number of COMPLEX samples from ONE frame
 
+// Radar parameters for doppler velocity calculation (77GHz FMCW radar)
+#define CARRIER_FREQ 77e9       // Carrier frequency in Hz (77 GHz)
+#define SPEED_OF_LIGHT 3e8      // Speed of light in m/s
+#define LAMBDA (SPEED_OF_LIGHT / CARRIER_FREQ)  // Wavelength in meters (~0.0039m)
+#define CHIRP_DURATION 100e-6   // Chirp duration in seconds (100 microseconds typical)
+#define FRAME_PERIOD (SLOW_TIME * CHIRP_DURATION)  // Frame period = num_chirps * chirp_duration
+#define MAX_VELOCITY (LAMBDA / (4.0 * CHIRP_DURATION))  // Maximum unambiguous velocity
+#define VELOCITY_RES (2.0 * MAX_VELOCITY / SLOW_TIME)   // Velocity resolution per bin
+
 #define BUFFER_SIZE 2048 
 #define PORT        4098
 #define BYTES_IN_PACKET 1456 // Max packet size - sequence number and byte count = 1466-10 
@@ -45,6 +54,7 @@ class JSON_TCP {
 	char buffer[MAXLINE];
 	int n;
 	string exit_msg;
+	float* rdm_data_ptr = nullptr;  // Pointer to RDM data for saving
     
 	public:
 		// Constructor with optional node name
@@ -60,7 +70,7 @@ class JSON_TCP {
 		
 		string getNodeName() const { return node_name; }
     
-		void write_json(string fname, float angle, float range, auto duration) {
+		void write_json(string fname, float angle, float range, float doppler, int doppler_bin, auto duration) {
 		    Document d; 
 		    d.SetObject();
 		    s.SetString(node_name.c_str(), d.GetAllocator());
@@ -71,6 +81,14 @@ class JSON_TCP {
 		    d.AddMember("Elapsed Time (ms)", duration.count(), d.GetAllocator());
 		    d.AddMember("Angle", angle, d.GetAllocator());
 		    d.AddMember("Range", range, d.GetAllocator());
+		    d.AddMember("Doppler", doppler, d.GetAllocator());  // Doppler velocity in m/s
+		    d.AddMember("Doppler Bin", doppler_bin, d.GetAllocator());  // Raw doppler bin index
+
+		    // Add RDM data file path
+		    string rdm_fname = fname.substr(0, fname.find_last_of('.')) + "_rdm.bin";
+		    Value rdm_path;
+		    rdm_path.SetString(rdm_fname.c_str(), d.GetAllocator());
+		    d.AddMember("RDM File", rdm_path, d.GetAllocator());
 
 		    // Open the output file
 		    fp = fopen(fname.c_str(), "w");
@@ -82,11 +100,29 @@ class JSON_TCP {
 		    d.Accept(writer);
 
 		    fclose(fp);
-		    printf("Frame %d saved: Angle=%.1f°, Range=%.2fm\n", frame, angle, range);
+		    printf("Frame %d saved: Angle=%.1f°, Range=%.2fm, Doppler=%.2fm/s\n", frame, angle, range, doppler);
 		}
 
-		void send_file_data(string fname, float angle, float range, auto duration) {
-			write_json(fname, angle, range, duration);    	// Write JSON file with angle data
+		// Save RDM data to binary file for Python plotting
+		void save_rdm_binary(const string& filename, float* rdm_data) {
+		    FILE* fp_rdm = fopen(filename.c_str(), "wb");
+		    if (fp_rdm == NULL) {
+		        perror("[ERROR] Could not open RDM file for writing\n");
+		        return;
+		    }
+		    
+		    // Write header: dimensions (SLOW_TIME=64, FAST_TIME=512)
+		    int dims[2] = {SLOW_TIME, FAST_TIME};
+		    fwrite(dims, sizeof(int), 2, fp_rdm);
+		    
+		    // Write the RDM data (64 * 512 floats)
+		    fwrite(rdm_data, sizeof(float), SLOW_TIME * FAST_TIME, fp_rdm);
+		    
+		    fclose(fp_rdm);
+		}
+
+		void send_file_data(string fname, float angle, float range, float doppler, int doppler_bin, auto duration) {
+			write_json(fname, angle, range, doppler, doppler_bin, duration);    	// Write JSON file with angle data
 		    fp_in = fopen(fname.c_str(), "r");				// Read JSON file with angle data
 
 		    // Read the text file
@@ -146,14 +182,30 @@ class JSON_TCP {
 			return stoi(buffer);
 		}
 
-		void process(float angle, float range, auto start_time) {
+		// Set RDM data pointer for saving
+		void setRDMPointer(float* ptr) {
+		    rdm_data_ptr = ptr;
+		}
+
+		void process(float angle, float range, float doppler, int doppler_bin, auto start_time) {
 		    auto stop = chrono::high_resolution_clock::now();
 		    auto duration_udp_process = duration_cast<milliseconds>(stop - start_time);		    
 		    
 			fname = format("%s/%s_Frame%d.json", path, node_name.c_str(), frame);
-		    write_json(fname, angle, range, duration_udp_process); // Write JSON file locally
+		    write_json(fname, angle, range, doppler, doppler_bin, duration_udp_process); // Write JSON file locally
+		    
+		    // Save RDM binary data for plotting
+		    if (rdm_data_ptr != nullptr) {
+		        string rdm_fname = format("%s/%s_Frame%d_rdm.bin", path, node_name.c_str(), frame);
+		        save_rdm_binary(rdm_fname, rdm_data_ptr);
+		    }
 		    
 		    frame++;
+		}
+		
+		// Legacy process method for backward compatibility
+		void process(float angle, float range, auto start_time) {
+		    process(angle, range, 0.0f, 0, start_time);
 		}
 		
 	void end_stream() {
@@ -170,6 +222,33 @@ class JSON_TCP {
 			printf("Calibration complete! Check %s/calibration_output/\n", path);
 		} else {
 			printf("Calibration failed (exit code: %d)\n", ret);
+		}
+	}
+	
+	void run_rdm_plotting() {
+		printf("\n=== Running Range-Doppler Map Plotting ===\n");
+		// Call Python RDM plotting script with data directory
+		// The script path is relative to the project root
+		string script_path = "/home/fusionsense/Documents/Chirp/Node/src/rpl/rdm_plotter.py";
+		string cmd = format("python3 %s %s", script_path.c_str(), path);
+		int ret = system(cmd.c_str());
+		if (ret == 0) {
+			printf("RDM plotting complete! Check %s/rdm_plots/\n", path);
+		} else {
+			printf("RDM plotting failed (exit code: %d)\n", ret);
+		}
+	}
+	
+	void run_rdm_plotting_single(int frame_num) {
+		printf("\n=== Running Range-Doppler Map Plotting for Frame %d ===\n", frame_num);
+		// Call Python RDM plotting script for a single frame
+		string script_path = "/home/fusionsense/Documents/Chirp/Node/src/rpl/rdm_plotter.py";
+		string cmd = format("python3 %s %s --frame %d", script_path.c_str(), path, frame_num);
+		int ret = system(cmd.c_str());
+		if (ret == 0) {
+			printf("RDM plot saved!\n");
+		} else {
+			printf("RDM plotting failed (exit code: %d)\n", ret);
 		}
 	}
 };
@@ -654,6 +733,8 @@ class RangeDoppler : public RadarBlock
 			final_angle = reinterpret_cast<float*>(malloc(1 * sizeof(float)));
 			final_range = reinterpret_cast<float*>(malloc(1 * sizeof(float)));
 			cfar_max = reinterpret_cast<int*>(malloc(1 * sizeof(int)));
+			final_doppler = reinterpret_cast<float*>(malloc(1 * sizeof(float)));
+			final_doppler_bin = reinterpret_cast<int*>(malloc(1 * sizeof(int)));
 			//Rmatrix = reinterpret_cast<complex<float>*>(malloc(64 * sizeof(complex<float>)));
 			Rmatrix = reinterpret_cast<complex<float>*>(malloc(144 * sizeof(complex<float>)));
 
@@ -1108,6 +1189,60 @@ class RangeDoppler : public RadarBlock
 	    return angle_norm; // getting range values
 	}
 
+	float* getDopplerBufferPointer()
+	{
+	    return final_doppler; // getting doppler velocity in m/s
+	}
+
+	int* getDopplerBinPointer()
+	{
+	    return final_doppler_bin; // getting raw doppler bin index
+	}
+
+	float* getRDMDataPointer()
+	{
+	    return zero_rdm_avg; // getting the full range-doppler map data
+	}
+
+	// Calculate doppler velocity from bin index
+	void compute_doppler_velocity(int cfar_idx) {
+	    // Get the doppler bin (slow time dimension)
+	    int doppler_bin = cfar_idx / FAST_TIME;
+	    
+	    // Shift to center (fftshift was applied, so center bin is at SLOW_TIME/2)
+	    // After fftshift, bin 0 corresponds to most negative velocity
+	    // bin SLOW_TIME/2 corresponds to zero velocity
+	    // bin SLOW_TIME-1 corresponds to most positive velocity
+	    int shifted_bin = doppler_bin - SLOW_TIME/2;
+	    
+	    // Calculate velocity: positive = approaching, negative = receding
+	    float velocity = shifted_bin * VELOCITY_RES;
+	    
+	    final_doppler[0] = velocity;
+	    final_doppler_bin[0] = doppler_bin;
+	    
+	    std::cout << "Doppler bin: " << doppler_bin << ", Velocity: " << velocity << " m/s" << std::endl;
+	}
+
+	// Save RDM data to binary file for Python plotting
+	int save_rdm_data(const string& filename) {
+	    std::ofstream outfile(filename, std::ios::binary);
+	    if (!outfile.is_open()) {
+	        std::cerr << "Error: Could not open file " << filename << std::endl;
+	        return -1;
+	    }
+	    
+	    // Write header: dimensions
+	    int dims[2] = {SLOW_TIME, FAST_TIME};
+	    outfile.write(reinterpret_cast<char*>(dims), sizeof(dims));
+	    
+	    // Write the RDM data
+	    outfile.write(reinterpret_cast<char*>(zero_rdm_avg), SLOW_TIME * FAST_TIME * sizeof(float));
+	    
+	    outfile.close();
+	    return 0;
+	}
+
 	// Still need to fix this fftshift issue
 	void fftshift_ang_est(float* arr){
 	    int midRow = 64 / 2;
@@ -1442,6 +1577,9 @@ class RangeDoppler : public RadarBlock
 	    //fftshift_ang_est(angle_norm);
 	    find_azimuth_angle(angle_norm, final_angle);
 	    
+	    // Calculate doppler velocity from CFAR detection
+	    compute_doppler_velocity(cfar_max[0]);
+	    
 
             // string str = ("./out") + to_string(frame) + ".txt";
             // save_1d_array(rdm_avg, FAST_TIME, SLOW_TIME, str);
@@ -1456,9 +1594,11 @@ class RangeDoppler : public RadarBlock
 
         private: 
             float *adc_data_flat, *rdm_avg, *rdm_norm, *adc_data_reshaped, *cfar_cube, *angle_norm, *final_angle, *final_range, *prev_rdm_avg, *zero_rdm_avg;
+            float *final_doppler;  // Doppler velocity in m/s
             std::complex<float> *rdm_data, *adc_data, *angle_data, *angfft_data, *Rmatrix, *onlyRD_data, *preholding_data, *postholding_data;
             fftwf_plan plan, plan2, plan3;
 	    int *cfar_max;
+	    int *final_doppler_bin;  // Raw doppler bin index
             uint16_t* input;
             const char *WINDOW_TYPE;
             bool SET_SNR;

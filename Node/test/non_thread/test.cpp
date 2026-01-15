@@ -21,6 +21,9 @@ int main(int argc, char* argv[])
     int      *angidx_visptr = rdm.getAngleIndexPointer();
     float    *range_visualizeptr = rdm.getRangeBufferPointer();
     float    *angleMap_ptr = rdm.getAngleMapPointer();
+    float    *doppler_visualizeptr = rdm.getDopplerBufferPointer();  // Doppler velocity in m/s
+    int      *doppler_bin_ptr = rdm.getDopplerBinPointer();  // Raw doppler bin
+    float    *rdm_data_ptr = rdm.getRDMDataPointer();  // Full RDM data for plotting
     
     rdm.setBufferPointer(in_bufferptr);
     vis.setBufferPointer(in_visualizeptr);
@@ -28,6 +31,7 @@ int main(int argc, char* argv[])
     vis.setAngleIndexPointer(angidx_visptr);
     vis.setRangeBufferPointer(range_visualizeptr);
     vis.setAngleMapPointer(angleMap_ptr);
+    tcp.setRDMPointer(rdm_data_ptr);  // Set RDM pointer for saving binary files
 
     // FRAME POINTER INITIATION
     auto frame_daq = daq.getFramePointer();
@@ -81,15 +85,18 @@ int main(int argc, char* argv[])
         rdm.process();
         vis.process();
         
-        // Get angle and range for this frame
+        // Get angle, range, and doppler for this frame
         float angle = *ang_visualizeptr;
         float range = *range_visualizeptr;
+        float doppler = *doppler_visualizeptr;
+        int doppler_bin = *doppler_bin_ptr;
         
-        // Save data
-        tcp.process(angle, range, start);
+        // Save data (including doppler and RDM binary)
+        tcp.process(angle, range, doppler, doppler_bin, start);
         
         std::cout << "Frame " << (i+1) << "/" << num_frames 
-                  << " - Angle: " << angle << "°, Range: " << range << "m\n";
+                  << " - Angle: " << angle << "°, Range: " << range << "m"
+                  << ", Doppler: " << doppler << "m/s\n";
     }
     
     tcp.end_stream();
@@ -98,6 +105,9 @@ int main(int argc, char* argv[])
     std::cout << "Running calibration...\n\n";
     
     tcp.run_calibration();
+    
+    std::cout << "\n=== Running Range-Doppler Map Plotting ===\n";
+    tcp.run_rdm_plotting();
 
     return 0;
 }

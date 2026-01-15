@@ -160,6 +160,7 @@ dmypy.json
 *.so.*
 *.dylib
 !libftd2xx.*
+!libRF_API.so
 
 # Executables
 *.exe

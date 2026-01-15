@@ -8,8 +8,8 @@ fi
 # FTDI setup
 pushd linux-arm-v8/  
 sudo cp libftd2xx.* /usr/local/lib/  
-chmod 0755 /usr/local/lib/libftd2xx.so.1.4.33  
-ln -sf /usr/local/lib/libftd2xx.so.1.4.33 /usr/local/lib/libftd2xx.so  
+chmod 0755 /usr/local/lib/libftd2xx.so.1.4.34  
+ln -sf /usr/local/lib/libftd2xx.so.1.4.34 /usr/local/lib/libftd2xx.so  
 cp ftd2xx.h /usr/local/include/  
 cp WinTypes.h /usr/local/include/  
 ldconfig -v

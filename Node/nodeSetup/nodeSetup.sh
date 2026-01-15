@@ -37,7 +37,12 @@ if [[ ":$PATH:" != *":$NEW_PATH:"* ]]; then
     
     echo "Path added to .bashrc and current session."
 fi
-#TODO: Figure out where to make the symlinks for libraries if needed
+
+pushd ../DCA1000/SourceCode/Release/
+LD_LIBRARY_PATH=$(pwd)
+export LD_LIBRARY_PATH
+sudo ldconfig $(pwd)
+popd
 
 # network setup
 INTERFACE=$(nmcli device status | grep ethernet | awk '{print $1}' | head -n 1)

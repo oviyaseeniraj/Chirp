@@ -1,0 +1,106 @@
+
+services:
+  nanomq:
+    image: emqx/nanomq:latest
+    container_name: nanomq
+    ports:
+      - "1883:1883"
+      - "8081:8081"
+
+  db:
+    image: postgres:16
+    container_name: postgres
+    restart: always
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: mqttdata
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  ingest:
+    build: 
+      context: .
+      dockerfile: Dockerfile.ingest
+    container_name: ingest
+    depends_on:
+      - nanomq
+      - db
+    environment:
+      MQTT_BROKER: nanomq
+      MQTT_PORT: 1883
+      MQTT_TOPIC: input/+/data
+      POSTGRES_HOST: db
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: mqttdata
+    restart: always
+
+  publisher:
+    build: 
+      context: .
+      dockerfile: Dockerfile.publisher
+    container_name: publisher
+    depends_on:
+      - nanomq
+    environment:
+      MQTT_BROKER: nanomq
+      MQTT_PORT: 1883
+      MQTT_TOPIC: input/
+      DEV_NAME: nuts
+    restart: always
+
+  keygen:
+    build: 
+      context: .
+      dockerfile: Dockerfile.keygen
+    container_name: keygen
+    depends_on:
+      - nanomq
+    environment:
+      MQTT_BROKER: nanomq
+      MQTT_PORT: 1883
+      MQTT_TOPIC: input/key
+      POSTGRES_HOST: db
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: mqttdata
+    restart: always
+
+  calibration_processor:
+    build: 
+      context: .
+      dockerfile: Dockerfile.calibration
+    container_name: calibration_processor
+    depends_on:
+      - nanomq
+      - db
+      - ingest
+    environment:
+      PYTHONUNBUFFERED: 1              # Disable Python output buffering for logs
+      POSTGRES_HOST: db
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: mqttdata
+      CALIBRATION_WINDOW: 50           # Use last N frames for calibration
+      CHECK_INTERVAL: 2.0              # Check for new frames every N seconds
+      MIN_RADARS: 2                    # Minimum number of radars required
+    restart: always
+
+  # pgadmin:
+  #   image: dpage/pgadmin4:latest
+  #   container_name: pgadmin
+  #   depends_on:
+  #     - db
+  #   environment:
+  #     PGADMIN_DEFAULT_EMAIL: admin@example.com
+  #     PGADMIN_DEFAULT_PASSWORD: admin123
+  #     PGADMIN_CONFIG_SERVER_MODE: 'False'
+  #   ports:
+  #     - "8080:80"
+  #   restart: always
+
+volumes:
+  pgdata:

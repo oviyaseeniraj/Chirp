@@ -21,9 +21,10 @@ apt-get install -y chrony
 
 echo ""
 echo "[2/4] Which Jetson is this?"
-echo "  1) Master/Server (169.231.16.241)"
-echo "  2) Slave/Client (169.231.209.82)"
-read -p "Enter choice [1-2]: " choice
+echo "  1) Master/Server (Primary time source)"
+echo "  2) Slave/Client #1"
+echo "  3) Slave/Client #2"
+read -p "Enter choice [1-3]: " choice
 
 if [ "$choice" = "1" ]; then
     echo ""
@@ -40,17 +41,11 @@ manual
 # Allow clients on local network
 allow 169.231.0.0/16
 
-# Serve time even if not synchronized to external source
-local stratum 8
-
 # Log directory
 logdir /var/log/chrony
 
 # Enable kernel synchronization
 rtcsync
-
-# Increase polling interval for stability
-maxpoll 6
 
 # Smooth time adjustments
 smoothtime 400 0.001
@@ -73,15 +68,19 @@ EOF
     echo "  sudo chronyc clients"
     echo ""
     
-elif [ "$choice" = "2" ]; then
-    read -p "[3/4] Enter Master IP [169.231.16.241]: " master_ip
-    master_ip=${master_ip:-169.231.16.241}
+elif [ "$choice" = "2" ] || [ "$choice" = "3" ]; then
+    read -p "[3/4] Enter Master IP address: " master_ip
+    
+    if [ -z "$master_ip" ]; then
+        echo "[ERROR] Master IP is required"
+        exit 1
+    fi
     
     echo ""
-    echo "[4/4] Configuring as NTP Client..."
+    echo "[4/4] Configuring as NTP Client (Slave #$((choice-1)))..."
     
     cat > /etc/chrony/chrony.conf <<EOF
-# Chrony NTP Client Configuration
+# Chrony NTP Client Configuration (Slave #$((choice-1)))
 # ================================
 
 # Use local master as time source
@@ -96,13 +95,8 @@ logdir /var/log/chrony
 # Enable kernel synchronization
 rtcsync
 
-# Increase polling frequency for faster convergence
-minpoll 0
-maxpoll 4
-
-# Allow larger adjustments
+# Allow larger adjustments for local network sync
 maxdistance 10.0
-maxdelay 0.1
 
 # Smooth time adjustments
 smoothtime 400 0.001
@@ -117,7 +111,7 @@ EOF
     
     echo ""
     echo "=========================================="
-    echo "✓ Client configured successfully!"
+    echo "✓ Slave #$((choice-1)) configured successfully!"
     echo "=========================================="
     echo ""
     echo "Verify with:"
@@ -137,4 +131,63 @@ echo "Monitoring commands:"
 echo "  chronyc sources    - Show time sources"
 echo "  chronyc tracking   - Show sync status and offset"
 echo "  chronyc sourcestats - Show source statistics"
+echo ""
+
+# Compile radar test executable
+echo "=========================================="
+echo "Compiling Radar Test Executable"
+echo "=========================================="
+echo ""
+
+RADAR_DIR="/home/fusionsense/Documents/Chirp/Node/test/non_thread"
+
+if [ -d "$RADAR_DIR" ]; then
+    echo "Found radar directory at: $RADAR_DIR"
+    echo "Compiling test executable..."
+    
+    cd $RADAR_DIR
+    make clean
+    make
+    
+    if [ -f "./test" ]; then
+        echo "✓ Test executable compiled successfully!"
+        echo ""
+        echo "Test executable location: $RADAR_DIR/test"
+    else
+        echo "✗ Compilation failed. Check errors above."
+    fi
+else
+    echo "✗ Radar directory not found at: $RADAR_DIR"
+    echo "  Clone the repo first:"
+    echo "    cd ~/Documents"
+    echo "    git clone https://github.com/oviyaseeniraj/Chirp.git"
+    echo "    cd Chirp && git checkout real-time"
+fi
+
+echo ""
+echo "=========================================="
+echo "Quick Setup Guide (3-Node Configuration):"
+echo "=========================================="
+echo ""
+echo "On Master Jetson:"
+echo "  sudo ./CHRONY_SETUP.sh"
+echo "  Select: 1 (Master/Server)"
+echo ""
+echo "On Slave Jetson #1:"
+echo "  sudo ./CHRONY_SETUP.sh"
+echo "  Select: 2 (Slave/Client #1)"
+echo "  Enter Master IP when prompted"
+echo ""
+echo "On Slave Jetson #2:"
+echo "  sudo ./CHRONY_SETUP.sh"
+echo "  Select: 3 (Slave/Client #2)"
+echo "  Enter Master IP when prompted"
+echo ""
+echo "After all are configured, verify sync:"
+echo "  On each Slave: chronyc tracking"
+echo "  Look for offset < 1ms"
+echo ""
+echo "On Master, check connected clients:"
+echo "  chronyc clients"
+echo ""
 

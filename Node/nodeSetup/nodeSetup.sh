@@ -8,11 +8,11 @@ fi
 # FTDI setup
 pushd linux-arm-v8/  
 sudo cp libftd2xx.* /usr/local/lib/  
-chmod 0755 /usr/local/lib/libftd2xx.so.1.4.34  
-ln -sf /usr/local/lib/libftd2xx.so.1.4.34 /usr/local/lib/libftd2xx.so  
-cp ftd2xx.h /usr/local/include/  
-cp WinTypes.h /usr/local/include/  
-ldconfig -v
+sudo chmod 0755 /usr/local/lib/libftd2xx.so.1.4.34  
+sudo ln -sf /usr/local/lib/libftd2xx.so.1.4.34 /usr/local/lib/libftd2xx.so  
+sudo cp ftd2xx.h /usr/local/include/  
+sudo cp WinTypes.h /usr/local/include/  
+sudo ldconfig -v
 popd
 #TODO: setup FTDI rules
 sudo mv 99-ftdi.rules /etc/udev/rules.d/99-ftdi.rules  
@@ -25,7 +25,7 @@ sudo apt update
 sudo apt upgrade -y
 sudo apt install -y libfftw3-dev libopencv-dev libeigen3-dev libfmt-dev network-manager python3-pip
 # the cmake version installed by apt is outdated, install via pip
-pip install cmake
+sudo pip install cmake
 # add cmake to path
 NEW_PATH="$HOME/.local/bin"
 if [[ ":$PATH:" != *":$NEW_PATH:"* ]]; then
@@ -33,7 +33,7 @@ if [[ ":$PATH:" != *":$NEW_PATH:"* ]]; then
     export PATH="$NEW_PATH:$PATH"
     
     # Add to .bashrc so it persists in future sessions
-    echo "export PATH=\"$NEW_PATH:\$PATH\"" >> "$HOME/.bashrc"
+    sudo echo "export PATH=\"$NEW_PATH:\$PATH\"" >> "$HOME/.bashrc"
     
     echo "Path added to .bashrc and current session."
 fi

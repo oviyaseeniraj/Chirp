@@ -20,7 +20,7 @@
   },
 
   "captureConfig": {
-  "fileBasePath": "/home/fusionsense/Desktop/test_data",
+  "fileBasePath": "/home/chirp/Chirp/Node/data",
   "filePrefix": "04_05_first_capture",
   "maxRecFileSize_MB": 1024,
   "sequenceNumberEnable": 1,

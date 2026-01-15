@@ -149,6 +149,7 @@ dmypy.json
 
 # Libraries
 *.lib
+
 *.a
 *.la
 *.lo
@@ -158,6 +159,8 @@ dmypy.json
 *.so
 *.so.*
 *.dylib
+!libftd2xx.*
+!libRF_API.so
 
 # Executables
 *.exe

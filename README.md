@@ -36,6 +36,17 @@ Contains the codebase for the end-to-end mmSnap Pipeline containing the blocks f
 - [Self-Calibration](#self-calibration)
 - [One-Shot Fusion](#one-shot-fusion)
 
+## Dependencies
+With Homebrew on MacOS:
+1. `brew install opencv` 
+- should be installed at */opt/homebrew/Cellar/opencv/*/include/opencv4
+
+2. `brew install `
+
+With apt on Linux:
+1. `sudo apt install libfftw3-dev libopencv-dev libeigen3-dev libfmt-dev`
+    a. use `dpkg -L <package>` to find the location for include errors
+
 ### Range-Doppler-Angle Processing
 
 - Input : 5D Radar Cube Data (Format : Frames X Chirps per Frame X Num_Rx X Num_Tx X ADC Samples)

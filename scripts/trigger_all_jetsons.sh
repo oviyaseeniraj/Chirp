@@ -3,13 +3,12 @@
 
 set -e
 
-# Configuration - Add your Jetson IPs and names here
-declare -A JETSONS=(
-    ["Master"]="169.231.217.90"     # Master node
-    ["Slave"]="169.231.22.160"      # Slave node
-    # ["Node3"]="169.231.xxx.xxx"   # Uncomment and add IP if you have more
-    # ["Node4"]="169.231.xxx.xxx"   # Uncomment and add IP if you have more
-)
+# Configuration - Add your Jetson IPs and names here (parallel arrays for bash 3.2 compatibility)
+JETSON_NAMES=("Master" "Slave")
+JETSON_IPS=("169.231.216.36" "169.231.22.160")
+# To add more Jetsons:
+# JETSON_NAMES=("Master" "Slave" "Node3" "Node4")
+# JETSON_IPS=("169.231.217.90" "169.231.22.160" "169.231.xxx.xxx" "169.231.xxx.xxx")
 
 SSH_USER="${SSH_USER:-fusionsense}"
 NUM_FRAMES="${NUM_FRAMES:-100}"
@@ -27,15 +26,16 @@ echo "============================================================"
 echo ""
 
 # Check if any Jetsons configured
-if [ ${#JETSONS[@]} -eq 0 ]; then
+if [ ${#JETSON_NAMES[@]} -eq 0 ]; then
     echo -e "${RED}Error: No Jetsons configured!${NC}"
-    echo "Edit this script and add Jetson IPs to the JETSONS array"
+    echo "Edit this script and add Jetson names/IPs to the JETSON_NAMES and JETSON_IPS arrays"
     exit 1
 fi
 
 echo "Configured Jetsons:"
-for name in "${!JETSONS[@]}"; do
-    ip="${JETSONS[$name]}"
+for i in "${!JETSON_NAMES[@]}"; do
+    name="${JETSON_NAMES[$i]}"
+    ip="${JETSON_IPS[$i]}"
     echo "  - $name: $ip"
 done
 echo ""
@@ -45,8 +45,9 @@ echo ""
 # Verify SSH connectivity
 echo "Checking SSH connectivity..."
 failed_jetsons=()
-for name in "${!JETSONS[@]}"; do
-    ip="${JETSONS[$name]}"
+for i in "${!JETSON_NAMES[@]}"; do
+    name="${JETSON_NAMES[$i]}"
+    ip="${JETSON_IPS[$i]}"
     if ssh -o ConnectTimeout=5 -o BatchMode=yes "$SSH_USER@$ip" "echo connected" &>/dev/null; then
         echo -e "  ${GREEN}✓${NC} $name ($ip)"
     else
@@ -69,13 +70,49 @@ echo ""
 echo -e "${GREEN}✓ All Jetsons reachable${NC}"
 echo ""
 
+# Check if xvfb is installed (needed for headless GUI)
+echo "Checking xvfb installation..."
+xvfb_missing=()
+for i in "${!JETSON_NAMES[@]}"; do
+    name="${JETSON_NAMES[$i]}"
+    ip="${JETSON_IPS[$i]}"
+    if ! ssh "$SSH_USER@$ip" "which xvfb-run" &>/dev/null; then
+        xvfb_missing+=("$name")
+    fi
+done
+
+if [ ${#xvfb_missing[@]} -gt 0 ]; then
+    echo -e "${YELLOW}⚠ xvfb not installed on: ${xvfb_missing[*]}${NC}"
+    echo "  The test binary has a GUI that needs a virtual display."
+    echo "  Install with: sudo apt-get install -y xvfb"
+    echo ""
+    read -p "Try to install xvfb on missing Jetsons? [Y/n] " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+        for name in "${xvfb_missing[@]}"; do
+            for i in "${!JETSON_NAMES[@]}"; do
+                if [ "${JETSON_NAMES[$i]}" = "$name" ]; then
+                    ip="${JETSON_IPS[$i]}"
+                    echo "  Installing xvfb on $name..."
+                    ssh "$SSH_USER@$ip" "sudo apt-get update -qq && sudo apt-get install -y -qq xvfb" &
+                fi
+            done
+        done
+        wait
+        echo -e "${GREEN}✓ xvfb installed${NC}"
+    else
+        echo -e "${RED}Warning: Test may fail without xvfb${NC}"
+    fi
+fi
+echo ""
+
 # Clean old data (optional)
 read -p "Clean old frame data before starting? [y/N] " -n 1 -r
 echo
 if [[ $REPLY =~ ^[Yy]$ ]]; then
     echo "Cleaning old data..."
-    for name in "${!JETSONS[@]}"; do
-        ip="${JETSONS[$name]}"
+    for i in "${!JETSON_NAMES[@]}"; do
+        ip="${JETSON_IPS[$i]}"
         ssh "$SSH_USER@$ip" "rm -f $TEST_DIR/frame_data/*.json" &
     done
     wait
@@ -103,13 +140,16 @@ echo ""
 pids=()
 
 # Trigger all Jetsons simultaneously in background
-for name in "${!JETSONS[@]}"; do
-    ip="${JETSONS[$name]}"
+for i in "${!JETSON_NAMES[@]}"; do
+    name="${JETSON_NAMES[$i]}"
+    ip="${JETSON_IPS[$i]}"
     
     echo "Starting $name ($ip)..."
     
-    # SSH and run test in background
-    ssh "$SSH_USER@$ip" "cd $TEST_DIR && ./test $NUM_FRAMES" &
+    # SSH and run test in background, passing node name as argument
+    # Usage: ./test <num_frames> <node_name>
+    # Use xvfb-run to handle headless GUI (Visualizer component)
+    ssh "$SSH_USER@$ip" "cd $TEST_DIR && xvfb-run -a ./test $NUM_FRAMES $name" &
     pids+=($!)
     
     # Small delay to stagger SSH connections
@@ -125,7 +165,7 @@ echo ""
 failed=0
 for i in "${!pids[@]}"; do
     pid=${pids[$i]}
-    name="${!JETSONS[@]:$i:1}"
+    name="${JETSON_NAMES[$i]}"
     
     if wait $pid; then
         echo -e "  ${GREEN}✓${NC} $name completed"
@@ -158,8 +198,9 @@ if [[ ! $REPLY =~ ^[Nn]$ ]]; then
     echo ""
     echo "Starting MQTT publishers on all Jetsons..."
     
-    for name in "${!JETSONS[@]}"; do
-        ip="${JETSONS[$name]}"
+    for i in "${!JETSON_NAMES[@]}"; do
+        name="${JETSON_NAMES[$i]}"
+        ip="${JETSON_IPS[$i]}"
         echo "  Starting publisher on $name..."
         
         # Start publisher in background on Jetson

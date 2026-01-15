@@ -24,3 +24,4 @@ MQTT_PORT="1883"
 # Default collection parameters
 DEFAULT_NUM_FRAMES="100"
 
+

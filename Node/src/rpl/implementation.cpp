@@ -33,7 +33,7 @@ using namespace rapidjson;
 // Class for multi-node server comms
 class JSON_TCP {
     int frame = 1;
-    const char *node = "Patrick";    // Patrick or Mike
+    string node_name;  // Set via constructor or setNodeName()
     int clientSd;
     struct sockaddr_in servaddr;
 	socklen_t addr_size;
@@ -44,13 +44,26 @@ class JSON_TCP {
 	const char *path = "/home/fusionsense/Documents/Chirp/Node/test/non_thread/frame_data";
 	char buffer[MAXLINE];
 	int n;
-	const char *exit_msg = "Patrick Demo Complete";
+	string exit_msg;
     
 	public:
+		// Constructor with optional node name
+		JSON_TCP(const string& name = "Node") : node_name(name) {
+			exit_msg = node_name + " Demo Complete";
+		}
+		
+		// Set node name (can also be called after construction)
+		void setNodeName(const string& name) {
+			node_name = name;
+			exit_msg = node_name + " Demo Complete";
+		}
+		
+		string getNodeName() const { return node_name; }
+    
 		void write_json(string fname, float angle, float range, auto duration) {
 		    Document d; 
 		    d.SetObject();
-		    s.SetString(StringRef(node));
+		    s.SetString(node_name.c_str(), d.GetAllocator());
 
 		    // Add data to the JSON document
 		    d.AddMember("Node", s, d.GetAllocator());
@@ -137,7 +150,7 @@ class JSON_TCP {
 		    auto stop = chrono::high_resolution_clock::now();
 		    auto duration_udp_process = duration_cast<milliseconds>(stop - start_time);		    
 		    
-			fname = format("%s/%s_Frame%d.json", path, node, frame);
+			fname = format("%s/%s_Frame%d.json", path, node_name.c_str(), frame);
 		    write_json(fname, angle, range, duration_udp_process); // Write JSON file locally
 		    
 		    frame++;

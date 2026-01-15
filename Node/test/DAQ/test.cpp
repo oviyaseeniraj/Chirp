@@ -1,5 +1,8 @@
 // g++ -std=c++11 -Wall -Wextra -pedantic -lfftw3f -lm -I../../src/ -o test test.cpp `pkg-config --cflags --libs opencv4`; ./test 
-#include "../src/rpl/private-header.hpp"
+#include "DataAcquisition.h"
+#include "RangeDoppler.h"
+#include "Visualizer.h"
+
 #define INPUT_SIZE 64 * 512
 #define OUTPUT_SIZE 0
 int main()

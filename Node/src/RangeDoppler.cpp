@@ -719,6 +719,7 @@ int RangeDoppler::compute_mag_norm(std::complex<float> *rdm_complex, float *rdm_
         norm = std::norm(val);
         log = log2f(norm) / 2.0f;
         rdm_magnitude[i] = log;
+        // print out values to text file here, write python script to generate heatmap with the values from text file
     }
     return 0;
 }

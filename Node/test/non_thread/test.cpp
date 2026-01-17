@@ -2,6 +2,7 @@
 #include "DataAcquisition.h"
 #include "RangeDoppler.h"
 #include "Visualizer.h"
+#include "JSONTCP.h"
 
 #define INPUT_SIZE 64 * 512
 #define OUTPUT_SIZE 0

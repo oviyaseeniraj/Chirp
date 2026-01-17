@@ -4,7 +4,7 @@
 
 // Class for multi-node server comms
 
-JSON_TCP::JSON_TCP(const std::string &name = "Node") : node_name(name)
+JSON_TCP::JSON_TCP(const std::string &name) : node_name(name)
 {
     exit_msg = node_name + " Demo Complete";
 }
@@ -20,7 +20,7 @@ std::string JSON_TCP::getNodeName() const
     return node_name;
 }
 
-void JSON_TCP::write_json(std::string fname, float angle, float range, auto duration)
+void JSON_TCP::write_json(std::string fname, float angle, float range, std::chrono::milliseconds duration)
 {
     rapidjson::Document d;
     d.SetObject();
@@ -47,7 +47,7 @@ void JSON_TCP::write_json(std::string fname, float angle, float range, auto dura
     printf("Frame %d saved: Angle=%.1f°, Range=%.2fm\n", frame, angle, range);
 }
 
-void JSON_TCP::send_file_data(std::string fname, float angle, float range, auto duration)
+void JSON_TCP::send_file_data(std::string fname, float angle, float range, std::chrono::milliseconds duration)
 {
     write_json(fname, angle, range, duration); // Write JSON file with angle data
     fp_in = fopen(fname.c_str(), "r");         // Read JSON file with angle data
@@ -116,12 +116,12 @@ int JSON_TCP::get_frames()
     return std::stoi(buffer);
 }
 
-void JSON_TCP::process(float angle, float range, auto start_time)
+void JSON_TCP::process(float angle, float range, std::chrono::time_point<std::chrono::high_resolution_clock> start_time)
 {
     auto stop = std::chrono::high_resolution_clock::now();
     auto duration_udp_process = std::chrono::duration_cast<std::chrono::milliseconds>(stop - start_time);
 
-    fname = fmt::format("{}/{}_Frame{}.json", path, node, frame);
+    fname = fmt::format("{}/{}_Frame{}.json", path, node_name.c_str(), frame);
     write_json(fname, angle, range, duration_udp_process); // Write JSON file locally
     frame++;
 }

@@ -28,11 +28,11 @@ public:
     JSON_TCP(const std::string& name = "Node");
     void setNodeName(const std::string& name);
     std::string getNodeName() const;
-    void write_json(std::string fname, float angle, float range, auto duration);
-    void send_file_data(std::string fname, float angle, float range, auto duration);
+    void write_json(std::string fname, float angle, float range, std::chrono::milliseconds duration);
+    void send_file_data(std::string fname, float angle, float range, std::chrono::milliseconds duration);
     int socket_setup();
     int get_frames();
-    void process(float angle, float range, auto start_time);
+    void process(float angle, float range, std::chrono::time_point<std::chrono::high_resolution_clock> start_time);
     void end_stream();
     void run_calibration();
 };

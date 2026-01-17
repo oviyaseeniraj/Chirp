@@ -11,7 +11,7 @@
 class JSON_TCP
 {
     int frame = 1;
-    const char *node = "Patrick"; // Patrick or Mike
+    std::string node_name;  // Set via constructor or setNodeName()
     int clientSd;
     struct sockaddr_in servaddr;
     socklen_t addr_size;
@@ -22,15 +22,19 @@ class JSON_TCP
     const char *path = "/home/fusionsense/repos/AVR/RadarPipeline/test/non_thread/frame_data";
     char buffer[MAXLINE];
     int n;
-    const char *exit_msg = "Patrick Demo Complete";
+    std::string exit_msg = "Patrick Demo Complete";
 
 public:
+    JSON_TCP(const std::string& name = "Node");
+    void setNodeName(const std::string& name);
+    std::string getNodeName() const;
     void write_json(std::string fname, float angle, float range, auto duration);
     void send_file_data(std::string fname, float angle, float range, auto duration);
     int socket_setup();
     int get_frames();
     void process(float angle, float range, auto start_time);
     void end_stream();
+    void run_calibration();
 };
 
 #endif

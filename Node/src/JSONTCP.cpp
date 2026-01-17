@@ -4,11 +4,27 @@
 
 // Class for multi-node server comms
 
+JSON_TCP::JSON_TCP(const std::string &name = "Node") : node_name(name)
+{
+    exit_msg = node_name + " Demo Complete";
+}
+
+void JSON_TCP::setNodeName(const std::string &name)
+{
+    node_name = name;
+    exit_msg = node_name + " Demo Complete";
+}
+
+std::string JSON_TCP::getNodeName() const
+{
+    return node_name;
+}
+
 void JSON_TCP::write_json(std::string fname, float angle, float range, auto duration)
 {
     rapidjson::Document d;
     d.SetObject();
-    s.SetString(rapidjson::StringRef(node));
+    s.SetString(node_name.c_str(), d.GetAllocator());
 
     // Add data to the JSON document
     d.AddMember("Node", s, d.GetAllocator());
@@ -22,12 +38,13 @@ void JSON_TCP::write_json(std::string fname, float angle, float range, auto dura
 
     // Write the JSON data to the file
     char writeBuffer[65536];
-    
+
     rapidjson::FileWriteStream os(fp, writeBuffer, sizeof(writeBuffer));
     rapidjson::Writer<rapidjson::FileWriteStream> writer(os);
     d.Accept(writer);
 
     fclose(fp);
+    printf("Frame %d saved: Angle=%.1f°, Range=%.2fm\n", frame, angle, range);
 }
 
 void JSON_TCP::send_file_data(std::string fname, float angle, float range, auto duration)
@@ -103,19 +120,30 @@ void JSON_TCP::process(float angle, float range, auto start_time)
 {
     auto stop = std::chrono::high_resolution_clock::now();
     auto duration_udp_process = std::chrono::duration_cast<std::chrono::milliseconds>(stop - start_time);
-    
+
     fname = fmt::format("{}/{}_Frame{}.json", path, node, frame);
-    send_file_data(fname, angle, range, duration_udp_process); // Send file to server
-    printf("\nFrame Data Sent To Server\n\n");
+    write_json(fname, angle, range, duration_udp_process); // Write JSON file locally
     frame++;
 }
 
 void JSON_TCP::end_stream()
 {
-    memset(&buffer, 0, sizeof(buffer));
-    strcpy(buffer, exit_msg);
-    n = sendto(clientSd, buffer, MAXLINE, 0, (struct sockaddr *)&servaddr, sizeof(servaddr));
-    close(clientSd);
-    printf("Demo Complete!\n");
-    printf("Connection Closed...\n\n");
+    printf("\n=== Data Collection Complete ===\n");
+    printf("Saved %d frames to: %s\n\n", frame - 1, path);
+}
+
+void JSON_TCP::run_calibration()
+{
+    printf("\n=== Running Calibration ===\n");
+    // Call Python calibration script with data directory
+    std::string cmd = fmt::format("python3 /home/fusionsense/calibrate.py %s", path);
+    int ret = system(cmd.c_str());
+    if (ret == 0)
+    {
+        printf("Calibration complete! Check %s/calibration_output/\n", path);
+    }
+    else
+    {
+        printf("Calibration failed (exit code: %d)\n", ret);
+    }
 }

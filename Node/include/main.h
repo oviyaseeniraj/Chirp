@@ -32,6 +32,14 @@
 #define SIZE_W_IQ TX * RX * FAST_TIME * SLOW_TIME * IQ // Size of the total number of separate IQ sampels from ONE frame
 #define SIZE TX * RX * FAST_TIME *SLOW_TIME            // Size of the total number of COMPLEX samples from ONE frame
 
+#define CARRIER_FREQ 77e9       // Carrier frequency in Hz (77 GHz)
+#define SPEED_OF_LIGHT 3e8      // Speed of light in m/s
+#define LAMBDA (SPEED_OF_LIGHT / CARRIER_FREQ)  // Wavelength in meters (~0.0039m)
+#define CHIRP_DURATION 100e-6   // Chirp duration in seconds (100 microseconds typical)
+#define FRAME_PERIOD (SLOW_TIME * CHIRP_DURATION)  // Frame period = num_chirps * chirp_duration
+#define MAX_VELOCITY (LAMBDA / (4.0 * CHIRP_DURATION))  // Maximum unambiguous velocity
+#define VELOCITY_RES (2.0 * MAX_VELOCITY / SLOW_TIME)   // Velocity resolution per bin
+
 #define BUFFER_SIZE 2048
 #define PORT 4098
 #define BYTES_IN_PACKET 1456 // Max packet size - sequence number and byte count = 1466-10

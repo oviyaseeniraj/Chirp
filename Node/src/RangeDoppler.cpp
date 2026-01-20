@@ -26,6 +26,8 @@ RangeDoppler::RangeDoppler(const char *win) : RadarBlock(SIZE, SIZE)
     final_angle = reinterpret_cast<float *>(malloc(1 * sizeof(float)));
     final_range = reinterpret_cast<float *>(malloc(1 * sizeof(float)));
     cfar_max = reinterpret_cast<int *>(malloc(1 * sizeof(int)));
+    final_doppler = reinterpret_cast<float*>(malloc(1 * sizeof(float)));
+    final_doppler_bin = reinterpret_cast<int*>(malloc(1 * sizeof(int)));
     // Rmatrix = reinterpret_cast<std::complex<float>*>(malloc(64 * sizeof(std::complex<float>)));
     Rmatrix = reinterpret_cast<std::complex<float> *>(malloc(144 * sizeof(std::complex<float>)));
 
@@ -425,6 +427,65 @@ int *RangeDoppler::getAngleIndexPointer()
 {
     return cfar_max; // find_azimuth_angle(angle_norm);
 }
+
+float* RangeDoppler::getAngleMapPointer()
+	{
+	    return angle_norm; // getting range values
+	}
+
+	float* RangeDoppler::getDopplerBufferPointer()
+	{
+	    return final_doppler; // getting doppler velocity in m/s
+	}
+
+	int* RangeDoppler::getDopplerBinPointer()
+	{
+	    return final_doppler_bin; // getting raw doppler bin index
+	}
+
+	float* RangeDoppler::getRDMDataPointer()
+	{
+	    return zero_rdm_avg; // getting the full range-doppler map data
+	}
+
+	// Calculate doppler velocity from bin index
+	void RangeDoppler::compute_doppler_velocity(int cfar_idx) {
+	    // Get the doppler bin (slow time dimension)
+	    int doppler_bin = cfar_idx / FAST_TIME;
+	    
+	    // Shift to center (fftshift was applied, so center bin is at SLOW_TIME/2)
+	    // After fftshift, bin 0 corresponds to most negative velocity
+	    // bin SLOW_TIME/2 corresponds to zero velocity
+	    // bin SLOW_TIME-1 corresponds to most positive velocity
+	    int shifted_bin = doppler_bin - SLOW_TIME/2;
+	    
+	    // Calculate velocity: positive = approaching, negative = receding
+	    float velocity = shifted_bin * VELOCITY_RES;
+	    
+	    final_doppler[0] = velocity;
+	    final_doppler_bin[0] = doppler_bin;
+	    
+	    std::cout << "Doppler bin: " << doppler_bin << ", Velocity: " << velocity << " m/s" << std::endl;
+	}
+
+	// Save RDM data to binary file for Python plotting
+	int RangeDoppler::save_rdm_data(const std::string& filename) {
+	    std::ofstream outfile(filename, std::ios::binary);
+	    if (!outfile.is_open()) {
+	        std::cerr << "Error: Could not open file " << filename << std::endl;
+	        return -1;
+	    }
+	    
+	    // Write header: dimensions
+	    int dims[2] = {SLOW_TIME, FAST_TIME};
+	    outfile.write(reinterpret_cast<char*>(dims), sizeof(dims));
+	    
+	    // Write the RDM data
+	    outfile.write(reinterpret_cast<char*>(zero_rdm_avg), SLOW_TIME * FAST_TIME * sizeof(float));
+	    
+	    outfile.close();
+	    return 0;
+	}
 
 // Still need to fix this fftshift issue
 void RangeDoppler::fftshift_ang_est(float *arr)

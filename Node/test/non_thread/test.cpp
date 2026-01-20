@@ -35,7 +35,7 @@ int main(int argc, char* argv[])
     vis.setAngleIndexPointer(angidx_visptr);
     vis.setRangeBufferPointer(range_visualizeptr);
     
-    // vis.setAngleMapPointer(angleMap_ptr); not used in implementation.cpp so dunno what to do with it
+    vis.setAngleMapPointer(angleMap_ptr); //not used in implementation.cpp so dunno what to do with it
     tcp.setRDMPointer(rdm_data_ptr);  // Set RDM pointer for saving binary files
 
     // FRAME POINTER INITIATION

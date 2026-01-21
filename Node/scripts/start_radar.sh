@@ -5,6 +5,9 @@ if [[ $EUID -ne 0 ]]; then
 fi
 
 
+INTERFACE=$(nmcli device status | grep ethernet | awk '{print $1}' | head -n 1)
+nmcli connection up $INTERFACE
+
 pushd ../DCA1000/SourceCode/Release/
 sudo ./DCA1000EVM_CLI_Control fpga DCAconfig.json 
 sudo ./DCA1000EVM_CLI_Control record DCAconfig.json

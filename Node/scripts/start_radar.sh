@@ -17,7 +17,7 @@ popd > /dev/null 2>&1
 
 pushd ../setup_radar/build/ > /dev/null 2>&1 || { echo "Failed to cd to ../setup_radar/build/"; exit 1; }
 # Background process, output redirected also
-sudo ./setup_radar > /dev/null 2>&1 &
+nohup ./setup_radar > /dev/null 2>&1 < /dev/null &
 popd > /dev/null 2>&1
 
 pushd ../DCA1000/SourceCode/Release/ > /dev/null 2>&1 || { echo "Failed to cd to ../DCA1000/SourceCode/Release/ (2nd time)"; exit 1; }

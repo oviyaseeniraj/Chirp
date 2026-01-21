@@ -7,9 +7,8 @@ fi
 INTERFACE=$(nmcli device status | grep ethernet | awk '{print $1}' | head -n 1)
 # Suppress output of ip check
 if ! ip addr show "enP8p1s0" | grep -q "inet " > /dev/null 2>&1; then
-    sudo ip addr add dev $INTERFACE > /dev/null 2>&1 || { echo "Failed to add ip addr to $INTERFACE"; exit 1; }
+   sudo nmcli connection up $INTERFACE > /dev/null 2>&1 || { echo "Failed to bring up nmcli connection $INTERFACE"; exit 1; }
 fi
-nmcli connection up $INTERFACE > /dev/null 2>&1 || { echo "Failed to bring up nmcli connection $INTERFACE"; exit 1; }
 
 pushd ../DCA1000/SourceCode/Release/ > /dev/null 2>&1 || { echo "Failed to cd to ../DCA1000/SourceCode/Release/"; exit 1; }
 sudo ./DCA1000EVM_CLI_Control fpga DCAconfig.json > /dev/null 2>&1 || { echo "Failed to configure FPGA"; exit 1; }

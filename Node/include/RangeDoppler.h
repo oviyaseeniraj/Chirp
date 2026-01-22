@@ -34,6 +34,14 @@ class RangeDoppler : public RadarBlock
 
         int *getAngleIndexPointer();
 
+    	float* getAngleMapPointer();
+
+        float* getDopplerBufferPointer();
+        int* getDopplerBinPointer();
+        float* getRDMDataPointer();
+        void compute_doppler_velocity(int cfar_idx);
+        int save_rdm_data(const std::string& filename);
+
         // Still need to fix this fftshift issue (we think this means that Percept's angle estimation never worked)
         void fftshift_ang_est(float *arr);
 
@@ -90,9 +98,11 @@ class RangeDoppler : public RadarBlock
 
     private:
         float *adc_data_flat, *rdm_avg, *rdm_norm, *adc_data_reshaped, *cfar_cube, *angle_norm, *final_angle, *final_range, *prev_rdm_avg, *zero_rdm_avg;
+        float *final_doppler;  // Doppler velocity in m/s
         std::complex<float> *rdm_data, *adc_data, *angle_data, *angfft_data, *Rmatrix;
         fftwf_plan plan, plan2;
         int *cfar_max;
+	    int *final_doppler_bin;  // Raw doppler bin index
         uint16_t *input;
         const char *WINDOW_TYPE;
         bool SET_SNR;

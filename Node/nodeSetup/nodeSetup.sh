@@ -5,20 +5,23 @@ if [[ $EUID -ne 0 ]]; then
    echo "This script must be run as root (sudo)" 
    exit 1
 fi
+
 # FTDI setup
-pushd linux-arm-v8/  
-sudo cp libftd2xx.* /usr/local/lib/  
-sudo chmod 0755 /usr/local/lib/libftd2xx.so.1.4.34  
-sudo ln -sf /usr/local/lib/libftd2xx.so.1.4.34 /usr/local/lib/libftd2xx.so  
-sudo cp ftd2xx.h /usr/local/include/  
-sudo cp WinTypes.h /usr/local/include/  
-sudo ldconfig -v
-popd
-#TODO: setup FTDI rules
-sudo mv 99-ftdi.rules /etc/udev/rules.d/99-ftdi.rules  
-sudo groupadd usb
-sudo useradd -G usb $USER$
-sudo usermod -a -G usb $USER$
+if [ -d "linux-arm-v8" ]; then
+    pushd linux-arm-v8/  
+    sudo cp libftd2xx.* /usr/local/lib/  
+    sudo chmod 0755 /usr/local/lib/libftd2xx.so.1.4.34  
+    sudo ln -sf /usr/local/lib/libftd2xx.so.1.4.34 /usr/local/lib/libftd2xx.so  
+    sudo cp ftd2xx.h /usr/local/include/  
+    sudo cp WinTypes.h /usr/local/include/  
+    sudo ldconfig -v
+    popd
+    rm linux-arm-v8 -rf
+    sudo mv 99-ftdi.rules /etc/udev/rules.d/99-ftdi.rules  
+    sudo groupadd usb
+    sudo useradd -G usb $USER$
+    sudo usermod -a -G usb $USER$
+fi
 
 # Install dependencies
 sudo apt update

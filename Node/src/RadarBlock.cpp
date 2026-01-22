@@ -32,6 +32,10 @@ void RadarBlock::setAngleIndexPointer(int *ptr) {
     inputangindexptr = ptr;
 }
 
+void RadarBlock::setAngleMapPointer(float *ptr) {
+    inputangmapptr = ptr;
+}
+
 // Sets the input frame pointer
 void RadarBlock::setFramePointer(unsigned int *ptr) {
     inputframeptr = ptr;

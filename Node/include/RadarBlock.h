@@ -14,6 +14,7 @@ class RadarBlock {
         float* inputangbufferptr;
         float* inputrangebuffptr;
         int* inputangindexptr;
+        float* inputangmapptr;
 
         unsigned int lastframe;
 
@@ -26,6 +27,7 @@ class RadarBlock {
         void setRangeBufferPointer(float *ptr);
         void setAngleBufferPointer(float *ptr);
         void setAngleIndexPointer(int *ptr);
+        void setAngleMapPointer(float *ptr);
 
         // Sets the input frame pointer
         void setFramePointer(unsigned int *ptr);

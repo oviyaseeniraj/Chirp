@@ -25,12 +25,18 @@ int main(int argc, char* argv[])
     float    *ang_visualizeptr = rdm.getAngleBufferPointer();
     int      *angidx_visptr = rdm.getAngleIndexPointer();
     float    *range_visualizeptr = rdm.getRangeBufferPointer();
+    float    *angleMap_ptr = rdm.getAngleMapPointer();
+    float    *doppler_visualizeptr = rdm.getDopplerBufferPointer();  // Doppler velocity
+    int      *doppler_bin_ptr = rdm.getDopplerBinPointer();  // Raw doppler bin
+    float    *rdm_data_ptr = rdm.getRDMDataPointer();  // Full RDM data
     
     rdm.setBufferPointer(in_bufferptr);
     vis.setBufferPointer(in_visualizeptr);
     vis.setAngleBufferPointer(ang_visualizeptr);
     vis.setAngleIndexPointer(angidx_visptr);
     vis.setRangeBufferPointer(range_visualizeptr);
+    vis.setAngleMapPointer(angleMap_ptr);
+    client_p.setRDMPointer(rdm_data_ptr);  // Set RDM pointer for saving
 
     // FRAME POINTER INITIATION
     auto frame_daq = daq.getFramePointer();
@@ -63,11 +69,14 @@ int main(int argc, char* argv[])
 			rdm.process();
 			frame_angle = *ang_visualizeptr;
 			frame_range = *range_visualizeptr;
+			float frame_doppler = *doppler_visualizeptr;
+			int frame_doppler_bin = *doppler_bin_ptr;
 			vis.process();
-			client_p.process(frame_angle, frame_range, start_demo);
+			client_p.process(frame_angle, frame_range, frame_doppler, frame_doppler_bin, start_demo);
 			frame++;
 		}
 		client_p.end_stream();
+		client_p.run_rdm_plotting();  // Run RDM plotting after data collection
 	}
     return 0;
 }

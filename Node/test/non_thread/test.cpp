@@ -2,6 +2,7 @@
 #include "DataAcquisition.h"
 #include "RangeDoppler.h"
 #include "Visualizer.h"
+#include "JSONTCP.h"
 
 #define INPUT_SIZE 64 * 512
 #define OUTPUT_SIZE 0
@@ -23,17 +24,19 @@ int main(int argc, char* argv[])
     float    *ang_visualizeptr = rdm.getAngleBufferPointer();
     int      *angidx_visptr = rdm.getAngleIndexPointer();
     float    *range_visualizeptr = rdm.getRangeBufferPointer();
-    // this isn't used in what appears to be thier most recent test
-    // can add to RadarBlock if needed eventually 
-    // float    *angleMap_ptr = rdm.getAngleMapPointer();
+    float    *angleMap_ptr = rdm.getAngleMapPointer();
+    float    *doppler_visualizeptr = rdm.getDopplerBufferPointer();  // Doppler velocity in m/s
+    int      *doppler_bin_ptr = rdm.getDopplerBinPointer();  // Raw doppler bin
+    float    *rdm_data_ptr = rdm.getRDMDataPointer();  // Full RDM data for plotting
     
     rdm.setBufferPointer(in_bufferptr);
     vis.setBufferPointer(in_visualizeptr);
     vis.setAngleBufferPointer(ang_visualizeptr);
     vis.setAngleIndexPointer(angidx_visptr);
     vis.setRangeBufferPointer(range_visualizeptr);
-    // this isn't used in what appears to be thier most recent test
-    // vis.setAngleMapPointer(angleMap_ptr);
+    
+    vis.setAngleMapPointer(angleMap_ptr); //not used in implementation.cpp so dunno what to do with it
+    tcp.setRDMPointer(rdm_data_ptr);  // Set RDM pointer for saving binary files
 
     // FRAME POINTER INITIATION
     auto frame_daq = daq.getFramePointer();
@@ -87,15 +90,18 @@ int main(int argc, char* argv[])
         rdm.process();
         vis.process();
         
-        // Get angle and range for this frame
+        // Get angle, range, and doppler for this frame
         float angle = *ang_visualizeptr;
         float range = *range_visualizeptr;
+        float doppler = *doppler_visualizeptr;
+        int doppler_bin = *doppler_bin_ptr;
         
-        // Save data
-        tcp.process(angle, range, start);
+        // Save data (including doppler and RDM binary)
+        tcp.process(angle, range, doppler, doppler_bin, start);
         
         std::cout << "Frame " << (i+1) << "/" << num_frames 
-                  << " - Angle: " << angle << "°, Range: " << range << "m\n";
+                  << " - Angle: " << angle << "°, Range: " << range << "m"
+                  << ", Doppler: " << doppler << "m/s\n";
     }
     
     tcp.end_stream();
@@ -104,6 +110,9 @@ int main(int argc, char* argv[])
     std::cout << "Running calibration...\n\n";
     
     tcp.run_calibration();
+    
+    std::cout << "\n=== Running Range-Doppler Map Plotting ===\n";
+    tcp.run_rdm_plotting();
 
     return 0;
 }

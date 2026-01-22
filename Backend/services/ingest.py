@@ -1,9 +1,10 @@
 import asyncio
 import json
-import socket
-from aiomqtt import Client, MqttError
-import asyncpg
 import os
+import socket
+
+import asyncpg
+from aiomqtt import Client, MqttError
 
 # Read MQTT environment variables (support both BROKER/PORT and the
 # docker-compose keys MQTT_BROKER/MQTT_PORT). Default broker name is
@@ -19,12 +20,10 @@ PG_USER = os.getenv("POSTGRES_USER", "user")
 PG_PASSWORD = os.getenv("POSTGRES_PASSWORD", "password")
 PG_DB = os.getenv("POSTGRES_DB", "mqttdata")
 
+
 async def init_db():
     conn = await asyncpg.connect(
-        host=PG_HOST,
-        user=PG_USER,
-        password=PG_PASSWORD,
-        database=PG_DB
+        host=PG_HOST, user=PG_USER, password=PG_PASSWORD, database=PG_DB
     )
     await conn.execute("""
         CREATE TABLE IF NOT EXISTS radarData (
@@ -38,7 +37,7 @@ async def init_db():
     await conn.execute("""
         CREATE TABLE IF NOT EXISTS radar_frames (
             id SERIAL PRIMARY KEY,
-            radar_name VARCHAR(32) NOT NULL,
+            radar_mac VARCHAR(32) NOT NULL,
             frame_number INT NOT NULL,
             angle FLOAT NOT NULL,
             range FLOAT NOT NULL,
@@ -48,62 +47,67 @@ async def init_db():
         );
     """)
     await conn.execute("""
-        CREATE INDEX IF NOT EXISTS idx_radar_frames_name_timestamp 
+        CREATE INDEX IF NOT EXISTS idx_radar_frames_name_timestamp
         ON radar_frames(radar_name, timestamp_ns);
     """)
     await conn.execute("""
-        CREATE INDEX IF NOT EXISTS idx_radar_frames_processed 
+        CREATE INDEX IF NOT EXISTS idx_radar_frames_processed
         ON radar_frames(processed);
     """)
     await conn.close()
 
+
 async def process_message(pool, message):
     payload = json.loads(message.payload.decode())
     topic = str(message.topic)
-    topic_parts = topic.split('/')
+    topic_parts = topic.split("/")
     uuid = topic_parts[1]
-    data = payload["data"].encode('utf-8')
+    data = payload["data"].encode("utf-8")
     print("processing message")
     async with pool.acquire() as conn:
         await conn.execute(
-            "INSERT INTO radarData (uuid, data) VALUES ($1, $2)",
-            uuid, data
+            "INSERT INTO radarData (uuid, data) VALUES ($1, $2)", uuid, data
         )
+
 
 async def process_frame_message(pool, message):
     """Process radar frame data for real-time calibration"""
     try:
         payload = json.loads(message.payload.decode())
         topic = str(message.topic)
-        topic_parts = topic.split('/')
+        topic_parts = topic.split("/")
         radar_name = topic_parts[1]
-        
+
         # Extract frame data
         frame_number = payload.get("frame", 0)
         angle = payload.get("angle", 0.0)
         range_m = payload.get("range", 0.0)
         timestamp_ns = payload.get("timestamp_ns", 0)
-        
-        print(f"Processing frame {frame_number} from {radar_name}: angle={angle:.1f}°, range={range_m:.2f}m")
-        
+
+        print(
+            f"Processing frame {frame_number} from {radar_name}: angle={angle:.1f}°, range={range_m:.2f}m"
+        )
+
         async with pool.acquire() as conn:
             await conn.execute(
-                """INSERT INTO radar_frames 
-                   (radar_name, frame_number, angle, range, timestamp_ns) 
+                """INSERT INTO radar_frames
+                   (radar_name, frame_number, angle, range, timestamp_ns)
                    VALUES ($1, $2, $3, $4, $5)""",
-                radar_name, frame_number, angle, range_m, timestamp_ns
+                radar_name,
+                frame_number,
+                angle,
+                range_m,
+                timestamp_ns,
             )
     except Exception as e:
         print(f"Error processing frame message: {e}")
+
 
 async def wait_for_db():
     while True:
         try:
             conn = await asyncpg.connect(
-                host=PG_HOST,
-                user=PG_USER,
-                password=PG_PASSWORD,
-                database=PG_DB
+                host=PG_HOST, user=PG_USER, password=PG_PASSWORD, database=PG_DB
             )
             await conn.close()
             break
@@ -129,14 +133,12 @@ async def wait_for_broker():
             print(f"MQTT broker {BROKER}:{PORT} not resolvable, retrying in 1s...")
             await asyncio.sleep(1)
 
+
 async def main():
     await wait_for_db()
     await init_db()
     pool = await asyncpg.create_pool(
-        host=PG_HOST,
-        user=PG_USER,
-        password=PG_PASSWORD,
-        database=PG_DB
+        host=PG_HOST, user=PG_USER, password=PG_PASSWORD, database=PG_DB
     )
 
     # Wait until the broker hostname resolves before attempting MQTT
@@ -157,6 +159,7 @@ async def main():
                     asyncio.create_task(process_message(pool, message))
     except MqttError as e:
         print(f"MQTT error: {e}")
+
 
 if __name__ == "__main__":
     asyncio.run(main())

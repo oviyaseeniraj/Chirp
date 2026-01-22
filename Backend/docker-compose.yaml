@@ -1,4 +1,3 @@
-
 services:
   nanomq:
     image: emqx/nanomq:latest
@@ -21,7 +20,7 @@ services:
       - "5432:5432"
 
   ingest:
-    build: 
+    build:
       context: .
       dockerfile: Dockerfile.ingest
     container_name: ingest
@@ -39,7 +38,7 @@ services:
     restart: always
 
   publisher:
-    build: 
+    build:
       context: .
       dockerfile: Dockerfile.publisher
     container_name: publisher
@@ -52,25 +51,26 @@ services:
       DEV_NAME: nuts
     restart: always
 
-  keygen:
-    build: 
-      context: .
-      dockerfile: Dockerfile.keygen
-    container_name: keygen
-    depends_on:
-      - nanomq
-    environment:
-      MQTT_BROKER: nanomq
-      MQTT_PORT: 1883
-      MQTT_TOPIC: input/key
-      POSTGRES_HOST: db
-      POSTGRES_USER: user
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: mqttdata
-    restart: always
+  # dont need keygen anymore
+  # keygen:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile.keygen
+  #   container_name: keygen
+  #   depends_on:
+  #     - nanomq
+  #   environment:
+  #     MQTT_BROKER: nanomq
+  #     MQTT_PORT: 1883
+  #     MQTT_TOPIC: input/key
+  #     POSTGRES_HOST: db
+  #     POSTGRES_USER: user
+  #     POSTGRES_PASSWORD: password
+  #     POSTGRES_DB: mqttdata
+  #   restart: always
 
   calibration_processor:
-    build: 
+    build:
       context: .
       dockerfile: Dockerfile.calibration
     container_name: calibration_processor
@@ -79,14 +79,14 @@ services:
       - db
       - ingest
     environment:
-      PYTHONUNBUFFERED: 1              # Disable Python output buffering for logs
+      PYTHONUNBUFFERED: 1 # Disable Python output buffering for logs
       POSTGRES_HOST: db
       POSTGRES_USER: user
       POSTGRES_PASSWORD: password
       POSTGRES_DB: mqttdata
-      CALIBRATION_WINDOW: 50           # Use last N frames for calibration
-      CHECK_INTERVAL: 2.0              # Check for new frames every N seconds
-      MIN_RADARS: 2                    # Minimum number of radars required
+      CALIBRATION_WINDOW: 50 # Use last N frames for calibration
+      CHECK_INTERVAL: 2.0 # Check for new frames every N seconds
+      MIN_RADARS: 2 # Minimum number of radars required
     restart: always
 
   # pgadmin:

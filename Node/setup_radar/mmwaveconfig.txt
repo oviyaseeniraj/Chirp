@@ -143,6 +143,7 @@ rxGain=112;
 #Chirp Configuration parameters, please modify if needed.
 #rlChirpCfg_t
 #
+numOfChirpsToConfig=3;
 chirpStartIdx=0;
 chirpEndIdx=0;
 profileIdCPCFG=0;
@@ -157,8 +158,8 @@ txEnable=1;
 #Chirp Configuration parameters, please modify if needed.
 #rlChirpCfg_t
 #
-chirpStartIdx=0;
-chirpEndIdx=0;
+chirpStartIdx=1;
+chirpEndIdx=1;
 profileIdCPCFG=0;
 startFreqVar=0;
 freqSlopeVar=0;
@@ -171,14 +172,14 @@ txEnable=2;
 #Chirp Configuration parameters, please modify if needed.
 #rlChirpCfg_t
 #
-chirpStartIdx=0;
-chirpEndIdx=0;
+chirpStartIdx=2;
+chirpEndIdx=2;
 profileIdCPCFG=0;
 startFreqVar=0;
 freqSlopeVar=0;
 idleTimeVar=0;
 adcStartTimeVar=0;
-txEnable=4;
+txEnable=3;
 #END
 
 #

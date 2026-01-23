@@ -42,7 +42,7 @@ ackTimeout=50000;
 #channel config parameters, please modify if needed.
 #rlChanCfg_t
 #
-channelTx=3;
+channelTx=7;
 channelRx=15;
 cascading=0;
 #END
@@ -60,6 +60,7 @@ adcFormat=1; ###################################################################
 #rlDevDataFmtCfg_t
 #
 rxChanEn=15;
+txChanEn=7;
 adcBitsD=2;
 adcFmt=1;
 iqSwapSel=0;
@@ -179,7 +180,7 @@ startFreqVar=0;
 freqSlopeVar=0;
 idleTimeVar=0;
 adcStartTimeVar=0;
-txEnable=3;
+txEnable=4;
 #END
 
 #
@@ -190,7 +191,7 @@ chirpStartIdxFCF=0;
 chirpEndIdxFCF=2;
 frameCount=0;
 loopCount=64;
-periodicity=20000000;
+periodicity=30000000;
 triggerDelay=0;
 numAdcSamples=512;
 triggerSelect=1;

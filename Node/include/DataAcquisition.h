@@ -25,7 +25,7 @@ class DataAcquisition : public RadarBlock {
 
         int end_of_frame();
 
-        int save_1d_array(uint16_t *arr, int width, int length, std::string &filename);
+        int save_1d_array(uint16_t *arr, int width, int length, const std::string &filename);
 
         uint16_t* getBufferPointer();
 

@@ -120,7 +120,7 @@ int DataAcquisition::end_of_frame()
     return 0;
 }
 
-int DataAcquisition::save_1d_array(uint16_t *arr, int width, int length, std::string &filename)
+int DataAcquisition::save_1d_array(uint16_t *arr, int width, int length, const std::string &filename)
 {
     std::ofstream outfile(filename);
     for (int i = 0; i < length * width; i++)

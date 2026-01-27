@@ -647,7 +647,7 @@ void RangeDoppler::readFile(const std::string &filename)
     }
 }
 
-int RangeDoppler::save_1d_array(float *arr, int width, int length, std::string &filename)
+int RangeDoppler::save_1d_array(float *arr, int width, int length, const std::string &filename)
 {
     std::ofstream outfile(filename);
     for (int i = 0; i < length * width; i++)
@@ -825,12 +825,30 @@ int RangeDoppler::averaged_rdm(float *rdm_norm, float *rdm_avg)
     return 0;
 }
 
+template<typename T>
+void save_as_binary(const std::string &filename, T *rdm_data, size_t length){
+    FILE *fp = fopen(filename.c_str(), "wb");
+    if (fp == NULL)
+    {
+        perror("[ERROR] Could not open file for writing\n");
+        return;
+    }
+
+    // Write header: dimensions (SLOW_TIME=64, FAST_TIME=512)
+
+    // Write the RDM data
+    fwrite(rdm_data, sizeof(T), length, fp);
+
+    fclose(fp);
+}
+
 void RangeDoppler::process()
 {
     // auto start = chrono::high_resolution_clock::now();
     for (int i = 0; i < SIZE_W_IQ; i++)
     {
         adc_data_flat[i] = (float)input[i];
+
     }
     if (frame <= 1)
     {
@@ -847,6 +865,7 @@ void RangeDoppler::process()
         }
     }
     shape_cube(adc_data_flat, adc_data_reshaped, adc_data);
+    save_as_binary<float>("/home/chirp/Chirp/Node/test/non_thread/frame_data/radar_cube/radar_cube_" + std::to_string(frame) + ".bin", adc_data_reshaped, SIZE_W_IQ);
     compute_range_doppler();
     compute_mag_norm(rdm_data, rdm_norm);
     averaged_rdm(rdm_norm, rdm_avg);

@@ -181,7 +181,7 @@ void JSON_TCP::run_calibration()
 {
     printf("\n=== Running Calibration ===\n");
     // Call Python calibration script with data directory
-    std::string cmd = fmt::format("python3 /home/fusionsense/calibrate.py %s", path);
+    std::string cmd = fmt::format("python3 /home/chirp/Chirp/Self-Calibration/Simulation/Single-Target/calibrate.py %s", path);
     int ret = system(cmd.c_str());
     if (ret == 0)
     {
@@ -198,7 +198,7 @@ void JSON_TCP::run_rdm_plotting()
     printf("\n=== Running Range-Doppler Map Plotting ===\n");
     // Call Python RDM plotting script with data directory
     // The script path is relative to the project root
-    std::string script_path = "/home/fusionsense/Documents/Chirp/Node/src/rpl/rdm_plotter.py";
+    std::string script_path = "/home/chirp/Chirp/Node/src/rpl/rdm_plotter.py";
     std::string cmd = fmt::format("python3 %s %s", script_path.c_str(), path);
     int ret = system(cmd.c_str());
     if (ret == 0)
@@ -215,7 +215,7 @@ void JSON_TCP::run_rdm_plotting_single(int frame_num)
 {
     printf("\n=== Running Range-Doppler Map Plotting for Frame %d ===\n", frame_num);
     // Call Python RDM plotting script for a single frame
-    std::string script_path = "/home/fusionsense/Documents/Chirp/Node/src/rpl/rdm_plotter.py";
+    std::string script_path = "/home/chirp/Chirp/Node/src/rpl/rdm_plotter.py";
     std::string cmd = fmt::format("python3 %s %s --frame %d", script_path.c_str(), path, frame_num);
     int ret = system(cmd.c_str());
     if (ret == 0)

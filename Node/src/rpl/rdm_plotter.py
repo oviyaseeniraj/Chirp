@@ -30,16 +30,26 @@ import matplotlib.animation as animation
 # Radar parameters (must match implementation.cpp)
 FAST_TIME = 512      # Number of range bins
 SLOW_TIME = 64       # Number of doppler bins
-CARRIER_FREQ = 77e9  # 77 GHz carrier frequency
+CARRIER_FREQ = 76e9  # 77 GHz carrier frequency
 SPEED_OF_LIGHT = 3e8
 LAMBDA = SPEED_OF_LIGHT / CARRIER_FREQ  # ~0.0039m wavelength
-CHIRP_DURATION = 100e-6  # 100 microseconds
-MAX_VELOCITY = LAMBDA / (4.0 * CHIRP_DURATION)  # Maximum unambiguous velocity
-VELOCITY_RES = 2.0 * MAX_VELOCITY / SLOW_TIME   # Velocity resolution per bin
+CHIRP_DURATION = 60e-6  # 100 microseconds
+BW = 4.2492e9  # Bandwidth
+S = 83e12;  # Slope 
+CHIRP_RAMP = BW/S
+NUM_TX = 3
+
+MAX_VELOCITY = LAMBDA / (4.0 * CHIRP_RAMP * NUM_TX)  # Maximum unambiguous velocity
+
+N_CHIRPS_PER_FRAME_TDM = SLOW_TIME * NUM_TX
+T_F_EFFECTIVE =  CHIRP_RAMP * N_CHIRPS_PER_FRAME_TDM
+VELOCITY_RES = LAMBDA/(2.0 * T_F_EFFECTIVE)   # Velocity resolution per bin
 
 # Range parameters (from implementation.cpp)
-RANGE_MULTIPLIER = 9.0 / 256.0  # meters per bin (for half of FAST_TIME)
-MAX_RANGE = 9.0  # Maximum range in meters
+FS = 10e6
+
+RANGE_RES = SPEED_OF_LIGHT / (2.0 * BW); 
+MAX_RANGE = FS * SPEED_OF_LIGHT / (2.0 * S);
 
 
 def load_rdm_binary(filepath):
@@ -131,7 +141,7 @@ def compute_axes(rdm_shape):
     
     # Range axis (only using first half due to fftshift behavior)
     # Range bins go from 0 to max_range
-    range_axis = np.linspace(0, MAX_RANGE, fast_time // 2)
+    range_axis = np.linspace(0, MAX_RANGE, fast_time )
     
     # Velocity axis (centered at 0 after fftshift)
     # Bins are: [-max_vel, ..., 0, ..., +max_vel]
@@ -153,7 +163,7 @@ def plot_rdm_single(rdm_data, metadata, output_path, show_detection=True):
     
     # Only show the relevant portion (first half of range)
     # Data is already fftshifted in doppler dimension
-    rdm_display = rdm_data[:, :FAST_TIME // 2].T  # Transpose so range is Y-axis
+    rdm_display = rdm_data[:, :FAST_TIME].T  # Transpose so range is Y-axis
     
     # Compute axes
     range_axis, velocity_axis = compute_axes(rdm_data.shape)
@@ -216,7 +226,7 @@ def plot_rdm_with_detection_info(rdm_data, metadata, output_path):
     
     # RDM plot
     ax1 = fig.add_subplot(gs[0])
-    rdm_display = rdm_data[:, :FAST_TIME // 2].T
+    rdm_display = rdm_data[:, :FAST_TIME].T
     range_axis, velocity_axis = compute_axes(rdm_data.shape)
     extent = [velocity_axis[0], velocity_axis[-1], 0, range_axis[-1]]
     
@@ -564,4 +574,8 @@ def main():
 
 
 if __name__ == "__main__":
+    print(f"Max velocity {MAX_VELOCITY}")
+    print(f"Velocity resolution {VELOCITY_RES}")
+    print(f"Max range {MAX_RANGE}")
+    print(f"Range resolution {RANGE_RES}")
     sys.exit(main())

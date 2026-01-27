@@ -1769,3 +1769,75 @@ Configure Record command : Success
 
 Thu Apr 20 10:55:47 2023
 Return status : 0
+
+Mon Jan 26 16:17:11 2026
+FPGA Configuration Command (req)
+
+Mon Jan 26 16:17:26 2026
+FPGA Configuration Command (req)
+
+Mon Jan 26 16:17:26 2026
+FPGA Configuration command : Success
+
+Mon Jan 26 16:17:26 2026
+Return status : 0
+
+Mon Jan 26 16:17:35 2026
+Configure Record Command (req)
+
+Mon Jan 26 16:17:35 2026
+Configure Record command : Success
+
+Mon Jan 26 16:17:35 2026
+Return status : 0
+
+Mon Jan 26 16:17:40 2026
+Start Record Command (req)
+
+Mon Jan 26 16:17:40 2026
+Start Record Command (req)
+
+Mon Jan 26 16:17:40 2026
+Start Record command : Success
+
+Mon Jan 26 17:06:40 2026
+Stop Record Command (req)
+
+Mon Jan 26 17:06:47 2026
+Stop Record command : Timeout Error! Couldnt read the record process status. [error -4068]
+
+Mon Jan 26 17:06:54 2026
+Reset FPGA Command (req)
+
+Mon Jan 26 17:06:54 2026
+Reset FPGA command : Success
+
+Mon Jan 26 17:06:54 2026
+Return status : 0
+
+Mon Jan 26 17:08:04 2026
+FPGA Configuration Command (req)
+
+Mon Jan 26 17:08:04 2026
+FPGA Configuration command : Success
+
+Mon Jan 26 17:08:04 2026
+Return status : 0
+
+Mon Jan 26 17:08:26 2026
+Configure Record Command (req)
+
+Mon Jan 26 17:08:26 2026
+Configure Record command : Success
+
+Mon Jan 26 17:08:26 2026
+Return status : 0
+
+Mon Jan 26 17:08:34 2026
+Start Record Command (req)
+
+Mon Jan 26 17:08:34 2026
+Start Record Command (req)
+
+Mon Jan 26 17:08:35 2026
+Start Record command : Success

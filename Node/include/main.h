@@ -32,13 +32,24 @@
 #define SIZE_W_IQ TX * RX * FAST_TIME * SLOW_TIME * IQ // Size of the total number of separate IQ sampels from ONE frame
 #define SIZE TX * RX * FAST_TIME *SLOW_TIME            // Size of the total number of COMPLEX samples from ONE frame
 
-#define CARRIER_FREQ 77e9       // Carrier frequency in Hz (77 GHz)
+#define CARRIER_FREQ 76e9       // Carrier frequency in Hz (77 GHz)
 #define SPEED_OF_LIGHT 3e8      // Speed of light in m/s
 #define LAMBDA (SPEED_OF_LIGHT / CARRIER_FREQ)  // Wavelength in meters (~0.0039m)
-#define CHIRP_DURATION 100e-6   // Chirp duration in seconds (100 microseconds typical)
+#define CHIRP_DURATION 60e-6   // Chirp duration in seconds (100 microseconds typical)
+#define BW 4.2492e9
+#define CHIRP_SLOPE 83e12 //Ramp Slope
+#define CHIRP_RAMP (BW/CHIRP_SLOPE)
+
+#define N_CHIRPS_PER_FRAME_TDM (SLOW_TIME * TX)
+#define T_F_EFFECTIVE (CHIRP_RAMP * N_CHIRPS_PER_FRAME_TDM)  // Effective time for doppler calculation
+
 #define FRAME_PERIOD (SLOW_TIME * CHIRP_DURATION)  // Frame period = num_chirps * chirp_duration
-#define MAX_VELOCITY (LAMBDA / (4.0 * CHIRP_DURATION))  // Maximum unambiguous velocity
-#define VELOCITY_RES (2.0 * MAX_VELOCITY / SLOW_TIME)   // Velocity resolution per bin
+#define MAX_VELOCITY (LAMBDA / (4.0 * CHIRP_RAMP * TX))  // Maximum unambiguous velocity
+#define VELOCITY_RES (LAMBDA/(2.0 * T_F_EFFECTIVE))   // Velocity resolution per bin
+
+#define FS 10e6 //sampling frequency
+#define RANGE_RES SPEED_OF_LIGHT / (2.0 * BW) 
+#define MAX_RANGE FS * SPEED_OF_LIGHT / (2.0 * CHIRP_SLOPE)
 
 #define BUFFER_SIZE 2048
 #define PORT 4098

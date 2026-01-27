@@ -61,7 +61,7 @@ class RangeDoppler : public RadarBlock
         // FILE READING METHODS
         void readFile(const std::string &filename);
 
-        int save_1d_array(float *arr, int width, int length, std::string &filename);
+        int save_1d_array(float *arr, int width, int length, const std::string &filename);
 
         // WINDOW TYPES
         void blackman_window(float *arr, int fast_time);

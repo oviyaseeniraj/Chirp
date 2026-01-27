@@ -106,10 +106,10 @@ int main(int argc, char* argv[])
     
     tcp.end_stream();
     
-    std::cout << "\n=== Data Collection Complete ===\n";
-    std::cout << "Running calibration...\n\n";
+    // std::cout << "\n=== Data Collection Complete ===\n";
+    // std::cout << "Running calibration...\n\n";
     
-    tcp.run_calibration();
+    // tcp.run_calibration();
     
     std::cout << "\n=== Running Range-Doppler Map Plotting ===\n";
     tcp.run_rdm_plotting();

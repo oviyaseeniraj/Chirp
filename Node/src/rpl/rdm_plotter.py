@@ -25,6 +25,8 @@ import matplotlib
 import numpy as np
 import torch
 import torch.nn.functional as F
+from dbscan import DBSCAN
+from matplotlib.typing import ColorType
 from r2k import RollingKMeans
 
 matplotlib.use("Agg")  # Non-interactive backend for headless systems (Jetson)
@@ -476,7 +478,7 @@ def create_rdm_animation_cfar(frames_data, output_path, fps=5):
 
     ax3.set_xlabel("Velocity (m/s)", fontsize=12)
     ax3.set_ylabel("Range (m)", fontsize=12)
-    km_title = ax3.set_title("K-Means Clustering", fontsize=14)
+    km_title = ax3.set_title("DBSCAN Clustering", fontsize=14)
     ax3.grid(True, alpha=0.3, linestyle="--")
     ax3.axvline(x=0, color="white", linestyle="--", alpha=0.5)
 
@@ -973,6 +975,12 @@ def main():
         frames_data = []
         i = 0
         km = RollingKMeans(n_clusters=3, window_size=5)
+        db = DBSCAN(
+            eps=1,
+            min_samples=20,
+            metric="euclidean",
+            scale_coords=False,
+        )
         for json_path, rdm_path, _ in frames:
             try:
                 rdm_data = load_rdm_binary(rdm_path)
@@ -988,7 +996,8 @@ def main():
                     pad_range=128,
                     device="mps",
                 )
-                res = km.fit_predict(cfar_data)
+                # res = km.fit_predict(cfar_data)
+                res = db.fit_predict(cfar_data)
                 i += 1
                 print(f"Processed frame {i}/{len(frames)}")
                 frames_data.append((rdm_data, cfar_data, res))

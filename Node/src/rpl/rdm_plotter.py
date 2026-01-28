@@ -23,6 +23,9 @@ import sys
 
 import matplotlib
 import numpy as np
+import torch
+import torch.nn.functional as F
+from r2k import RollingKMeans
 
 matplotlib.use("Agg")  # Non-interactive backend for headless systems (Jetson)
 import matplotlib.animation as animation
@@ -398,15 +401,15 @@ def create_rdm_animation_cfar(frames_data, output_path, fps=5):
         print("No frames to animate")
         return
 
-    fig, (ax1, ax2) = plt.subplots(
-        2, 1, figsize=(12, 14), gridspec_kw={"height_ratios": [3, 2]}
+    fig, (ax1, ax2, ax3) = plt.subplots(
+        3, 1, figsize=(12, 18), gridspec_kw={"height_ratios": [3, 2, 2]}
     )
 
     # Initialize with first frame
-    rdm_data, cfar_data, metadata = (
+    rdm_data, cfar_data, km = (
         frames_data[0][0],
         frames_data[0][1] if len(frames_data[0]) > 1 else None,
-        frames_data[0][-1],
+        frames_data[0][2] if len(frames_data[0]) > 2 else None,
     )
     rdm_display = rdm_data[:, : FAST_TIME // 2].T
     range_axis, velocity_axis = compute_axes(rdm_data.shape)
@@ -455,12 +458,35 @@ def create_rdm_animation_cfar(frames_data, output_path, fps=5):
     ax2.grid(True, alpha=0.3, linestyle="--")
     ax2.axvline(x=0, color="white", linestyle="--", alpha=0.5)
 
+    # Initialize K-Means subplot
+    if km is not None:
+        km_display = km[:, : FAST_TIME // 2].T
+        im_km = ax3.imshow(
+            km_display,
+            aspect="auto",
+            origin="lower",
+            extent=extent,
+            cmap="jet",
+            interpolation="nearest",
+            animated=True,
+        )
+        plt.colorbar(im_km, ax=ax3, label="Cluster ID")
+    else:
+        im_km = None
+
+    ax3.set_xlabel("Velocity (m/s)", fontsize=12)
+    ax3.set_ylabel("Range (m)", fontsize=12)
+    km_title = ax3.set_title("K-Means Clustering", fontsize=14)
+    ax3.grid(True, alpha=0.3, linestyle="--")
+    ax3.axvline(x=0, color="white", linestyle="--", alpha=0.5)
+
     plt.tight_layout()
 
     def update(frame_idx):
         frame_tuple = frames_data[frame_idx]
         rdm_data = frame_tuple[0]
         cfar_data = frame_tuple[1] if len(frame_tuple) > 1 else None
+        km = frame_tuple[2] if len(frame_tuple) > 2 else None
         metadata = frame_tuple[-1]
 
         rdm_display = rdm_data[:, : FAST_TIME // 2].T
@@ -486,6 +512,12 @@ def create_rdm_animation_cfar(frames_data, output_path, fps=5):
                     [metadata["Doppler"]], [metadata["Range"]]
                 )
             artists.extend([im_cfar, cfar_detection_marker, cfar_title])
+
+        # Update K-Means plot
+        if km is not None and im_km is not None:
+            km_display = km[:, : FAST_TIME // 2].T
+            im_km.set_array(km_display)
+            artists.extend([im_km, km_title])
 
         return artists
 
@@ -657,20 +689,24 @@ def create_summary_plot(data_dir, output_dir):
     print(f"Saved summary: {output_path}")
 
 
-def cfar(
+def cfar_pytorch(
     rdm_data,
     guard_cells_doppler=4,
-    guard_cells_range=16,
+    guard_cells_range=8,
     training_cells_doppler=6,
-    training_cells_range=24,
-    threshold_factor=2.5,
+    training_cells_range=12,
+    threshold_factor=3.0,
+    pad_value=None,
+    pad_doppler=None,
+    pad_range=None,
+    device="cpu",
 ):
-    """Run CFAR (Constant False Alarm Rate) algorithm on RDM data.
+    """Run CFAR algorithm using PyTorch for GPU acceleration.
 
     This function applies a CFAR detection algorithm with separate window
     parameters for Doppler (slow time) and Range (fast time) dimensions.
-    It processes the range-Doppler map and outputs detections based on a
-    threshold computed from surrounding cells.
+    Uses PyTorch's unfold operation to extract all windows simultaneously
+    and process them in parallel on GPU.
 
     Args:
         rdm_data: Input range-Doppler map of shape (SLOW_TIME, FAST_TIME)
@@ -679,6 +715,12 @@ def cfar(
         training_cells_doppler: Number of training cells in Doppler dimension (default: 6)
         training_cells_range: Number of training cells in Range dimension (default: 12)
         threshold_factor: Multiplicative factor for threshold (default: 3.0)
+        pad_value: Value to use for padding. If None, uses mean of RDM data (default: None)
+        pad_doppler: Number of cells to pad in Doppler dimension (top/bottom).
+                     If None, uses window_size_doppler (default: None)
+        pad_range: Number of cells to pad in Range dimension (left/right).
+                   If None, uses window_size_range (default: None)
+        device: Device to run on, 'cuda' or 'cpu' (default: 'cuda')
 
     Returns:
         detections: Binary detection map of shape (SLOW_TIME, FAST_TIME//2)
@@ -691,56 +733,178 @@ def cfar(
     rdm_half = rdm_data[:, : fast_time // 2]
     output_shape = (slow_time, fast_time // 2)
 
-    # Step 3: Initialize output detection matrix with zeros
-    detections = np.zeros(output_shape, dtype=np.float32)
-
-    # Step 4: Define the window sizes for each dimension
+    # Step 3: Calculate window sizes for each dimension
     window_size_doppler = guard_cells_doppler + training_cells_doppler
     window_size_range = guard_cells_range + training_cells_range
 
-    # Step 5: Iterate through each cell in the RDM (excluding edges)
-    # Use different margins for each dimension based on window sizes
-    for i in range(window_size_doppler, slow_time - window_size_doppler):
-        for j in range(window_size_range, fast_time // 2 - window_size_range):
-            # Step 6: Extract the cell under test (CUT)
-            cell_under_test = rdm_half[i, j]
+    # Step 4: Determine padding sizes (use window sizes if not provided)
+    if pad_doppler is None:
+        pad_doppler = window_size_doppler
+    if pad_range is None:
+        pad_range = window_size_range
 
-            # Step 7: Define training region bounds (rectangular window)
-            # Doppler dimension (rows) uses doppler window size
-            row_start = i - window_size_doppler
-            row_end = i + window_size_doppler + 1
-            # Range dimension (cols) uses range window size
-            col_start = j - window_size_range
-            col_end = j + window_size_range + 1
+    # Step 4a: Validate parameters for dimensional consistency
+    # Check that padding is sufficient for the window sizes
+    if pad_doppler < window_size_doppler:
+        raise ValueError(
+            f"pad_doppler ({pad_doppler}) must be >= window_size_doppler ({window_size_doppler}). "
+            f"Need at least {window_size_doppler} padding for guard_cells ({guard_cells_doppler}) + training_cells ({training_cells_doppler})."
+        )
+    if pad_range < window_size_range:
+        raise ValueError(
+            f"pad_range ({pad_range}) must be >= window_size_range ({window_size_range}). "
+            f"Need at least {window_size_range} padding for guard_cells ({guard_cells_range}) + training_cells ({training_cells_range})."
+        )
 
-            # Step 8: Extract training cells (excluding guard region and CUT)
-            training_region = []
-            for row in range(row_start, row_end):
-                for col in range(col_start, col_end):
-                    # Calculate distance from CUT in each dimension
-                    doppler_distance = abs(row - i)
-                    range_distance = abs(col - j)
+    # Validate input dimensions
+    if slow_time <= 0 or fast_time <= 0:
+        raise ValueError(f"Invalid RDM dimensions: {rdm_data.shape}")
 
-                    # Include only cells outside the guard region in both dimensions
-                    if (
-                        doppler_distance > guard_cells_doppler
-                        or range_distance > guard_cells_range
-                    ):
-                        training_region.append(rdm_half[row, col])
+    if rdm_data.ndim != 2:
+        raise ValueError(f"RDM data must be 2D, got shape: {rdm_data.shape}")
 
-            # Step 9: Compute threshold from training cells
-            # Use mean of training region for noise level estimation
-            if len(training_region) > 0:
-                noise_level = np.percentile(training_region, 75)
-                threshold = noise_level * threshold_factor
-            else:
-                threshold = float("inf")
+    # Check that we have enough data after padding for window extraction
+    padded_h = slow_time + 2 * pad_doppler
+    padded_w = (fast_time // 2) + 2 * pad_range
+    required_h = slow_time + 2 * window_size_doppler
+    required_w = (fast_time // 2) + 2 * window_size_range
 
-            # Step 10: Apply threshold test - mark as detection if CUT exceeds threshold
-            if cell_under_test > threshold:
-                detections[i, j] = 1.0
+    if padded_h < required_h:
+        raise ValueError(
+            f"Insufficient padding in Doppler dimension. Padded height: {padded_h}, Required: {required_h}"
+        )
+    if padded_w < required_w:
+        raise ValueError(
+            f"Insufficient padding in Range dimension. Padded width: {padded_w}, Required: {required_w}"
+        )
 
-    # Step 11: Return the binary detection matrix
+    # Step 5: Determine padding value (use mean if not provided)
+    if pad_value is None:
+        pad_value = np.mean(rdm_half)
+
+    # Step 6: Convert to PyTorch tensor and move to device
+    # Add batch and channel dimensions: [1, 1, H, W]
+    rdm_tensor = torch.from_numpy(rdm_half).float().unsqueeze(0).unsqueeze(0)
+    rdm_tensor = rdm_tensor.to(device)
+
+    # Step 7: Pad the tensor for edge handling
+    # F.pad format: (left, right, top, bottom)
+    padded_rdm = F.pad(
+        rdm_tensor,
+        (pad_range, pad_range, pad_doppler, pad_doppler),
+        mode="constant",
+        value=pad_value,
+    )
+
+    # Step 8: Define the full window size for unfolding
+    window_h = 2 * window_size_doppler + 1
+    window_w = 2 * window_size_range + 1
+
+    # Step 9: Use unfold to extract all windows simultaneously centered on each cell
+    # The original data is at indices [pad_doppler:pad_doppler+slow_time, pad_range:pad_range+(fast_time//2)]
+    # We need windows centered on each of these cells
+    # Start extracting from (pad_doppler - window_size_doppler) to get first window centered on first cell
+    # unfold(dimension, size, step) with step=1
+    # Output size = (input_size - window_size + 1)
+    # We want output = slow_time, so input = slow_time + window_h - 1 = slow_time + 2*window_size_doppler
+
+    # Extract region that will give us exactly slow_time x (fast_time//2) windows
+    extract_start_h = pad_doppler - window_size_doppler
+    extract_end_h = pad_doppler + slow_time + window_size_doppler
+    extract_start_w = pad_range - window_size_range
+    extract_end_w = pad_range + (fast_time // 2) + window_size_range
+
+    # Validate extraction bounds
+    if extract_start_h < 0 or extract_end_h > padded_rdm.shape[2]:
+        raise RuntimeError(
+            f"Doppler extraction out of bounds: [{extract_start_h}:{extract_end_h}] for padded size {padded_rdm.shape[2]}"
+        )
+    if extract_start_w < 0 or extract_end_w > padded_rdm.shape[3]:
+        raise RuntimeError(
+            f"Range extraction out of bounds: [{extract_start_w}:{extract_end_w}] for padded size {padded_rdm.shape[3]}"
+        )
+
+    windows = (
+        padded_rdm[:, :, extract_start_h:extract_end_h, extract_start_w:extract_end_w]
+        .unfold(2, window_h, 1)
+        .unfold(3, window_w, 1)
+    )
+    # Shape: [1, 1, slow_time, fast_time//2, window_h, window_w]
+
+    # Validate windows shape
+    expected_shape = (1, 1, slow_time, fast_time // 2, window_h, window_w)
+    if windows.shape != expected_shape:
+        raise RuntimeError(
+            f"Window extraction produced unexpected shape: {windows.shape}, expected: {expected_shape}"
+        )
+
+    # Step 10: Reshape windows for easier processing
+    # Combine spatial dimensions and flatten window dimensions
+    windows = windows.squeeze(0).squeeze(
+        0
+    )  # [slow_time, fast_time//2, window_h, window_w]
+
+    # Step 11: Create guard cell mask to exclude guard region from training
+    # Build a mask where True = training cell, False = guard cell or CUT
+    guard_mask = torch.ones((window_h, window_w), dtype=torch.bool, device=device)
+
+    # Calculate center position of the window
+    center_i = window_size_doppler
+    center_j = window_size_range
+
+    # Step 12: Set guard region and CUT to False in mask
+    for i in range(window_h):
+        for j in range(window_w):
+            doppler_distance = abs(i - center_i)
+            range_distance = abs(j - center_j)
+
+            # Exclude cells within guard region (using OR logic)
+            if (
+                doppler_distance <= guard_cells_doppler
+                and range_distance <= guard_cells_range
+            ):
+                guard_mask[i, j] = False
+
+    # Step 13: Apply mask to extract training cells and compute noise level
+    # Expand mask to match windows shape
+    mask_expanded = guard_mask.unsqueeze(0).unsqueeze(0)  # [1, 1, window_h, window_w]
+    mask_expanded = mask_expanded.expand_as(
+        windows
+    )  # [slow_time, fast_time//2, window_h, window_w]
+
+    # Step 14: Compute mean of training cells for each window
+    # Use masked_select alternative: set guard cells to 0 and count valid cells
+    training_windows = windows * mask_expanded.float()
+
+    # Sum training cell values and count of training cells
+    training_sum = training_windows.sum(dim=(-2, -1))  # [slow_time, fast_time//2]
+    training_count = mask_expanded.float().sum(
+        dim=(-2, -1)
+    )  # [slow_time, fast_time//2]
+
+    # Compute noise level (mean of training cells)
+    noise_level = training_sum / (
+        training_count + 1e-10
+    )  # Add epsilon to avoid division by zero
+
+    # Step 15: Compute threshold for each cell
+    threshold = noise_level * threshold_factor
+
+    # Step 16: Extract cells under test from original unpadded data
+    cells_under_test = rdm_tensor[0, 0, :, :]  # [slow_time, fast_time//2]
+
+    # Validate threshold and cells_under_test have matching shapes
+    if cells_under_test.shape != threshold.shape:
+        raise RuntimeError(
+            f"Shape mismatch: cells_under_test {cells_under_test.shape} != threshold {threshold.shape}"
+        )
+
+    # Step 17: Apply threshold test - compare CUT to threshold
+    detections_tensor = (cells_under_test > threshold).float()
+
+    # Step 18: Convert back to NumPy array and return
+    detections = detections_tensor.cpu().numpy()
+
     return detections
 
 
@@ -808,16 +972,29 @@ def main():
         frames = find_frame_files(args.data_dir, args.node)
         frames_data = []
         i = 0
+        km = RollingKMeans(n_clusters=3, window_size=5)
         for json_path, rdm_path, _ in frames:
             try:
                 rdm_data = load_rdm_binary(rdm_path)
-                cfar_data = cfar(rdm_data)
-                frames_data.append((rdm_data, cfar_data))
+                cfar_data = cfar_pytorch(
+                    rdm_data,
+                    pad_value=np.mean(rdm_data[:, :256]),
+                    guard_cells_doppler=4,
+                    guard_cells_range=16,
+                    training_cells_doppler=6,
+                    training_cells_range=24,
+                    threshold_factor=2.9,
+                    pad_doppler=32,
+                    pad_range=128,
+                    device="mps",
+                )
+                res = km.fit_predict(cfar_data)
                 i += 1
                 print(f"Processed frame {i}/{len(frames)}")
-                if i > 15:
-                    break
-            except:
+                frames_data.append((rdm_data, cfar_data, res))
+
+            except Exception as e:
+                print(f"Error processing frame: {e}")
                 continue
 
         if frames_data:

@@ -1,9 +1,9 @@
 """
-Supabase database manager for storing radar Range-Doppler Map (RDM) frame data.
-Handles connection, initialization, and storage of processed radar frames.
+Supabase database manager for storing radar frames as JSON.
+Simpler approach that stores the entire frame data as JSONB for flexibility.
 """
 
-import base64
+import json
 from datetime import datetime
 from typing import Optional
 
@@ -12,7 +12,7 @@ from supabase import create_client, Client
 
 
 class SupabaseFrameManager:
-    """Manager class for Supabase database operations with Range-Doppler Map frame data."""
+    """Manager class for Supabase database operations with frame data as JSON."""
     
     # Supabase Configuration
     SUPABASE_URL = "https://ldfxdteygvfvtotxohsl.supabase.co/"
@@ -46,7 +46,7 @@ class SupabaseFrameManager:
         cfar_max_index: Optional[int] = None,
     ) -> bool:
         """
-        Store Range-Doppler Map frame data to Supabase database.
+        Store Range-Doppler Map frame data to Supabase as JSON.
         
         Args:
             rdm_frame: Range-Doppler Map data (64x512 array of float32)
@@ -61,38 +61,47 @@ class SupabaseFrameManager:
             True if successful, False otherwise
         """
         if not self.is_connected or not self.client:
+            print("✗ Database not connected")
             return False
         
         try:
-            # Encode RDM frame data as base64 to reduce storage size
-            # Frame is expected to be 64x512 array of float32 values
-            rdm_bytes = rdm_frame.astype(np.float32).tobytes()
-            rdm_encoded = base64.b64encode(rdm_bytes).decode('utf-8')
+            # Convert frame to list for JSON serialization
+            rdm_list = rdm_frame.astype(np.float32).tolist()
             
-            # Prepare data for insertion
-            data = {
-                "frame_number": frame_number,
-                "timestamp": datetime.utcnow().isoformat(),
-                "rdm_data": rdm_encoded,
-                "rdm_shape": list(rdm_frame.shape),
-                "range_value": range_value,
-                "angle_value": angle_value,
-                "doppler_velocity": doppler_velocity,
-                "doppler_bin": doppler_bin,
-                "cfar_max_index": cfar_max_index,
+            # Prepare frame metadata
+            frame_data = {
+                "frame_number": int(frame_number),
+                "rdm_data": rdm_list,
+                "rdm_shape": [int(rdm_frame.shape[0]), int(rdm_frame.shape[1])],
                 "rdm_min": float(np.min(rdm_frame)),
                 "rdm_max": float(np.max(rdm_frame)),
                 "rdm_mean": float(np.mean(rdm_frame)),
-                "slow_time": rdm_frame.shape[0],
-                "fast_time": rdm_frame.shape[1],
+                "range_value": float(range_value) if range_value is not None else None,
+                "angle_value": float(angle_value) if angle_value is not None else None,
+                "doppler_velocity": float(doppler_velocity) if doppler_velocity is not None else None,
+                "doppler_bin": int(doppler_bin) if doppler_bin is not None else None,
+                "cfar_max_index": int(cfar_max_index) if cfar_max_index is not None else None,
             }
             
-            # Insert into database
-            self.client.table(self.TABLE_NAME).insert(data).execute()
+            # Prepare insertion data
+            insert_data = {
+                "frame_number": int(frame_number),
+                "timestamp": datetime.utcnow().isoformat(),
+                "frame_data": frame_data,  # Store entire frame as JSONB
+                "slow_time": int(rdm_frame.shape[0]),
+                "fast_time": int(rdm_frame.shape[1]),
+            }
+            
+            # Debug output
+            print(f"Inserting frame {frame_number}...")
+            response = self.client.table(self.TABLE_NAME).insert(insert_data).execute()
+            print(f"✓ Frame {frame_number} inserted successfully")
             return True
             
         except Exception as e:
-            print(f"Failed to store frame {frame_number} to database: {e}")
+            print(f"✗ Failed to store frame {frame_number}: {e}")
+            import traceback
+            traceback.print_exc()
             return False
     
     def is_ready(self) -> bool:

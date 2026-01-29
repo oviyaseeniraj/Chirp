@@ -40,12 +40,16 @@ def main(sio, db_manager, frame_count):
 
     # Store Range-Doppler Map frame to Supabase database
     if db_manager.is_ready():
-        db_manager.store_frame(
+        success = db_manager.store_frame(
             rdm_frame=frame,
             frame_number=frame_count,
             # Note: Additional metadata like range_value, angle_value, etc. 
             # could be passed here if available from C++ producer
         )
+        if not success:
+            print(f"Warning: Failed to store frame {frame_count} to database")
+    else:
+        print("Warning: Database manager not ready")
 
     if sio and sio.connected:
         try:

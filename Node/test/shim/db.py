@@ -64,7 +64,7 @@ def handle_frame(data):
         # Store Range-Doppler Map frame to Supabase database
         if db_manager.is_ready():
             success = db_manager.store_frame(
-                rdm_frame=array_data,
+                rdm_frame=frame_data,
                 frame_number=frame_count,
                 # Note: Additional metadata like range_value, angle_value, etc.
                 # could be passed here if available from C++ producer

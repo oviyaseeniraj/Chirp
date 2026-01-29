@@ -11,16 +11,30 @@
 sem_t* sem_empty = sem_open("/frame_empty", O_CREAT, 0666, 1);
 sem_t* sem_full  = sem_open("/frame_full",  O_CREAT, 0666, 0);
 
+// Semaphores for DAQ frame data
+sem_t* sem_daq_empty = sem_open("/daq_frame_empty", O_CREAT, 0666, 1);
+sem_t* sem_daq_full  = sem_open("/daq_frame_full",  O_CREAT, 0666, 0);
+
 void cleanup_resources() {
     sem_close(sem_empty);
     sem_close(sem_full);
     sem_unlink("/frame_empty");
     sem_unlink("/frame_full");
     shm_unlink("/frame_shm");
+    
+    sem_close(sem_daq_empty);
+    sem_close(sem_daq_full);
+    sem_unlink("/daq_frame_empty");
+    sem_unlink("/daq_frame_full");
+    shm_unlink("/daq_frame_shm");
 }
 
 struct shareMem{
     float frame[SLOW_TIME * FAST_TIME];
+};
+
+struct shareDaqMem{
+    uint16_t frame[TX * RX * FAST_TIME * SLOW_TIME * IQ];
 };
 
 
@@ -37,9 +51,15 @@ int main(int argc, char const *argv[])
     int      *angidx_visptr = rdm.getAngleIndexPointer();
     float    *range_visualizeptr = rdm.getRangeBufferPointer();
 
+    // RDM shared memory
     int fd = shm_open("/frame_shm", O_CREAT | O_RDWR, 0666);
     ftruncate(fd, sizeof(shareMem));
     shareMem* shm = (shareMem*)mmap(NULL, sizeof(shareMem), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+
+    // DAQ shared memory
+    int fd_daq = shm_open("/daq_frame_shm", O_CREAT | O_RDWR, 0666);
+    ftruncate(fd_daq, sizeof(shareDaqMem));
+    shareDaqMem* shm_daq = (shareDaqMem*)mmap(NULL, sizeof(shareDaqMem), PROT_READ | PROT_WRITE, MAP_SHARED, fd_daq, 0);
 
     rdm.setBufferPointer(in_bufferptr);
 
@@ -68,9 +88,17 @@ int main(int argc, char const *argv[])
         daq.process();
         rdm.process();
         std::cout << "Frame " << i << " Range: " << *range_visualizeptr << std::endl;
+        
+        // Write RDM data to shared memory
         sem_wait(sem_empty);
         memcpy(shm->frame, rdm.getRDMDataPointer(), sizeof(float) * SLOW_TIME * FAST_TIME);
         sem_post(sem_full);
+        
+        // Write DAQ frame data to shared memory
+        sem_wait(sem_daq_empty);
+        memcpy(shm_daq->frame, in_bufferptr, sizeof(uint16_t) * TX * RX * FAST_TIME * SLOW_TIME * IQ);
+        sem_post(sem_daq_full);
+        
         i++;
     }
 

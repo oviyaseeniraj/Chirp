@@ -12,8 +12,10 @@ Note: if running into an issue when setting up AWR board, just power cycle it  (
 ### DCA Board:
 1. Change into `Documents/JetsonHardwareSetup/DCA1000/SourceCode/Release` directory
 2. Run `./DCA1000EVM_CLI_Control fpga DCAconfig.json`
+    - If you run into an issue along the lines of "UDP recvfrom failed", then this means that the ethernet interface between the DCA and Jetson Nano is not working properly because no IP address is assigned to it
+    - Run `sudo nmtui` (network manager text user interface), activate a connection, and enable the PCI Ethernet interface
 3. Run `./DCA1000EVM_CLI_Control record DCAconfig.json`  
-    STOP HERE: Have you run `./setup_radar` yet? If not, run that first, then continue.
+    - STOP HERE: Have you run `./setup_radar` yet? If not, run that first, then continue.
 4. Run `./DCA1000EVM_CLI_Control start_record DCAconfig.json`
 
 ### Run the Visualizer:

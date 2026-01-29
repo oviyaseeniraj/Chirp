@@ -4,7 +4,8 @@ import numpy as np
 import posix_ipc
 import socketio
 from cfar import cfar_pytorch
-from supabase_manager import SupabaseFrameManager
+
+# from supabase_manager import SupabaseFrameManager
 
 # Open or create shared memory
 shm = posix_ipc.SharedMemory("/frame_shm", posix_ipc.O_CREAT, size=64 * 512 * 4)
@@ -16,7 +17,7 @@ sem_empty = posix_ipc.Semaphore("/frame_empty", posix_ipc.O_CREAT, initial_value
 sem_full = posix_ipc.Semaphore("/frame_full", posix_ipc.O_CREAT, initial_value=0)
 
 
-def main(sio, db_manager, frame_count):
+def main(sio, frame_count):
     # wait for producer to signal a frame is ready
     sem_full.acquire()
 
@@ -38,28 +39,14 @@ def main(sio, db_manager, frame_count):
         device="cpu",
     )
 
-    # Store Range-Doppler Map frame to Supabase database
-    if db_manager.is_ready():
-        success = db_manager.store_frame(
-            rdm_frame=frame,
-            frame_number=frame_count,
-            # Note: Additional metadata like range_value, angle_value, etc. 
-            # could be passed here if available from C++ producer
-        )
-        if not success:
-            print(f"Warning: Failed to store frame {frame_count} to database")
-    else:
-        print("Warning: Database manager not ready")
+    # need to add an angle fft to this
 
     if sio and sio.connected:
         try:
-            sio.emit("send_frame",
-                    {
-                        "frame": frame.tolist(),
-                        "array": cfar_data.tolist()
-                    }
-                )
-            
+            sio.emit(
+                "send_frame", {"frame": frame.tolist(), "array": cfar_data.tolist()}
+            )
+
         except Exception:
             # signal producer can write next frame even if send failed
             sem_empty.release()
@@ -86,11 +73,6 @@ if __name__ == "__main__":
     reconnect_attempts = 0
     max_reconnect_attempts = 5
 
-    # Initialize Supabase database manager (fail fast if misconfigured)
-    db_manager = SupabaseFrameManager()
-    if not db_manager.is_ready():
-        raise SystemExit("Supabase not ready. Check SUPABASE_URL and SUPABASE_SERVICE_KEY.")
-
     try:
         frame_count = 0
         while True:
@@ -102,7 +84,7 @@ if __name__ == "__main__":
                 else:
                     reconnect_attempts = 0  # Reset for future attempts
 
-            frame = main(sio, db_manager, frame_count)
+            frame = main(sio, frame_count)
             if frame is not None:
                 frame_count += 1
                 reconnect_attempts = 0  # Reset on successful frame

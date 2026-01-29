@@ -53,6 +53,14 @@ target_link_libraries(playground
     fusionsense
 )
 
+add_executable(shim
+	test/shim/main.cpp
+	)
 
+target_link_libraries(
+	shim
+	fusionsense
+	
+	)
 include(CTest)
 enable_testing()

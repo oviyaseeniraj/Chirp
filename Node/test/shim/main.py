@@ -39,7 +39,13 @@ def main(sio):
 
     if sio and sio.connected:
         try:
-            sio.emit("send_array", {"array": cfar_data.tolist()})
+            sio.emit("send_frame",
+                    {
+                        "frame": frame.tolist(),
+                        "array": cfar_data.tolist()
+                    }
+                )
+            
         except Exception:
             # signal producer can write next frame even if send failed
             sem_empty.release()

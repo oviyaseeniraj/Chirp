@@ -53,6 +53,23 @@ target_link_libraries(playground
     fusionsense
 )
 
+add_executable(test_export_cube
+    test/AnirbanExperiments/test_export_cube.cpp
+)
+
+target_link_libraries(test_export_cube
+    fusionsense
+)
+
+
+add_executable(test_rdm_plot
+    test/AnirbanExperiments/test_rdm_plot.cpp
+)
+
+target_link_libraries(test_rdm_plot
+    fusionsense
+)
+
 
 include(CTest)
 enable_testing()

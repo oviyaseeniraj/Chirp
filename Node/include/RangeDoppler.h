@@ -94,6 +94,7 @@ class RangeDoppler : public RadarBlock
         // rdm_avg should be zero-filled
         int averaged_rdm(float *rdm_norm, float *rdm_avg);
 
+        void export_cube();
         void process() override;
 
     private:

@@ -15,8 +15,6 @@ int main(int argc, char* argv[])
     // CONSTRUCTOR INITIATION
     DataAcquisition daq;
     RangeDoppler rdm("");
-    Visualizer vis(INPUT_SIZE,OUTPUT_SIZE);
-    JSON_TCP tcp(node_name);  // For saving data and running calibration
 
     // BUFFER POINTER INITIATION
     uint16_t *in_bufferptr    = daq.getBufferPointer();
@@ -30,13 +28,6 @@ int main(int argc, char* argv[])
     float    *rdm_data_ptr = rdm.getRDMDataPointer();  // Full RDM data for plotting
     
     rdm.setBufferPointer(in_bufferptr);
-    vis.setBufferPointer(in_visualizeptr);
-    vis.setAngleBufferPointer(ang_visualizeptr);
-    vis.setAngleIndexPointer(angidx_visptr);
-    vis.setRangeBufferPointer(range_visualizeptr);
-    
-    vis.setAngleMapPointer(angleMap_ptr); //not used in implementation.cpp so dunno what to do with it
-    tcp.setRDMPointer(rdm_data_ptr);  // Set RDM pointer for saving binary files
 
     // FRAME POINTER INITIATION
     auto frame_daq = daq.getFramePointer();
@@ -71,48 +62,17 @@ int main(int argc, char* argv[])
             // Optional node name as second argument
             if (argc >= 3) {
                 node_name = argv[2];
-                tcp.setNodeName(node_name);
             }
         }
     }
-    vis.setWaitTime(1);   
 
     rdm.process();
-    
-    std::cout << "\n=== Starting Data Collection ===\n";
-    std::cout << "Node: " << tcp.getNodeName() << "\n";
-    std::cout << "Collecting " << num_frames << " frames...\n\n";
     
     for(int i = 0; i < num_frames; i++){
         auto start = std::chrono::high_resolution_clock::now();
         
         daq.process();
-        rdm.process();
-        // vis.process();
-        
-        // Get angle, range, and doppler for this frame
-        float angle = *ang_visualizeptr;
-        float range = *range_visualizeptr;
-        float doppler = *doppler_visualizeptr;
-        int doppler_bin = *doppler_bin_ptr;
-        
-        // Save data (including doppler and RDM binary)
-        // tcp.process(angle, range, doppler, doppler_bin, start);
-        
-        std::cout << "Frame " << (i+1) << "/" << num_frames 
-                  << " - Angle: " << angle << "°, Range: " << range << "m"
-                  << ", Doppler: " << doppler << "m/s\n";
+        rdm.export_cube();
     }
-    
-    tcp.end_stream();
-    
-    // std::cout << "\n=== Data Collection Complete ===\n";
-    // std::cout << "Running calibration...\n\n";
-    
-    // tcp.run_calibration();
-    
-    std::cout << "\n=== Running Range-Doppler Map Plotting ===\n";
-    tcp.run_rdm_plotting();
-
     return 0;
 }

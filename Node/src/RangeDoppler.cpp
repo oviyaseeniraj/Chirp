@@ -842,6 +842,20 @@ void save_as_binary(const std::string &filename, T *rdm_data, size_t length){
     fclose(fp);
 }
 
+void RangeDoppler::export_cube()
+{
+ // auto start = chrono::high_resolution_clock::now();
+    for (int i = 0; i < SIZE_W_IQ; i++)
+    {
+        adc_data_flat[i] = (float)input[i];
+
+    }
+    save_as_binary<float>("/home/chirp/Chirp/Node/test/AnirbanExperiments/radar_cube/raw_data" + std::to_string(frame) + ".bin", adc_data_flat, SIZE_W_IQ);   
+    shape_cube(adc_data_flat, adc_data_reshaped, adc_data);
+    save_as_binary<float>("/home/chirp/Chirp/Node/test/AnirbanExperiments/radar_cube/radar_cube_frame_" + std::to_string(frame) + ".bin", adc_data_reshaped, SIZE_W_IQ);   
+    frame++;
+}
+
 void RangeDoppler::process()
 {
     // auto start = chrono::high_resolution_clock::now();
@@ -865,10 +879,10 @@ void RangeDoppler::process()
         }
     }
     shape_cube(adc_data_flat, adc_data_reshaped, adc_data);
-    save_as_binary<float>("/home/chirp/Chirp/Node/test/non_thread/frame_data/radar_cube/radar_cube_" + std::to_string(frame) + ".bin", adc_data_reshaped, SIZE_W_IQ);
     compute_range_doppler();
     compute_mag_norm(rdm_data, rdm_norm);
     averaged_rdm(rdm_norm, rdm_avg);
+    save_as_binary("/home/chirp/Chirp/Node/test/AnirbanExperiments/rdm_plot/rdm_frame_" + std::to_string(frame) + ".bin", rdm_avg, FAST_TIME * SLOW_TIME );
     remove_zero_dop(rdm_avg, zero_rdm_avg);
     shape_angle_data(zero_rdm_avg, prev_rdm_avg, cfar_cube, adc_data, angle_data, cfar_max);
     correlation_matrix(zero_rdm_avg, prev_rdm_avg, cfar_cube, adc_data, cfar_max, Rmatrix, final_range, final_angle);
@@ -877,8 +891,6 @@ void RangeDoppler::process()
     // fftshift_ang_est(angle_norm);
     find_azimuth_angle(angle_norm, final_angle);
 
-    // string str = ("./out") + to_string(frame) + ".txt";
-    // save_1d_array(rdm_avg, FAST_TIME, SLOW_TIME, str);
 
     // auto stop = chrono::high_resolution_clock::now();
     // auto duration_rdm_process = duration_cast<microseconds>(stop - start);

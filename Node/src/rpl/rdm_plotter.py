@@ -141,7 +141,7 @@ def compute_axes(rdm_shape):
     
     # Range axis (only using first half due to fftshift behavior)
     # Range bins go from 0 to max_range
-    range_axis = np.linspace(0, MAX_RANGE, fast_time )
+    range_axis = np.linspace(0, MAX_RANGE, fast_time // 2)
     
     # Velocity axis (centered at 0 after fftshift)
     # Bins are: [-max_vel, ..., 0, ..., +max_vel]

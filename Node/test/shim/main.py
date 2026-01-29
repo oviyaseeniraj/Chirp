@@ -4,6 +4,7 @@ import numpy as np
 import posix_ipc
 import socketio
 from cfar import cfar_pytorch
+from supabase_manager import SupabaseFrameManager
 
 # Open or create shared memory
 shm = posix_ipc.SharedMemory("/frame_shm", posix_ipc.O_CREAT, size=64 * 512 * 4)
@@ -15,11 +16,11 @@ sem_empty = posix_ipc.Semaphore("/frame_empty", posix_ipc.O_CREAT, initial_value
 sem_full = posix_ipc.Semaphore("/frame_full", posix_ipc.O_CREAT, initial_value=0)
 
 
-def main(sio):
+def main(sio, db_manager, frame_count):
     # wait for producer to signal a frame is ready
     sem_full.acquire()
 
-    # read frame
+    # read frame (this is the Range-Doppler Map from the C++ producer)
     frame = np.frombuffer(mm, dtype=np.float32, count=64 * 512).reshape(64, 512).copy()
 
     # signal producer can write next frame
@@ -36,6 +37,15 @@ def main(sio):
         pad_range=128,
         device="cpu",
     )
+
+    # Store Range-Doppler Map frame to Supabase database
+    if db_manager.is_ready():
+        db_manager.store_frame(
+            rdm_frame=frame,
+            frame_number=frame_count,
+            # Note: Additional metadata like range_value, angle_value, etc. 
+            # could be passed here if available from C++ producer
+        )
 
     if sio and sio.connected:
         try:
@@ -72,6 +82,9 @@ if __name__ == "__main__":
     reconnect_attempts = 0
     max_reconnect_attempts = 5
 
+    # Initialize Supabase database manager
+    db_manager = SupabaseFrameManager()
+
     try:
         frame_count = 0
         while True:
@@ -83,7 +96,7 @@ if __name__ == "__main__":
                 else:
                     reconnect_attempts = 0  # Reset for future attempts
 
-            frame = main(sio)
+            frame = main(sio, db_manager, frame_count)
             if frame is not None:
                 frame_count += 1
                 reconnect_attempts = 0  # Reset on successful frame

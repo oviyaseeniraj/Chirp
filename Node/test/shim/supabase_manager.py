@@ -3,7 +3,7 @@ Supabase database manager for storing radar frames as JSON.
 Simpler approach that stores the entire frame data as JSONB for flexibility.
 """
 
-import json
+import os
 from datetime import datetime
 from typing import Optional
 
@@ -15,8 +15,8 @@ class SupabaseFrameManager:
     """Manager class for Supabase database operations with frame data as JSON."""
     
     # Supabase Configuration
-    SUPABASE_URL = "https://ldfxdteygvfvtotxohsl.supabase.co/"
-    SUPABASE_KEY = "sb_publishable_9orBiFX93EnU0y2O1HAVTQ_VFk-Zeaa"
+    SUPABASE_URL = os.getenv("SUPABASE_URL", "https://ldfxdteygvfvtotxohsl.supabase.co/")
+    SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "sb_secret_zItTcVMLrRNHUfAsnWybbA_BualFz4_")
     TABLE_NAME = "frames"
     
     def __init__(self):
@@ -27,13 +27,32 @@ class SupabaseFrameManager:
     
     def _initialize(self) -> None:
         """Initialize connection to Supabase."""
+        self._validate_config()
         try:
             self.client = create_client(self.SUPABASE_URL, self.SUPABASE_KEY)
+            self._validate_permissions()
             self.is_connected = True
             print("✓ Supabase connection initialized")
         except Exception as e:
             self.is_connected = False
             print(f"✗ Supabase connection failed: {e}")
+            raise
+
+    def _validate_config(self) -> None:
+        if not self.SUPABASE_URL:
+            raise ValueError("SUPABASE_URL is required")
+        if not self.SUPABASE_KEY:
+            raise ValueError("SUPABASE_SERVICE_KEY is required for server inserts")
+        if self.SUPABASE_KEY.startswith("sb_publishable_"):
+            raise ValueError(
+                "SUPABASE_SERVICE_KEY must be a service role key (sb_secret_...), not a publishable key"
+            )
+
+    def _validate_permissions(self) -> None:
+        if not self.client:
+            raise RuntimeError("Supabase client not initialized")
+        # Lightweight permission check to fail fast if RLS blocks inserts
+        self.client.table(self.TABLE_NAME).select("id").limit(1).execute()
     
     def store_frame(
         self,

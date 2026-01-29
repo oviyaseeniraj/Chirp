@@ -86,8 +86,10 @@ if __name__ == "__main__":
     reconnect_attempts = 0
     max_reconnect_attempts = 5
 
-    # Initialize Supabase database manager
+    # Initialize Supabase database manager (fail fast if misconfigured)
     db_manager = SupabaseFrameManager()
+    if not db_manager.is_ready():
+        raise SystemExit("Supabase not ready. Check SUPABASE_URL and SUPABASE_SERVICE_KEY.")
 
     try:
         frame_count = 0

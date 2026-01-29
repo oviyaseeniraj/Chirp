@@ -135,7 +135,7 @@ def index():
     return render_template_string(HTML_TEMPLATE)
 
 
-@socketio.on("send_array")
+@socketio.on("send_frame")
 def handle_array(data):
     """Process array data with maximum speed"""
     try:

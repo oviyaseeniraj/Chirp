@@ -21,7 +21,6 @@ void cleanup_resources() {
 
 struct shareMem{
     float frame[SLOW_TIME * FAST_TIME];
-    float adc_data[SLOW_TIME * FAST_TIME];
 };
 
 
@@ -49,7 +48,6 @@ int main(int argc, char const *argv[])
     rdm.setFramePointer(frame_daq);
     auto frame_rdm = rdm.getFramePointer();
     daq.setFramePointer(frame_rdm);
-    auto adc_data_ptr = rdm.getADCDataPointer();
 
     // OTHER PARAMS
     if (argc > 1){

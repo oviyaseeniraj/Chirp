@@ -1,27 +1,12 @@
 import logging
-import threading
-from queue import Queue
 
 import numpy as np
-from flask import Flask
-from flask_socketio import SocketIO
+import socketio
 from supabase_manager import SupabaseFrameManager
 
 # Disable logging
-logging.getLogger("werkzeug").disabled = True
 logging.getLogger("socketio").disabled = True
 logging.getLogger("engineio").disabled = True
-
-app = Flask(__name__)
-app.config["SECRET_KEY"] = "db-server"
-
-socketio = SocketIO(
-    app,
-    cors_allowed_origins="*",
-    async_mode="threading",
-    logger=False,
-    engineio_logger=False,
-)
 
 
 def init_db():
@@ -37,64 +22,74 @@ def init_db():
 db_manager = init_db()
 frame_count = 0
 
-# Queue for background database writes
-db_queue = Queue()
+# Create Socket.IO client
+sio = socketio.Client(logger=False, engineio_logger=False)
 
 
-def database_writer_thread():
-    """Background thread that writes frames to the database"""
-    while True:
-        try:
-            frame_number, frame_data = db_queue.get()
-            if frame_data is None:  # Sentinel to stop thread
-                break
-            
-            if db_manager.is_ready():
-                success = db_manager.store_frame(
-                    rdm_frame=frame_data,
-                    frame_number=frame_number,
-                )
-                if not success:
-                    print(f"Warning: Failed to store frame {frame_number} to database")
-                else:
-                    if frame_number % 10 == 0:
-                        print(f"Stored frame {frame_number} to database")
-            else:
-                print("Warning: Database manager not ready")
-        except Exception as e:
-            print(f"Error in database writer thread: {e}")
+@sio.event
+def connect():
+    print("Connected to Socket.IO server on port 5000")
 
 
-# Start background database writer thread
-db_thread = threading.Thread(target=database_writer_thread, daemon=True)
-db_thread.start()
+@sio.event
+def disconnect():
+    print("Disconnected from Socket.IO server")
 
 
-@socketio.on("store_frame")
+@sio.on("send_frame")
 def handle_frame(data):
-    """Listen for store_frame event from main.py and queue to database"""
+    """Listen for send_frame event from main.py and store to Supabase database"""
     global frame_count
 
     try:
+        # Print JSON structure (keys only, not data)
+        print(f"Received data with keys: {list(data.keys())}")
+
+        # Extract image data if it's in the fast_plot format
+        # Or handle raw array data
+        if "array" in data:
+            array_data = np.array(data["array"], dtype=np.float32)
+        else:
+            print("Warning: No array data in received frame")
+            return
+
         if "frame" in data:
             frame_data = np.array(data["frame"], dtype=np.float32)
-            frame_count += 1
-            db_queue.put((frame_count, frame_data))
-            print(f"Queued frame {frame_count} for database storage")
         else:
             print("Warning: No frame data in received frame")
+            return
+
+        frame_count += 1
+
+        # Store Range-Doppler Map frame to Supabase database
+        if db_manager.is_ready():
+            success = db_manager.store_frame(
+                rdm_frame=frame_data,
+                frame_number=frame_count,
+                # Note: Additional metadata like range_value, angle_value, etc.
+                # could be passed here if available from C++ producer
+            )
+            if not success:
+                print(f"Warning: Failed to store frame {frame_count} to database")
+            else:
+                if frame_count % 10 == 0:  # Print every 10th frame to reduce spam
+                    print(f"Stored frame {frame_count} to database")
+        else:
+            print("Warning: Database manager not ready")
 
     except Exception as e:
         print(f"Error processing frame: {e}")
 
 
 if __name__ == "__main__":
-    print("Starting database storage server...")
-    print("Listening on 0.0.0.0:5001...")
+    print("Starting database storage client...")
+    print("Connecting to Socket.IO server at localhost:5000...")
+
     try:
-        socketio.run(app, host="0.0.0.0", port=5001, debug=False)
+        sio.connect("http://localhost:5000")
+        sio.wait()
     except KeyboardInterrupt:
         print("\nShutting down...")
-        db_queue.put((None, None))
-        db_thread.join(timeout=2)
-
+        sio.disconnect()
+    except Exception as e:
+        print(f"Error: {e}")

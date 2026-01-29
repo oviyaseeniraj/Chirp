@@ -66,7 +66,7 @@ void RangeDoppler::remove_zero_dop(float *rdm_avg, float *zero_rdm_avg)
     {
         zero_rdm_avg[i] = rdm_avg[i];
     }
-    for (int i = 32; i < 34; i++)
+    for (int i = 31; i < 34; i++)
     {
         for (int j = 0; j < FAST_TIME; j++)
         {
@@ -452,19 +452,19 @@ float* RangeDoppler::getAngleMapPointer()
 	void RangeDoppler::compute_doppler_velocity(int cfar_idx) {
 	    // Get the doppler bin (slow time dimension)
 	    int doppler_bin = cfar_idx / FAST_TIME;
-	    
+
 	    // Shift to center (fftshift was applied, so center bin is at SLOW_TIME/2)
 	    // After fftshift, bin 0 corresponds to most negative velocity
 	    // bin SLOW_TIME/2 corresponds to zero velocity
 	    // bin SLOW_TIME-1 corresponds to most positive velocity
 	    int shifted_bin = doppler_bin - SLOW_TIME/2;
-	    
+
 	    // Calculate velocity: positive = approaching, negative = receding
 	    float velocity = shifted_bin * VELOCITY_RES;
-	    
+
 	    final_doppler[0] = velocity;
 	    final_doppler_bin[0] = doppler_bin;
-	    
+
 	    std::cout << "Doppler bin: " << doppler_bin << ", Velocity: " << velocity << " m/s" << std::endl;
 	}
 
@@ -475,14 +475,14 @@ float* RangeDoppler::getAngleMapPointer()
 	        std::cerr << "Error: Could not open file " << filename << std::endl;
 	        return -1;
 	    }
-	    
+
 	    // Write header: dimensions
 	    int dims[2] = {SLOW_TIME, FAST_TIME};
 	    outfile.write(reinterpret_cast<char*>(dims), sizeof(dims));
-	    
+
 	    // Write the RDM data
 	    outfile.write(reinterpret_cast<char*>(zero_rdm_avg), SLOW_TIME * FAST_TIME * sizeof(float));
-	    
+
 	    outfile.close();
 	    return 0;
 	}
@@ -851,12 +851,12 @@ void RangeDoppler::process()
     compute_mag_norm(rdm_data, rdm_norm);
     averaged_rdm(rdm_norm, rdm_avg);
     remove_zero_dop(rdm_avg, zero_rdm_avg);
-    shape_angle_data(zero_rdm_avg, prev_rdm_avg, cfar_cube, adc_data, angle_data, cfar_max);
-    correlation_matrix(zero_rdm_avg, prev_rdm_avg, cfar_cube, adc_data, cfar_max, Rmatrix, final_range, final_angle);
-    compute_angle_est();
-    compute_angmag_norm(angfft_data, angle_norm);
+    // shape_angle_data(zero_rdm_avg, prev_rdm_avg, cfar_cube, adc_data, angle_data, cfar_max);
+    // correlation_matrix(zero_rdm_avg, prev_rdm_avg, cfar_cube, adc_data, cfar_max, Rmatrix, final_range, final_angle);
+    // compute_angle_est();
+    // compute_angmag_norm(angfft_data, angle_norm);
     // fftshift_ang_est(angle_norm);
-    find_azimuth_angle(angle_norm, final_angle);
+    // find_azimuth_angle(angle_norm, final_angle);
 
     // string str = ("./out") + to_string(frame) + ".txt";
     // save_1d_array(rdm_avg, FAST_TIME, SLOW_TIME, str);

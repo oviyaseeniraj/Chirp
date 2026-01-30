@@ -142,7 +142,7 @@ def handle_array(data):
         start_time = time.time()
 
         # Convert to numpy array
-        array_data = np.array(data["array"], dtype=np.float32)
+        array_data = np.frombuffer(data["array"], dtype=np.float32).reshape(64, 256)
 
         # Reshape if needed
         if array_data.size == 64 * 256:

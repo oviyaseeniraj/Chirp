@@ -66,14 +66,14 @@ void RangeDoppler::remove_zero_dop(float *rdm_avg, float *zero_rdm_avg)
     {
         zero_rdm_avg[i] = rdm_avg[i];
     }
-    for (int i = 31; i < 34; i++)
-    {
-        for (int j = 0; j < FAST_TIME; j++)
-        {
-            int idx = i * FAST_TIME + j;
-            zero_rdm_avg[idx] = 0;
-        }
-    }
+    // for (int i = 31; i < 34; i++)
+    // {
+    //     for (int j = 0; j < FAST_TIME; j++)
+    //     {
+    //         int idx = i * FAST_TIME + j;
+    //         zero_rdm_avg[idx] = 0;
+    //     }
+    // }
 
     // 31-34 doppler frames need to be 0 out of 64,
 }

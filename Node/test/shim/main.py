@@ -4,10 +4,14 @@ import numpy as np
 import posix_ipc
 import socketio
 from cfar import cfar_pytorch
+from new_pipe.rdm import RangeDoppler
 
 # from supabase_manager import SupabaseFrameManager
 
 # Open or create shared memory
+# shm = posix_ipc.SharedMemory(
+#     "/frame_shm", posix_ipc.O_CREAT, size=64 * 512 * 4 * 3 * 2 * 4
+# )
 shm = posix_ipc.SharedMemory("/frame_shm", posix_ipc.O_CREAT, size=64 * 512 * 4)
 mm = mmap.mmap(shm.fd, shm.size, mmap.MAP_SHARED, mmap.PROT_READ | mmap.PROT_WRITE)
 shm.close_fd()  # fd no longer needed
@@ -17,15 +21,19 @@ sem_empty = posix_ipc.Semaphore("/frame_empty", posix_ipc.O_CREAT, initial_value
 sem_full = posix_ipc.Semaphore("/frame_full", posix_ipc.O_CREAT, initial_value=0)
 
 
-def main(sio, frame_count):
+def main(sio, frame_count, rdm):
     # wait for producer to signal a frame is ready
     sem_full.acquire()
-
     # read frame (this is the Range-Doppler Map from the C++ producer)
+    # frame_data = np.frombuffer(mm, dtype=np.uint16, count=64 * 512 * 4 * 3 * 2).copy()
+    # rdm.set_buffer(frame_data)
+    # frame = rdm.process().reshape(64, 512).astype(np.float32)
+    #
     frame = np.frombuffer(mm, dtype=np.float32, count=64 * 512).reshape(64, 512).copy()
 
     # signal producer can write next frame
     sem_empty.release()
+
     cfar_data = cfar_pytorch(
         frame,
         pad_value=np.mean(frame[:, :256]),
@@ -44,7 +52,8 @@ def main(sio, frame_count):
     if sio and sio.connected:
         try:
             sio.emit(
-                "send_frame", {"frame": frame.tolist(), "array": cfar_data.tolist()}
+                "send_frame",
+                {"frame": frame.tolist(), "array": frame[:, :256].tobytes()},
             )
 
         except Exception:
@@ -72,6 +81,7 @@ if __name__ == "__main__":
     sio = None
     reconnect_attempts = 0
     max_reconnect_attempts = 5
+    rdm = RangeDoppler()
 
     try:
         frame_count = 0
@@ -84,7 +94,7 @@ if __name__ == "__main__":
                 else:
                     reconnect_attempts = 0  # Reset for future attempts
 
-            frame = main(sio, frame_count)
+            frame = main(sio, frame_count, rdm)
             if frame is not None:
                 frame_count += 1
                 reconnect_attempts = 0  # Reset on successful frame

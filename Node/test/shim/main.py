@@ -1,4 +1,5 @@
 import mmap
+import time
 
 import numpy as np
 import posix_ipc
@@ -86,6 +87,8 @@ if __name__ == "__main__":
     try:
         frame_count = 0
         while True:
+            start = time.perf_counter_ns()
+
             # Try to connect/reconnect if needed
             if sio is None or not sio.connected:
                 if reconnect_attempts < max_reconnect_attempts:
@@ -93,11 +96,12 @@ if __name__ == "__main__":
                     reconnect_attempts += 1 if sio is None else 0
                 else:
                     reconnect_attempts = 0  # Reset for future attempts
-
             frame = main(sio, frame_count, rdm)
             if frame is not None:
                 frame_count += 1
                 reconnect_attempts = 0  # Reset on successful frame
+            end = time.perf_counter_ns()
+            print(f"Processing time: {(end - start) / 1e6:.2f} ms")
 
     except KeyboardInterrupt:
         pass

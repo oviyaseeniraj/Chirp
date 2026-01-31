@@ -23,6 +23,10 @@ struct shareMem{
     float frame[SLOW_TIME * FAST_TIME];
 };
 
+// struct shareMem{
+//     uint16_t frame[SLOW_TIME * FAST_TIME * 3 * 2 * 4];
+// };
+
 
 
 int main(int argc, char const *argv[])

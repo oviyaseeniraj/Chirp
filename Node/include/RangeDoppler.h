@@ -41,6 +41,7 @@ class RangeDoppler : public RadarBlock
         float* getRDMDataPointer();
         void compute_doppler_velocity(int cfar_idx);
         int save_rdm_data(const std::string& filename);
+        std::complex<float>* getCube(){return adc_data;}
 
         // Still need to fix this fftshift issue (we think this means that Percept's angle estimation never worked)
         void fftshift_ang_est(float *arr);
@@ -79,7 +80,7 @@ class RangeDoppler : public RadarBlock
         * shape_cube() reformats the radar cube, which is a 5D matrix
         * 'in' has an order like this: frame[Chirp Loop][TX][Sample #][IQ][RX]
         * 'mid' has an order like this: frame[TX][RX][Chirp Loop][Sample #][IQ]
-        * TODO: what is the difference between 'mid' and 'out' then? 
+        * TODO: what is the difference between 'mid' and 'out' then?
         */
         void shape_cube(float *in, float *mid, std::complex<float> *out);
 

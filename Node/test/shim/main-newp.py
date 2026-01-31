@@ -67,9 +67,8 @@ def processing_process(raw_queue, processed_queue):
         frame_data = raw_queue.get()
 
         # Process through RDM
-        rdm.set_buffer(frame_data)
-        frame = rdm.process().reshape(64, 512).astype(np.float32)
-
+        rdm.set_buffer(np.array(frame_data, dtype=np.float32))
+        frame = rdm.process().reshape(64, 512)
         # Apply CFAR
         cfar_data = cfar_pytorch(
             frame,

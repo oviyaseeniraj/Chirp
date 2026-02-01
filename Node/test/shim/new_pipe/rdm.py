@@ -1,5 +1,6 @@
 import time
 
+import cv2
 import numpy as np
 import pyfftw
 
@@ -62,6 +63,8 @@ class RangeDoppler:
         self.adc_data_flat = np.zeros(SIZE_W_IQ, dtype=np.float32)
         self.mid = np.zeros(SIZE_W_IQ, dtype=np.float32)
         self.adc_complex = np.zeros(SIZE, dtype=np.complex64)
+        self.norm = np.zeros(SIZE_W_IQ, dtype=np.float32)
+        self.avg = np.zeros(SIZE_W_IQ, dtype=np.float32)
 
         if self.window_type == "blackman":
             self.window = np.blackman(FAST_TIME).astype(np.float32)
@@ -110,30 +113,43 @@ class RangeDoppler:
         t0 = time.perf_counter()
 
         cube = self.shape_cube_vect()
+
         t1 = time.perf_counter()
+
         np.copyto(self.fftw_in, cube)
         self.plan()
         rdm = self.fftw_out
 
+        t2 = time.perf_counter()
+
         mag2 = rdm.real * rdm.real + rdm.imag * rdm.imag
-        mag = np.log2(mag2) * 0.5
+        self.norm = np.log2(mag2) * 0.5
 
-        avg = mag.reshape((TX * RX, SLOW_TIME * FAST_TIME)).mean(axis=0)
+        t3 = time.perf_counter()
 
-        mn = avg.min()
-        mx = avg.max()
-        if mx != mn:
-            avg = (avg - mn) * (255.0 / (mx - mn))
-        else:
-            avg[:] = 0.0
+        # avg = self.avg_rdm()
+        avg = self.norm.reshape(RX * TX, SLOW_TIME * FAST_TIME).mean(axis=0)
+        avg *= 255.0 / avg.max()
+        avg = avg.astype(np.uint8)
+
+        t4 = time.perf_counter()
 
         avg = avg.reshape((SLOW_TIME, FAST_TIME))
-        avg = np.fft.fftshift(avg, axes=(0, 1))
+        avg = np.fft.fftshift(avg, axes=(0))
+        t5 = time.perf_counter()
 
         dt = (time.perf_counter() - t0) * 1e6
         dt2 = (t1 - t0) * 1e6
+        dt3 = (t2 - t1) * 1e6
+        dt4 = (t3 - t2) * 1e6
+        dt5 = (t4 - t3) * 1e6
+        dt6 = (t5 - t4) * 1e6
         print(f"RDM frame processed in {dt:.0f} us")
         print(f"Cube frame processed in {dt2:.0f} us")
+        print(f"FFT frame processed in {dt3:.0f} us")
+        print(f"Norm frame processed in {dt4:.0f} us")
+        print(f"Average frame processed in {dt5:.0f} us")
+        print(f"Shift frame processed in {dt6:.0f} us")
 
         return avg.ravel()
 

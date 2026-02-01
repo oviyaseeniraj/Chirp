@@ -60,7 +60,16 @@ add_executable(shim
 target_link_libraries(
 	shim
 	fusionsense
-	
+
 	)
+
+add_executable(TFG
+	test/shim/TFG.cpp
+	)
+
+target_link_libraries(
+	TFG
+	fusionsense
+)
 include(CTest)
 enable_testing()

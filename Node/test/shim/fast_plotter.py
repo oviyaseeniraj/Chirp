@@ -15,6 +15,46 @@ logging.getLogger("engineio").disabled = True
 app = Flask(__name__)
 app.config["SECRET_KEY"] = "fast-plotter"
 
+
+# Colormap transition points (0-255)
+TRANSITION_CYAN = 64  # Blue -> Cyan transition point
+TRANSITION_GREEN = 72  # Cyan -> Green transition point
+TRANSITION_YELLOW = 96  # Green -> Yellow transition point
+TRANSITION_RED = 255  # Yellow -> Red end point
+
+# Pre-compute colormap lookup table once as a constant
+COLORMAP = np.zeros((256, 3), dtype=np.uint8)
+for i in range(256):
+    if i < TRANSITION_CYAN:
+        # Blue to cyan
+        ratio = i / TRANSITION_CYAN if TRANSITION_CYAN > 0 else 0
+        COLORMAP[i] = [0, int(ratio * 255), 255]
+    elif i < TRANSITION_GREEN:
+        # Cyan to green
+        ratio = (
+            (i - TRANSITION_CYAN) / (TRANSITION_GREEN - TRANSITION_CYAN)
+            if TRANSITION_GREEN > TRANSITION_CYAN
+            else 0
+        )
+        COLORMAP[i] = [0, 255, int(255 * (1 - ratio))]
+    elif i < TRANSITION_YELLOW:
+        # Green to yellow
+        ratio = (
+            (i - TRANSITION_GREEN) / (TRANSITION_YELLOW - TRANSITION_GREEN)
+            if TRANSITION_YELLOW > TRANSITION_GREEN
+            else 0
+        )
+        COLORMAP[i] = [int(ratio * 255), 255, 0]
+    else:
+        # Yellow to red
+        ratio = (
+            (i - TRANSITION_YELLOW) / (TRANSITION_RED - TRANSITION_YELLOW)
+            if TRANSITION_RED > TRANSITION_YELLOW
+            else 0
+        )
+        COLORMAP[i] = [255, int(255 * (1 - ratio)), 0]
+
+
 socketio = SocketIO(
     app,
     cors_allowed_origins="*",
@@ -40,10 +80,7 @@ def array_to_raw_image(data_array):
     # This is much faster than matplotlib's colormap
     rgb_array = np.zeros((512, 512, 3), dtype=np.uint8)
 
-    # Simple colormap: blue -> green -> red
-    rgb_array[:, :, 0] = scaled_array  # Red channel
-    rgb_array[:, :, 1] = 255 - scaled_array  # Green channel (inverted)
-    rgb_array[:, :, 2] = 128  # Blue channel (constant)
+    rgb_array = COLORMAP[scaled_array]
 
     return rgb_array
 

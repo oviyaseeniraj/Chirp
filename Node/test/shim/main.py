@@ -12,7 +12,9 @@ SIZE_W_IQ = 64 * 512 * 4 * 3 * 2
 # from supabase_manager import SupabaseFrameManager
 
 # Open or create shared memory
-shm = posix_ipc.SharedMemory("/frame_shm", posix_ipc.O_CREAT, size=SIZE_W_IQ * 2)
+shm = posix_ipc.SharedMemory(
+    "/frame_shm", posix_ipc.O_CREAT, size=(SIZE_W_IQ * 2 + 64 * 512 * 4)
+)
 # shm = posix_ipc.SharedMemory("/frame_shm", posix_ipc.O_CREAT, size=64 * 512 * 4)
 mm = mmap.mmap(shm.fd, shm.size, mmap.MAP_SHARED, mmap.PROT_READ | mmap.PROT_WRITE)
 shm.close_fd()  # fd no longer needed
@@ -26,34 +28,43 @@ def main(sio, frame_count, rdm):
     # wait for producer to signal a frame is ready
     sem_full.acquire()
     # read frame (this is the Range-Doppler Map from the C++ producer)
-    frame_data = np.frombuffer(mm, dtype=np.uint16, count=SIZE_W_IQ).copy()
-    rdm.set_buffer(frame_data)
-    frame = rdm.process().reshape(64, 512).astype(np.uint8)
+    frame_data_raw = np.frombuffer(mm, dtype=np.uint16, count=SIZE_W_IQ).copy()
+    frame_data_procesed = (
+        np.frombuffer(mm, dtype=np.float32, count=64 * 512, offset=SIZE_W_IQ * 2)
+        .reshape(64, 512)
+        .copy()
+    )
+    rdm.set_buffer(frame_data_raw)
+    frame = rdm.process().reshape(64, 512)
     #
     # frame = np.frombuffer(mm, dtype=np.float32, count=64 * 512).reshape(64, 512).copy()
 
     # signal producer can write next frame
     sem_empty.release()
 
-    cfar_data = cfar_pytorch(
-        frame,
-        pad_value=np.mean(frame[:, :256]),
-        guard_cells_doppler=4,
-        guard_cells_range=16,
-        training_cells_doppler=6,
-        training_cells_range=24,
-        threshold_factor=2.5,
-        pad_doppler=32,
-        pad_range=128,
-        device="cpu",
-    )
+    # cfar_data = cfar_pytorch(
+    #     frame,
+    #     pad_value=np.mean(frame[:, :256]),
+    #     guard_cells_doppler=4,
+    #     guard_cells_range=16,
+    #     training_cells_doppler=5,
+    #     training_cells_range=20,
+    #     threshold_factor=2,
+    #     pad_doppler=32,
+    #     pad_range=128,
+    #     device="cpu",
+    # )
 
     # need to add an angle fft to this
     if sio and sio.connected:
         try:
             sio.emit(
                 "send_frame",
-                {"array": frame[:, :256].tobytes()},
+                {
+                    "array": frame[:, :256].tobytes(),
+                    "array_pypros": frame[:, :256].tobytes(),
+                    "array_cpppros": frame_data_procesed[:, :256].tobytes(),
+                },
             )
 
         except Exception as e:

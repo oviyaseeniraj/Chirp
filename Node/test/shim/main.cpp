@@ -24,7 +24,8 @@ void cleanup_resources() {
 // };
 
 struct shareMem{
-    uint16_t frame[SIZE_W_IQ];
+    uint16_t frame_raw[SIZE_W_IQ];
+    float frame_processed[SLOW_TIME * FAST_TIME];
 };
 
 
@@ -70,14 +71,15 @@ int main(int argc, char const *argv[])
     int i = 0;
     while(true){
         daq.process();
+        rdm.process();
         std::cout << "Frame " << i << std::endl;
         int val;
         sem_getvalue(sem_empty, &val);
         printf("sem_empty value = %d\n", val);
         sem_wait(sem_empty);
         std::cout << "copying data" << std::endl;
-        // memcpy(shm->frame, rdm.getRDMDataPointer(), sizeof(float) * SLOW_TIME * FAST_TIME);
-        memcpy(shm->frame, in_bufferptr, sizeof(uint16_t) * SIZE_W_IQ);
+        memcpy(shm->frame_processed, rdm.getRDMDataPointer(), sizeof(float) * SLOW_TIME * FAST_TIME);
+        memcpy(shm->frame_raw, in_bufferptr, sizeof(uint16_t) * SIZE_W_IQ);
         sem_post(sem_full);
         i++;
     }

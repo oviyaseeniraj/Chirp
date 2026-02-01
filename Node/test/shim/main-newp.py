@@ -7,7 +7,7 @@ import psutil
 import socketio
 
 # from _typeshed import ExcInfo
-from cfar import cfar_pytorch
+from new_pipe.cfar import cfar_pytorch
 from new_pipe.daq import DataAcquisition
 from new_pipe.rdm import RangeDoppler
 

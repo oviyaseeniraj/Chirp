@@ -144,12 +144,12 @@ class RangeDoppler:
         dt4 = (t3 - t2) * 1e6
         dt5 = (t4 - t3) * 1e6
         dt6 = (t5 - t4) * 1e6
-        print(f"RDM frame processed in {dt:.0f} us")
-        print(f"Cube frame processed in {dt2:.0f} us")
-        print(f"FFT frame processed in {dt3:.0f} us")
-        print(f"Norm frame processed in {dt4:.0f} us")
-        print(f"Average frame processed in {dt5:.0f} us")
-        print(f"Shift frame processed in {dt6:.0f} us")
+        # print(f"RDM frame processed in {dt:.0f} us")
+        # print(f"Cube frame processed in {dt2:.0f} us")
+        # print(f"FFT frame processed in {dt3:.0f} us")
+        # print(f"Norm frame processed in {dt4:.0f} us")
+        # print(f"Average frame processed in {dt5:.0f} us")
+        # print(f"Shift frame processed in {dt6:.0f} us")
 
         return avg.ravel()
 

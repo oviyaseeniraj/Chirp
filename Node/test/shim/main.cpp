@@ -19,13 +19,13 @@ void cleanup_resources() {
     shm_unlink("/frame_shm");
 }
 
-struct shareMem{
-    float frame[SLOW_TIME * FAST_TIME];
-};
-
 // struct shareMem{
-//     uint16_t frame[SLOW_TIME * FAST_TIME * 3 * 2 * 4];
+//     float frame[SLOW_TIME * FAST_TIME];
 // };
+
+struct shareMem{
+    uint16_t frame[SIZE_W_IQ];
+};
 
 
 
@@ -70,10 +70,14 @@ int main(int argc, char const *argv[])
     int i = 0;
     while(true){
         daq.process();
-        rdm.process();
-        std::cout << "Frame " << i << " Range: " << *range_visualizeptr << std::endl;
+        std::cout << "Frame " << i << std::endl;
+        int val;
+        sem_getvalue(sem_empty, &val);
+        printf("sem_empty value = %d\n", val);
         sem_wait(sem_empty);
-        memcpy(shm->frame, rdm.getRDMDataPointer(), sizeof(float) * SLOW_TIME * FAST_TIME);
+        std::cout << "copying data" << std::endl;
+        // memcpy(shm->frame, rdm.getRDMDataPointer(), sizeof(float) * SLOW_TIME * FAST_TIME);
+        memcpy(shm->frame, in_bufferptr, sizeof(uint16_t) * SIZE_W_IQ);
         sem_post(sem_full);
         i++;
     }

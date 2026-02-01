@@ -149,7 +149,6 @@ def handle_array(data):
 
         if array_data.shape != (64, 256):
             return
-
         # Convert to fast image format
         rgb_image = array_to_raw_image(array_data)
         image_data = encode_image_data(rgb_image)

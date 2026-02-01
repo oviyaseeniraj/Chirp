@@ -3,7 +3,7 @@ import time
 
 import numpy as np
 import socketio
-from cfar import cfar_pytorch
+from new_pipe.cfar import cfar_pytorch
 from new_pipe.rdm import RangeDoppler
 
 SERVER_URL = "http://127.0.0.1:5000"

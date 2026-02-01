@@ -4,16 +4,16 @@ import time
 import numpy as np
 import posix_ipc
 import socketio
-from cfar import cfar_pytorch
+from new_pipe.cfar import cfar_pytorch
 from new_pipe.rdm import RangeDoppler
+
+SIZE_W_IQ = 64 * 512 * 4 * 3 * 2
 
 # from supabase_manager import SupabaseFrameManager
 
 # Open or create shared memory
-# shm = posix_ipc.SharedMemory(
-#     "/frame_shm", posix_ipc.O_CREAT, size=64 * 512 * 4 * 3 * 2 * 4
-# )
-shm = posix_ipc.SharedMemory("/frame_shm", posix_ipc.O_CREAT, size=64 * 512 * 4)
+shm = posix_ipc.SharedMemory("/frame_shm", posix_ipc.O_CREAT, size=SIZE_W_IQ * 2)
+# shm = posix_ipc.SharedMemory("/frame_shm", posix_ipc.O_CREAT, size=64 * 512 * 4)
 mm = mmap.mmap(shm.fd, shm.size, mmap.MAP_SHARED, mmap.PROT_READ | mmap.PROT_WRITE)
 shm.close_fd()  # fd no longer needed
 
@@ -26,11 +26,11 @@ def main(sio, frame_count, rdm):
     # wait for producer to signal a frame is ready
     sem_full.acquire()
     # read frame (this is the Range-Doppler Map from the C++ producer)
-    # frame_data = np.frombuffer(mm, dtype=np.uint16, count=64 * 512 * 4 * 3 * 2).copy()
-    # rdm.set_buffer(frame_data)
-    # frame = rdm.process().reshape(64, 512).astype(np.float32)
+    frame_data = np.frombuffer(mm, dtype=np.uint16, count=SIZE_W_IQ).copy()
+    rdm.set_buffer(frame_data)
+    frame = rdm.process().reshape(64, 512).astype(np.uint8)
     #
-    frame = np.frombuffer(mm, dtype=np.float32, count=64 * 512).reshape(64, 512).copy()
+    # frame = np.frombuffer(mm, dtype=np.float32, count=64 * 512).reshape(64, 512).copy()
 
     # signal producer can write next frame
     sem_empty.release()
@@ -49,20 +49,21 @@ def main(sio, frame_count, rdm):
     )
 
     # need to add an angle fft to this
-
     if sio and sio.connected:
         try:
             sio.emit(
                 "send_frame",
-                {"frame": frame.tolist(), "array": frame[:, :256].tobytes()},
+                {"array": frame[:, :256].tobytes()},
             )
 
-        except Exception:
+        except Exception as e:
             # signal producer can write next frame even if send failed
+            print(e)
             sem_empty.release()
             return None
     else:
         # Continue processing even without plotter connection
+        print("not connected")
         pass
 
     return frame

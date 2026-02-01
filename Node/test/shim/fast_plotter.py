@@ -105,22 +105,52 @@ HTML_TEMPLATE = """
             align-items: center;
             min-height: 100vh;
         }
+        #fps-display {
+            position: fixed;
+            top: 10px;
+            left: 10px;
+            color: white;
+            font-family: monospace;
+            font-size: 16px;
+            background-color: rgba(0, 0, 0, 0.7);
+            padding: 5px 10px;
+            border-radius: 3px;
+        }
     </style>
 </head>
 <body>
+    <div id="fps-display">FPS: 0</div>
     <canvas id="plot-canvas" width="512" height="512"></canvas>
 
     <script>
         const socket = io();
+        let frameCount = 0;
+        let lastTime = Date.now();
+        let lastFrameTime = Date.now();
+        let latency = 0;
+
+        setInterval(() => {
+            const now = Date.now();
+            const delta = (now - lastTime) / 1000;
+            const fps = (frameCount / delta).toFixed(1);
+            document.getElementById('fps-display').textContent = 'FPS: ' + fps + ' | Latency: ' + latency + 'ms';
+            frameCount = 0;
+            lastTime = now;
+        }, 1000);
 
         socket.on('fast_plot', function(data) {
             const canvas = document.getElementById('plot-canvas');
             const ctx = canvas.getContext('2d');
 
+            const now = Date.now();
+            latency = now - lastFrameTime;
+            lastFrameTime = now;
+
             const img = new Image();
             img.onload = function() {
                 ctx.clearRect(0, 0, canvas.width, canvas.height);
                 ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                frameCount++;
             };
             img.src = 'data:image/bmp;base64,' + data.image;
         });
@@ -142,7 +172,7 @@ def handle_array(data):
         start_time = time.time()
 
         # Convert to numpy array
-        array_data = np.frombuffer(data["array"], dtype=np.float32)
+        array_data = np.frombuffer(data["array"], dtype=np.uint8)
 
         if array_data.size == 64 * 256:
             array_data = array_data.reshape(64, 256)

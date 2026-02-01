@@ -8,14 +8,14 @@ import socketio
 
 # from _typeshed import ExcInfo
 from new_pipe.cfar import cfar_pytorch
-from new_pipe.daq import DataAcquisition
+from new_pipe.daqv2 import DataAcquisition
 from new_pipe.rdm import RangeDoppler
 
 # ================= CONFIG =================
 SERVER_URL = "http://127.0.0.1:5000"
 RAW_QUEUE_SIZE = 10  # queue between DAQ and processing
 PROCESSED_QUEUE_SIZE = 10  # queue between processing and socket (real-time)
-TARGET_FPS = 6  # limit processing loop speed
+TARGET_FPS = 10  # limit processing loop speed
 # =========================================
 
 
@@ -42,7 +42,10 @@ def daq_process(raw_queue):
 
     while True:
         frame_data = daq.process()
-        # time.sleep(0.05)
+        # aight this is some actual wizard magic idk
+        # 0.02 sleep time is 170ms
+        # 0.05 sleep time is 150ms
+        time.sleep(0.05)
 
         # Drop old frame if queue full (keep pipeline flowing)
         if raw_queue.full():

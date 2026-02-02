@@ -1,12 +1,9 @@
 deps are in the reqs.txt
 
-plotter is fast plotter
-
-main.cpp needs to be run first from build
-
-main.py can be run after and is the processing pipe
-
-uhhhh python -m .venv venv 
+uhhhh python -m venv .venv
 and the source .venv/bin/activate
 
-ts
+to run you need to have the setup radar sh running
+
+main program is under main-newp.py 
+plotter that is used is under dast_plotter_3.py

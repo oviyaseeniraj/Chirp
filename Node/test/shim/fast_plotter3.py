@@ -15,6 +15,11 @@ logging.getLogger("engineio").disabled = True
 app = Flask(__name__)
 app.config["SECRET_KEY"] = "fast-plotter3"
 
+# Configuration
+SHOW_RANGE_ANGLE_PLOT = True  # Set to False to disable range-angle plot
+RANGE_ANGLE_PLOT_WIDTH = 400  # Width of range-angle plot in pixels
+RANGE_ANGLE_PLOT_HEIGHT = 300  # Height of range-angle plot in pixels
+
 # RdBu colormap transition points (0-255)
 TRANSITION_MID = 128  # Middle point (white)
 
@@ -107,12 +112,27 @@ def encode_image_data(rgb_array):
     return base64.b64encode(bmp_data).decode("ascii")
 
 
-def extract_detections(cfar_array, angles_array):
-    """Extract detection information from CFAR and angles arrays"""
+def extract_detections(cfar_array, angles_array, rdm_array=None):
+    """Extract detection information from CFAR and angles arrays
+
+    Args:
+        cfar_array: Binary CFAR detection map
+        angles_array: Angle estimates in degrees
+        rdm_array: Original RDM data for velocity magnitude calculation (optional)
+    """
     detections = []
 
     # Find detection positions
     detection_indices = np.where(cfar_array > 0)
+
+    # Radar parameters for velocity calculation
+    SLOW_TIME = 64
+    CHIRP_DURATION = 100e-6
+    CARRIER_FREQ = 77e9
+    SPEED_OF_LIGHT = 3e8
+    LAMBDA = SPEED_OF_LIGHT / CARRIER_FREQ
+    MAX_VELOCITY = LAMBDA / (4.0 * CHIRP_DURATION)
+    VELOCITY_RES = 2.0 * MAX_VELOCITY / SLOW_TIME
 
     for i in range(len(detection_indices[0])):
         doppler_idx = detection_indices[0][i]
@@ -120,6 +140,16 @@ def extract_detections(cfar_array, angles_array):
 
         # Get angle for this detection (0 means no angle estimate)
         angle_deg = angles_array[doppler_idx, range_idx]
+
+        # Calculate velocity magnitude from doppler index
+        # Center doppler bin at SLOW_TIME/2
+        doppler_offset = doppler_idx - SLOW_TIME // 2
+        velocity = doppler_offset * VELOCITY_RES  # in m/s
+
+        # Get signal magnitude if RDM data is available
+        magnitude = 0.0
+        if rdm_array is not None:
+            magnitude = float(rdm_array[doppler_idx, range_idx])
 
         # Convert indices to pixel coordinates (accounting for scaling and rotation)
         # Original: (64, 256) -> Scaled: (512, 512) -> Rotated 90 degrees CCW
@@ -143,13 +173,16 @@ def extract_detections(cfar_array, angles_array):
                 "doppler_idx": int(doppler_idx),
                 "range_idx": int(range_idx),
                 "angle": float(angle_deg) if angle_deg != 0 else None,
+                "velocity": float(velocity),
+                "magnitude": magnitude,
             }
         )
 
     return detections
 
 
-HTML_TEMPLATE = """
+HTML_TEMPLATE = (
+    """
 <!DOCTYPE html>
 <html>
 <head>
@@ -166,6 +199,11 @@ HTML_TEMPLATE = """
             min-height: 100vh;
             font-family: 'Courier New', monospace;
         }
+        #main-container {
+            display: flex;
+            gap: 20px;
+            align-items: flex-start;
+        }
         #container {
             position: relative;
             display: inline-block;
@@ -178,6 +216,15 @@ HTML_TEMPLATE = """
             top: 0;
             left: 0;
             pointer-events: none;
+        }
+        #range-angle-container {
+            display: """
+    + ("block" if SHOW_RANGE_ANGLE_PLOT else "none")
+    + """;
+        }
+        #range-angle-canvas {
+            border: 1px solid #333;
+            background-color: #1a1a1a;
         }
         #fps-display {
             position: fixed;
@@ -209,11 +256,22 @@ HTML_TEMPLATE = """
     <div id="legend">
         <div style="color: #ff6666;">● Detection Point</div>
         <div style="color: #ffff66;">Angle (degrees)</div>
+        <div style="margin-top: 8px;">Range-Angle Plot:</div>
+        <div style="color: #00ff00;">Size = Velocity</div>
     </div>
 
-    <div id="container">
-        <canvas id="plot-canvas" width="512" height="512"></canvas>
-        <canvas id="overlay-canvas" width="512" height="512"></canvas>
+    <div id="main-container">
+        <div id="container">
+            <canvas id="plot-canvas" width="512" height="512"></canvas>
+            <canvas id="overlay-canvas" width="512" height="512"></canvas>
+        </div>
+        <div id="range-angle-container">
+            <canvas id="range-angle-canvas" width=\""""
+    + str(RANGE_ANGLE_PLOT_WIDTH)
+    + """\" height=\""""
+    + str(RANGE_ANGLE_PLOT_HEIGHT)
+    + """\"></canvas>
+        </div>
     </div>
 
     <script>
@@ -229,6 +287,9 @@ HTML_TEMPLATE = """
         const plotCtx = plotCanvas.getContext('2d');
         const overlayCtx = overlayCanvas.getContext('2d');
 
+        const rangeAngleCanvas = document.getElementById('range-angle-canvas');
+        const rangeAngleCtx = rangeAngleCanvas ? rangeAngleCanvas.getContext('2d') : null;
+
         // Update FPS display
         setInterval(() => {
             const now = Date.now();
@@ -239,6 +300,123 @@ HTML_TEMPLATE = """
             frameCount = 0;
             lastTime = now;
         }, 1000);
+
+        function drawRangeAnglePlot(detections) {
+            if (!rangeAngleCtx) return;
+
+            const canvas = rangeAngleCanvas;
+            const ctx = rangeAngleCtx;
+            const width = canvas.width;
+            const height = canvas.height;
+            const margin = 40;
+            const plotWidth = width - 2 * margin;
+            const plotHeight = height - 2 * margin;
+
+            // Clear canvas
+            ctx.fillStyle = '#1a1a1a';
+            ctx.fillRect(0, 0, width, height);
+
+            // Draw axes
+            ctx.strokeStyle = '#555';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(margin, margin);
+            ctx.lineTo(margin, height - margin);
+            ctx.lineTo(width - margin, height - margin);
+            ctx.stroke();
+
+            // Labels
+            ctx.fillStyle = '#aaa';
+            ctx.font = '12px Courier New';
+            ctx.textAlign = 'center';
+            ctx.fillText('Angle (degrees)', width / 2, height - 5);
+
+            ctx.save();
+            ctx.translate(15, height / 2);
+            ctx.rotate(-Math.PI / 2);
+            ctx.fillText('Range (bins)', 0, 0);
+            ctx.restore();
+
+            // Draw grid
+            ctx.strokeStyle = '#333';
+            ctx.lineWidth = 0.5;
+
+            // Vertical grid lines (angle)
+            for (let angle = -90; angle <= 90; angle += 30) {
+                const x = margin + ((angle + 90) / 180) * plotWidth;
+                ctx.beginPath();
+                ctx.moveTo(x, margin);
+                ctx.lineTo(x, height - margin);
+                ctx.stroke();
+
+                ctx.fillStyle = '#888';
+                ctx.font = '10px Courier New';
+                ctx.textAlign = 'center';
+                ctx.fillText(angle + '°', x, height - margin + 15);
+            }
+
+            // Horizontal grid lines (range)
+            for (let i = 0; i <= 5; i++) {
+                const y = margin + (i / 5) * plotHeight;
+                const rangeVal = Math.round((1 - i / 5) * 256);
+                ctx.beginPath();
+                ctx.moveTo(margin, y);
+                ctx.lineTo(width - margin, y);
+                ctx.stroke();
+
+                ctx.fillStyle = '#888';
+                ctx.font = '10px Courier New';
+                ctx.textAlign = 'right';
+                ctx.fillText(rangeVal.toString(), margin - 5, y + 4);
+            }
+
+            // Plot detections
+            if (!detections || detections.length === 0) return;
+
+            // Find max velocity for normalization
+            let maxVelocity = 0;
+            detections.forEach(det => {
+                if (det.velocity !== undefined) {
+                    maxVelocity = Math.max(maxVelocity, Math.abs(det.velocity));
+                }
+            });
+
+            detections.forEach(detection => {
+                const { angle, range_idx, velocity } = detection;
+
+                // Only plot if we have angle information
+                if (angle === null || angle === undefined) return;
+
+                // Map angle to x coordinate (-90 to 90 -> 0 to plotWidth)
+                const x = margin + ((angle + 90) / 180) * plotWidth;
+
+                // Map range to y coordinate (0 to 256 -> height to 0)
+                const y = margin + (1 - range_idx / 256) * plotHeight;
+
+                // Size based on velocity magnitude
+                const velocityMag = Math.abs(velocity || 0);
+                const size = maxVelocity > 0 ? 3 + (velocityMag / maxVelocity) * 10 : 5;
+
+                // Color based on velocity direction
+                if (velocity > 0) {
+                    ctx.fillStyle = '#00ff00';  // Green for positive (approaching)
+                } else if (velocity < 0) {
+                    ctx.fillStyle = '#ff0000';  // Red for negative (receding)
+                } else {
+                    ctx.fillStyle = '#ffff00';  // Yellow for zero
+                }
+
+                // Draw detection point
+                ctx.beginPath();
+                ctx.arc(x, y, size, 0, 2 * Math.PI);
+                ctx.fill();
+
+                // Add outline
+                ctx.strokeStyle = '#fff';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+            });
+        }
 
         function drawDetections(detections) {
             // Clear overlay
@@ -300,6 +478,7 @@ HTML_TEMPLATE = """
                 // Draw detection overlays
                 if (data.detections) {
                     drawDetections(data.detections);
+                    drawRangeAnglePlot(data.detections);
                 }
 
                 frameCount++;
@@ -319,6 +498,7 @@ HTML_TEMPLATE = """
 </body>
 </html>
 """
+)
 
 
 @app.route("/")
@@ -351,7 +531,9 @@ def handle_array(data):
 
                 if angles_array.shape == (64, 256) and cfar_array.shape == (64, 256):
                     # Use actual CFAR detections
-                    detections = extract_detections(cfar_array, angles_array)
+                    detections = extract_detections(
+                        cfar_array, angles_array, array_data
+                    )
                     print(f"Found {len(detections)} detections with angles")
             except Exception as angle_error:
                 print(f"Error processing angles/CFAR: {angle_error}")
@@ -362,7 +544,9 @@ def handle_array(data):
                     # Fallback: create CFAR-like detection map from RDM data
                     threshold = np.mean(array_data) + 2 * np.std(array_data)
                     cfar_detections = (array_data > threshold).astype(np.uint8)
-                    detections = extract_detections(cfar_detections, angles_array)
+                    detections = extract_detections(
+                        cfar_detections, angles_array, array_data
+                    )
                     print(f"Found {len(detections)} detections with angles (fallback)")
             except Exception as angle_error:
                 print(f"Error processing angles: {angle_error}")

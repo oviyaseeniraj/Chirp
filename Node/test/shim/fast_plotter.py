@@ -16,43 +16,28 @@ app = Flask(__name__)
 app.config["SECRET_KEY"] = "fast-plotter"
 
 
-# Colormap transition points (0-255)
-TRANSITION_CYAN = 64  # Blue -> Cyan transition point
-TRANSITION_GREEN = 72  # Cyan -> Green transition point
-TRANSITION_YELLOW = 96  # Green -> Yellow transition point
-TRANSITION_RED = 255  # Yellow -> Red end point
+# RdBu colormap transition points (0-255)
+TRANSITION_MID = 128  # Middle point (white)
 
-# Pre-compute colormap lookup table once as a constant
+# Pre-compute RdBu colormap lookup table once as a constant
 COLORMAP = np.zeros((256, 3), dtype=np.uint8)
 for i in range(256):
-    if i < TRANSITION_CYAN:
-        # Blue to cyan
-        ratio = i / TRANSITION_CYAN if TRANSITION_CYAN > 0 else 0
-        COLORMAP[i] = [0, int(ratio * 255), 255]
-    elif i < TRANSITION_GREEN:
-        # Cyan to green
-        ratio = (
-            (i - TRANSITION_CYAN) / (TRANSITION_GREEN - TRANSITION_CYAN)
-            if TRANSITION_GREEN > TRANSITION_CYAN
-            else 0
-        )
-        COLORMAP[i] = [0, 255, int(255 * (1 - ratio))]
-    elif i < TRANSITION_YELLOW:
-        # Green to yellow
-        ratio = (
-            (i - TRANSITION_GREEN) / (TRANSITION_YELLOW - TRANSITION_GREEN)
-            if TRANSITION_YELLOW > TRANSITION_GREEN
-            else 0
-        )
-        COLORMAP[i] = [int(ratio * 255), 255, 0]
+    if i < TRANSITION_MID:
+        # Dark blue to white (first half)
+        ratio = i / TRANSITION_MID
+        # Start from dark blue (0, 0, 139) and transition to white (255, 255, 255)
+        red = int(0 + 255 * ratio)
+        green = int(0 + 255 * ratio)
+        blue = int(139 + (255 - 139) * ratio)
+        COLORMAP[i] = [red, green, blue]
     else:
-        # Yellow to red
-        ratio = (
-            (i - TRANSITION_YELLOW) / (TRANSITION_RED - TRANSITION_YELLOW)
-            if TRANSITION_RED > TRANSITION_YELLOW
-            else 0
-        )
-        COLORMAP[i] = [255, int(255 * (1 - ratio)), 0]
+        # White to dark red (second half)
+        ratio = (i - TRANSITION_MID) / (255 - TRANSITION_MID)
+        # Start from white (255, 255, 255) and transition to dark red (139, 0, 0)
+        red = int(255 - (255 - 139) * ratio)
+        green = int(255 * (1 - ratio))
+        blue = int(255 * (1 - ratio))
+        COLORMAP[i] = [red, green, blue]
 
 
 socketio = SocketIO(
@@ -70,7 +55,6 @@ def array_to_raw_image(data_array):
     normalized = (
         (data_array - data_array.min()) / (data_array.max() - data_array.min()) * 255
     ).astype(np.uint8)
-
     # Scale up from 64x256 to 512x512 using nearest neighbor interpolation
     # Repeat each row 8 times (512 / 64 = 8) and each column 2 times (512 / 256 = 2)
     scaled_array = np.repeat(np.repeat(normalized, 8, axis=0), 2, axis=1)
@@ -209,7 +193,7 @@ def handle_array(data):
         start_time = time.time()
 
         # Convert to numpy array
-        array_data = np.frombuffer(data["array"], dtype=np.uint8)
+        array_data = np.frombuffer(data["array"], dtype=np.float32)
 
         if array_data.size == 64 * 256:
             array_data = array_data.reshape(64, 256)

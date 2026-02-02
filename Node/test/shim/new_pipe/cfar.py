@@ -4,6 +4,9 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
+# Debug flag - set to True to enable debugging output
+DEBUG = False
+
 # Radar parameters
 FAST_TIME = 512
 SLOW_TIME = 64
@@ -15,6 +18,41 @@ MAX_VELOCITY = LAMBDA / (4.0 * CHIRP_DURATION)
 VELOCITY_RES = 2.0 * MAX_VELOCITY / SLOW_TIME
 RANGE_MULTIPLIER = 9.0 / 256.0
 MAX_RANGE = 9.0
+
+
+def box_sum_integral(data, h1, h2, w1, w2):
+    """Compute box sums using integral image for O(1) per box operation.
+
+    Args:
+        data: 2D tensor [H, W]
+        h1, h2: height range (inclusive top, exclusive bottom)
+        w1, w2: width range (inclusive left, exclusive right)
+
+    Returns:
+        Box sums for each position using windows of size (h2-h1) x (w2-w1)
+    """
+    H, W = data.shape
+
+    # Compute integral image (cumulative sum)
+    # Add zero padding on top and left for easier indexing
+    integral = torch.zeros((H + 1, W + 1), dtype=data.dtype, device=data.device)
+    integral[1:, 1:] = torch.cumsum(torch.cumsum(data, dim=0), dim=1)
+
+    # Extract box sums using the integral image
+    # For a box from (r1,c1) to (r2,c2), sum = I[r2,c2] - I[r1,c2] - I[r2,c1] + I[r1,c1]
+    h_size = h2 - h1
+    w_size = w2 - w1
+
+    # Result will have shape [H, W] where each position is the sum of the box ending at that position
+    # We want the box centered at each position, so we need to offset appropriately
+    result = (
+        integral[h2 : H + h2, w2 : W + w2]
+        - integral[h1 : H + h1, w2 : W + w2]
+        - integral[h2 : H + h2, w1 : W + w1]
+        + integral[h1 : H + h1, w1 : W + w1]
+    )
+
+    return result
 
 
 def cfar_pytorch(
@@ -29,12 +67,11 @@ def cfar_pytorch(
     pad_range=None,
     device="cpu",
 ):
-    """Run CFAR algorithm using PyTorch for GPU acceleration.
+    """Run CFAR algorithm using integral images for ultra-fast box sum computation.
 
     This function applies a CFAR detection algorithm with separate window
     parameters for Doppler (slow time) and Range (fast time) dimensions.
-    Uses PyTorch's unfold operation to extract all windows simultaneously
-    and process them in parallel on GPU.
+    Uses integral images to compute box sums in O(1) per pixel.
 
     Args:
         rdm_data: Input range-Doppler map of shape (SLOW_TIME, FAST_TIME)
@@ -48,7 +85,7 @@ def cfar_pytorch(
                      If None, uses window_size_doppler (default: None)
         pad_range: Number of cells to pad in Range dimension (left/right).
                    If None, uses window_size_range (default: None)
-        device: Device to run on, 'cuda' or 'cpu' (default: 'cuda')
+        device: Device to run on, 'cuda' or 'cpu' (default: 'cpu')
 
     Returns:
         detections: Binary detection map of shape (SLOW_TIME, FAST_TIME//2)
@@ -56,10 +93,11 @@ def cfar_pytorch(
     """
     # Step 1: Get dimensions of input data
     slow_time, fast_time = rdm_data.shape
+    if DEBUG:
+        print(f"[CFAR DEBUG] Input shape: {slow_time}x{fast_time}")
 
     # Step 2: Extract only the positive range bins (first half of fast time)
     rdm_half = rdm_data[:, : fast_time // 2]
-    output_shape = (slow_time, fast_time // 2)
 
     # Step 3: Calculate window sizes for each dimension
     window_size_doppler = guard_cells_doppler + training_cells_doppler
@@ -71,52 +109,33 @@ def cfar_pytorch(
     if pad_range is None:
         pad_range = window_size_range
 
-    # Step 4a: Validate parameters for dimensional consistency
-    # Check that padding is sufficient for the window sizes
+    if DEBUG:
+        print(
+            f"[CFAR DEBUG] Window sizes - Doppler: {window_size_doppler}, Range: {window_size_range}"
+        )
+        print(
+            f"[CFAR DEBUG] Guard cells - Doppler: {guard_cells_doppler}, Range: {guard_cells_range}"
+        )
+
+    # Step 4a: Validate parameters
     if pad_doppler < window_size_doppler:
         raise ValueError(
-            f"pad_doppler ({pad_doppler}) must be >= window_size_doppler ({window_size_doppler}). "
-            f"Need at least {window_size_doppler} padding for guard_cells ({guard_cells_doppler}) + training_cells ({training_cells_doppler})."
+            f"pad_doppler ({pad_doppler}) must be >= window_size_doppler ({window_size_doppler})"
         )
     if pad_range < window_size_range:
         raise ValueError(
-            f"pad_range ({pad_range}) must be >= window_size_range ({window_size_range}). "
-            f"Need at least {window_size_range} padding for guard_cells ({guard_cells_range}) + training_cells ({training_cells_range})."
-        )
-
-    # Validate input dimensions
-    if slow_time <= 0 or fast_time <= 0:
-        raise ValueError(f"Invalid RDM dimensions: {rdm_data.shape}")
-
-    if rdm_data.ndim != 2:
-        raise ValueError(f"RDM data must be 2D, got shape: {rdm_data.shape}")
-
-    # Check that we have enough data after padding for window extraction
-    padded_h = slow_time + 2 * pad_doppler
-    padded_w = (fast_time // 2) + 2 * pad_range
-    required_h = slow_time + 2 * window_size_doppler
-    required_w = (fast_time // 2) + 2 * window_size_range
-
-    if padded_h < required_h:
-        raise ValueError(
-            f"Insufficient padding in Doppler dimension. Padded height: {padded_h}, Required: {required_h}"
-        )
-    if padded_w < required_w:
-        raise ValueError(
-            f"Insufficient padding in Range dimension. Padded width: {padded_w}, Required: {required_w}"
+            f"pad_range ({pad_range}) must be >= window_size_range ({window_size_range})"
         )
 
     # Step 5: Determine padding value (use mean if not provided)
     if pad_value is None:
-        pad_value = np.mean(rdm_half)
+        pad_value = float(np.mean(rdm_half))
 
     # Step 6: Convert to PyTorch tensor and move to device
-    # Add batch and channel dimensions: [1, 1, H, W]
-    rdm_tensor = torch.from_numpy(rdm_half).float().unsqueeze(0).unsqueeze(0)
-    rdm_tensor = rdm_tensor.to(device)
+    rdm_tensor = torch.from_numpy(rdm_half).float().to(device)
 
     # Step 7: Pad the tensor for edge handling
-    # F.pad format: (left, right, top, bottom)
+    # torch.nn.functional.pad format: (left, right, top, bottom)
     padded_rdm = F.pad(
         rdm_tensor,
         (pad_range, pad_range, pad_doppler, pad_doppler),
@@ -124,113 +143,140 @@ def cfar_pytorch(
         value=pad_value,
     )
 
-    # Step 8: Define the full window size for unfolding
-    window_h = 2 * window_size_doppler + 1
-    window_w = 2 * window_size_range + 1
+    if DEBUG:
+        print(f"[CFAR DEBUG] Padded shape: {padded_rdm.shape}")
 
-    # Step 9: Use unfold to extract all windows simultaneously centered on each cell
-    # The original data is at indices [pad_doppler:pad_doppler+slow_time, pad_range:pad_range+(fast_time//2)]
-    # We need windows centered on each of these cells
-    # Start extracting from (pad_doppler - window_size_doppler) to get first window centered on first cell
-    # unfold(dimension, size, step) with step=1
-    # Output size = (input_size - window_size + 1)
-    # We want output = slow_time, so input = slow_time + window_h - 1 = slow_time + 2*window_size_doppler
+    # Step 8: Compute training cell statistics using integral images
+    # The training region is the full window minus the guard region
+    # We'll compute: sum(full_window) - sum(guard_region)
 
-    # Extract region that will give us exactly slow_time x (fast_time//2) windows
-    extract_start_h = pad_doppler - window_size_doppler
-    extract_end_h = pad_doppler + slow_time + window_size_doppler
-    extract_start_w = pad_range - window_size_range
-    extract_end_w = pad_range + (fast_time // 2) + window_size_range
+    # Full window dimensions
+    full_h = 2 * window_size_doppler + 1
+    full_w = 2 * window_size_range + 1
 
-    # Validate extraction bounds
-    if extract_start_h < 0 or extract_end_h > padded_rdm.shape[2]:
-        raise RuntimeError(
-            f"Doppler extraction out of bounds: [{extract_start_h}:{extract_end_h}] for padded size {padded_rdm.shape[2]}"
+    # Guard region dimensions (including CUT)
+    guard_h = 2 * guard_cells_doppler + 1
+    guard_w = 2 * guard_cells_range + 1
+
+    # Number of training cells
+    training_cell_count = full_h * full_w - guard_h * guard_w
+
+    if DEBUG:
+        print(f"[CFAR DEBUG] Full window: {full_h}x{full_w} = {full_h * full_w} cells")
+        print(
+            f"[CFAR DEBUG] Guard region: {guard_h}x{guard_w} = {guard_h * guard_w} cells"
         )
-    if extract_start_w < 0 or extract_end_w > padded_rdm.shape[3]:
-        raise RuntimeError(
-            f"Range extraction out of bounds: [{extract_start_w}:{extract_end_w}] for padded size {padded_rdm.shape[3]}"
-        )
+        print(f"[CFAR DEBUG] Training cells: {training_cell_count}")
 
-    windows = (
-        padded_rdm[:, :, extract_start_h:extract_end_h, extract_start_w:extract_end_w]
-        .unfold(2, window_h, 1)
-        .unfold(3, window_w, 1)
+    # Compute integral image once
+    H, W = padded_rdm.shape
+    integral = torch.zeros((H + 1, W + 1), dtype=torch.float32, device=device)
+    integral[1:, 1:] = torch.cumsum(torch.cumsum(padded_rdm, dim=0), dim=1)
+
+    # Define box extraction function using precomputed integral
+    def extract_box_sums(top_offset, bottom_offset, left_offset, right_offset):
+        """Extract box sums for all positions with given offsets from center."""
+        h1 = top_offset
+        h2 = H - bottom_offset
+        w1 = left_offset
+        w2 = W - right_offset
+
+        result = (
+            integral[h2 : H + 1, w2 : W + 1]
+            - integral[h1 : H - h2 + h1 + 1, w2 : W + 1]
+            - integral[h2 : H + 1, w1 : W - w2 + w1 + 1]
+            + integral[h1 : H - h2 + h1 + 1, w1 : W - w2 + w1 + 1]
+        )
+        return result[:slow_time, : fast_time // 2]
+
+    # Compute sum of full window centered at each cell
+    # For padded data, the original cells are at [pad_doppler:pad_doppler+slow_time, pad_range:pad_range+fast_time//2]
+    # Extract the region where we can compute full windows
+    extract_region = padded_rdm[
+        pad_doppler - window_size_doppler : pad_doppler
+        + slow_time
+        + window_size_doppler,
+        pad_range - window_size_range : pad_range
+        + (fast_time // 2)
+        + window_size_range,
+    ]
+
+    H_extract, W_extract = extract_region.shape
+
+    # Compute integral for the extraction region
+    integral_extract = torch.zeros(
+        (H_extract + 1, W_extract + 1), dtype=torch.float32, device=device
     )
-    # Shape: [1, 1, slow_time, fast_time//2, window_h, window_w]
+    integral_extract[1:, 1:] = torch.cumsum(torch.cumsum(extract_region, dim=0), dim=1)
 
-    # Validate windows shape
-    expected_shape = (1, 1, slow_time, fast_time // 2, window_h, window_w)
-    if windows.shape != expected_shape:
-        raise RuntimeError(
-            f"Window extraction produced unexpected shape: {windows.shape}, expected: {expected_shape}"
-        )
+    # Full window sum: box from (0, 0) to (full_h, full_w) at each position
+    full_window_sum = (
+        integral_extract[full_h : H_extract + 1, full_w : W_extract + 1]
+        - integral_extract[:-full_h, full_w : W_extract + 1]
+        - integral_extract[full_h : H_extract + 1, :-full_w]
+        + integral_extract[:-full_h, :-full_w]
+    )
 
-    # Step 10: Reshape windows for easier processing
-    # Combine spatial dimensions and flatten window dimensions
-    windows = windows.squeeze(0).squeeze(
-        0
-    )  # [slow_time, fast_time//2, window_h, window_w]
+    # Guard region sum: centered box of size (guard_h, guard_w)
+    offset_h = window_size_doppler - guard_cells_doppler
+    offset_w = window_size_range - guard_cells_range
 
-    # Step 11: Create guard cell mask to exclude guard region from training
-    # Build a mask where True = training cell, False = guard cell or CUT
-    guard_mask = torch.ones((window_h, window_w), dtype=torch.bool, device=device)
+    guard_window_sum = (
+        integral_extract[
+            offset_h + guard_h : H_extract - offset_h + 1,
+            offset_w + guard_w : W_extract - offset_w + 1,
+        ]
+        - integral_extract[
+            offset_h : H_extract - offset_h - guard_h + 1,
+            offset_w + guard_w : W_extract - offset_w + 1,
+        ]
+        - integral_extract[
+            offset_h + guard_h : H_extract - offset_h + 1,
+            offset_w : W_extract - offset_w - guard_w + 1,
+        ]
+        + integral_extract[
+            offset_h : H_extract - offset_h - guard_h + 1,
+            offset_w : W_extract - offset_w - guard_w + 1,
+        ]
+    )
 
-    # Calculate center position of the window
-    center_i = window_size_doppler
-    center_j = window_size_range
-
-    # Step 12: Set guard region and CUT to False in mask
-    for i in range(window_h):
-        for j in range(window_w):
-            doppler_distance = abs(i - center_i)
-            range_distance = abs(j - center_j)
-
-            # Exclude cells within guard region (using OR logic)
-            if (
-                doppler_distance <= guard_cells_doppler
-                and range_distance <= guard_cells_range
-            ):
-                guard_mask[i, j] = False
-
-    # Step 13: Apply mask to extract training cells and compute noise level
-    # Expand mask to match windows shape
-    mask_expanded = guard_mask.unsqueeze(0).unsqueeze(0)  # [1, 1, window_h, window_w]
-    mask_expanded = mask_expanded.expand_as(
-        windows
-    )  # [slow_time, fast_time//2, window_h, window_w]
-
-    # Step 14: Compute mean of training cells for each window
-    # Use masked_select alternative: set guard cells to 0 and count valid cells
-    training_windows = windows * mask_expanded.float()
-
-    # Sum training cell values and count of training cells
-    training_sum = training_windows.sum(dim=(-2, -1))  # [slow_time, fast_time//2]
-    training_count = mask_expanded.float().sum(
-        dim=(-2, -1)
-    )  # [slow_time, fast_time//2]
+    # Training sum = full window - guard region
+    training_sum = full_window_sum - guard_window_sum
 
     # Compute noise level (mean of training cells)
-    noise_level = training_sum / (
-        training_count + 1e-10
-    )  # Add epsilon to avoid division by zero
+    noise_level = training_sum / training_cell_count
 
-    # Step 15: Compute threshold for each cell
-    threshold = noise_level * threshold_factor
-
-    # Step 16: Extract cells under test from original unpadded data
-    cells_under_test = rdm_tensor[0, 0, :, :]  # [slow_time, fast_time//2]
-
-    # Validate threshold and cells_under_test have matching shapes
-    if cells_under_test.shape != threshold.shape:
-        raise RuntimeError(
-            f"Shape mismatch: cells_under_test {cells_under_test.shape} != threshold {threshold.shape}"
+    if DEBUG:
+        noise_cpu = noise_level.cpu().numpy()
+        print(
+            f"[CFAR DEBUG] Noise level range: min={noise_cpu.min():.3f}, max={noise_cpu.max():.3f}, mean={noise_cpu.mean():.3f}"
         )
 
-    # Step 17: Apply threshold test - compare CUT to threshold
-    detections_tensor = (cells_under_test > threshold).float()
+    # Step 9: Compute threshold
+    threshold = noise_level * threshold_factor
 
-    # Step 18: Convert back to NumPy array and return
-    detections = detections_tensor.cpu().numpy()
+    if DEBUG:
+        threshold_cpu = threshold.cpu().numpy()
+        print(
+            f"[CFAR DEBUG] Threshold range: min={threshold_cpu.min():.3f}, max={threshold_cpu.max():.3f}"
+        )
+
+    # Step 10: Extract cells under test from original unpadded data
+    cells_under_test = rdm_tensor
+
+    # Step 11: Apply threshold test
+    detections_tensor = cells_under_test > threshold
+
+    if DEBUG:
+        detections_cpu = detections_tensor.cpu().numpy()
+        num_detections = int(detections_cpu.sum())
+        total_cells = detections_cpu.size
+        detection_rate = num_detections / total_cells * 100
+        print(
+            f"[CFAR DEBUG] Detections: {num_detections} out of {total_cells} cells ({detection_rate:.2f}%)"
+        )
+
+    # Step 12: Convert back to NumPy array and return
+    detections = detections_tensor.cpu().numpy().astype(np.float32)
 
     return detections

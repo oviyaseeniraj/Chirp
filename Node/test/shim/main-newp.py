@@ -5,6 +5,7 @@ from multiprocessing import Process, Queue
 import numpy as np
 import psutil
 import socketio
+from new_pipe.angle import angle_fft
 
 # from _typeshed import ExcInfo
 from new_pipe.cfar import cfar_pytorch
@@ -12,7 +13,7 @@ from new_pipe.daqv2 import DataAcquisition
 from new_pipe.rdm import RangeDoppler
 
 # ================= CONFIG =================
-SERVER_URL = "http://127.0.0.1:5000"
+SERVER_URL = "http://127.0.0.1:5001"
 RAW_QUEUE_SIZE = 10  # queue between DAQ and processing
 PROCESSED_QUEUE_SIZE = 10  # queue between processing and socket (real-time)
 TARGET_FPS = 10  # limit processing loop speed
@@ -65,13 +66,18 @@ def processing_process(raw_queue, processed_queue):
     rdm = RangeDoppler(window="blackman")
 
     while True:
-        t0 = time.time()
+        t0 = time.perf_counter_ns()
+        t0_fps = time.time()
 
         frame_data = raw_queue.get()
 
         # Process through RDM
+        t1 = time.perf_counter_ns()
         rdm.set_buffer(np.array(frame_data, dtype=np.float32))
         frame = rdm.process().reshape(64, 512)
+        clean_rdm = rdm.get_clean_rdm()
+        t2 = time.perf_counter_ns()
+
         # Apply CFAR
         cfar_data = cfar_pytorch(
             frame,
@@ -80,23 +86,39 @@ def processing_process(raw_queue, processed_queue):
             guard_cells_range=16,
             training_cells_doppler=6,
             training_cells_range=24,
-            threshold_factor=2.5,
-            pad_doppler=32,
-            pad_range=128,
+            threshold_factor=2,
+            pad_doppler=18,
+            pad_range=50,
             device="cpu",
         )
+
+        t3 = time.perf_counter_ns()
+
+        # Estimate angles for detections
+        angle_data = angle_fft(
+            cfar_detections=cfar_data,
+            clean_rdmap=clean_rdm,
+            zero_pad_cols=124,
+            device="cpu",
+        )
+        t4 = time.perf_counter_ns()
+
+        # Package original RDM, CFAR and angle data
+        output_data = {"rdm": frame, "cfar": cfar_data, "angles": angle_data}
 
         # Drop old frame if queue full (real-time behavior)
         if processed_queue.full():
             processed_queue.get()
 
-        processed_queue.put(frame[:, :256])
+        processed_queue.put(output_data)
+        t5 = time.perf_counter_ns()
 
         # FPS limit to avoid CPU overload
-        dt = time.time() - t0
+        dt = time.time() - t0_fps
         sleep_time = max(0, (1 / TARGET_FPS) - dt)
-        # print(f"dt: {dt:.6f}, sleep_time: {sleep_time:.6f}")
-
+        print(
+            f"dt: {(t5 - t0) // 1_000}, rdm: {(t2 - t1) // 1_000}, cfar: {(t3 - t2) // 1_000}, angle: {(t4 - t3) // 1_000}"
+        )
         time.sleep(sleep_time)
 
 
@@ -123,7 +145,9 @@ def socket_process(processed_queue):
             sio.emit(
                 "send_frame",
                 {
-                    "array": frame[:, :256].tobytes(),
+                    "array": frame["rdm"][:, :256].tobytes(),
+                    "angles": frame["angles"][:, :256].tolist(),
+                    "cfar": frame["cfar"][:, :256].tolist(),
                 },
             )
         except Exception as e:

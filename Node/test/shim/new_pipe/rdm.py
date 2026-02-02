@@ -3,6 +3,7 @@ import time
 import cv2
 import numpy as np
 import pyfftw
+from new_pipe.cfar import cfar_pytorch
 
 FAST_TIME = 512
 SLOW_TIME = 64
@@ -129,8 +130,10 @@ class RangeDoppler:
 
         # avg = self.avg_rdm()
         avg = self.norm.reshape(RX * TX, SLOW_TIME * FAST_TIME).mean(axis=0)
-        avg *= 255.0 / avg.max()
-        avg = avg.astype(np.uint8)
+        # print(np.mean(avg))
+        # avg *= 255.0 / avg.max()
+        avg = (avg - avg.min()) / (avg.max() - avg.min()) * 255.0
+        # avg = avg.astype(np.uint8)
 
         t4 = time.perf_counter()
 
@@ -152,6 +155,36 @@ class RangeDoppler:
         # print(f"Shift frame processed in {dt6:.0f} us")
 
         return avg.ravel()
+
+    def get_clean_rdm(self):
+        rdm_complex = self.fftw_out.copy()  # Shape: (TX * RX, SLOW_TIME, FAST_TIME)
+
+        # Reshape from (TX * RX, SLOW_TIME, FAST_TIME) to (TX, RX, SLOW_TIME, FAST_TIME)
+        rdm_reshaped = rdm_complex.reshape((TX, RX, SLOW_TIME, FAST_TIME))
+
+        # Transpose to (SLOW_TIME, RX, TX, FAST_TIME) to match angle.py expectations
+        rdm_final = rdm_reshaped.transpose(2, 1, 0, 3)
+
+        rdm_final = np.fft.fftshift(rdm_final, axes=0)
+
+        return rdm_final
+
+    def process_with_mimo_data(self):
+        """
+        Process and return both averaged RDM and clean MIMO data.
+
+        Returns:
+            tuple: (averaged_rdm_flat, clean_mimo_rdm)
+            - averaged_rdm_flat: 1D array for visualization/CFAR
+            - clean_mimo_rdm: 4D complex array for angle estimation
+        """
+        # Run normal processing
+        avg_rdm = self.process()
+
+        # Get clean MIMO data
+        clean_mimo = self.get_clean_rdmap_post_bpm()
+
+        return avg_rdm, clean_mimo
 
     def rdm_process_cube(self):
         np.copyto(
@@ -175,6 +208,7 @@ class RangeDoppler:
 
         avg = avg.reshape((SLOW_TIME, FAST_TIME))
         avg = np.fft.fftshift(avg, axes=(0, 1))
+        print(avg.dtype)
         return avg.ravel()
 
 

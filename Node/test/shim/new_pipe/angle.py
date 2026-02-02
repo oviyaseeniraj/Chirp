@@ -61,29 +61,32 @@ SPEED_OF_LIGHT = 3e8
 LAMBDA = SPEED_OF_LIGHT / CARRIER_FREQ
 
 
-def build_virtual_array(num_tx, sample_rd):
+def buildVirtualArray(num_tx_channels, sample_RD):
     """
-    Build virtual array from MIMO radar data.
+    Build a virtual array response for a given number of transmit channels.
 
     Args:
-        num_tx: Number of transmit channels
-        sample_rd: Complex MIMO channel response [num_rx, num_tx]
+        num_tx_channels: Number of transmit channels
+        sample_RD: Sample response data for each transmit channel
 
     Returns:
-        Virtual array vector (flattened)
+        varray: Virtual array response matrix
     """
-    # Flatten the MIMO array into a virtual array
-    # Typical arrangement: concatenate RX responses for each TX
-    virtual_array = sample_rd.flatten()
-    return virtual_array
+    varray = np.zeros((2, 8))
+    for tx in range(num_tx_channels):
+        if tx == 1:
+            varray[1, 4:8] = sample_RD[:, tx]
+        if tx == 2:
+            varray[0, 2:6] = sample_RD[:, tx]
+        if tx == 3:
+            varray[1, 0:4] = sample_RD[:, tx]
+    return varray
 
 
 def angle_fft(
     cfar_detections,
     clean_rdmap,
-    zero_pad_cols=124,
-    num_tx_channels=TX,
-    num_rx_channels=RX,
+    zero_pad_cols=124,  # 248/2 from MATLAB (one end)
     device="cpu",
 ):
     """
@@ -108,105 +111,59 @@ def angle_fft(
         angle_matrix: Angle estimates in degrees [num_doppler, num_range]
                      Zero where no detection
     """
-    # Get dimensions
+    # dimensions from input data
     num_doppler, num_range = cfar_detections.shape
 
-    # Initialize angle matrix
+    # starting matrix, same as matlab
     angle_matrix = np.zeros((num_doppler, num_range), dtype=np.float32)
 
-    # Create angle range (sin space from -1 to 1)
-    angle_range = np.linspace(-1, 1, 2 * zero_pad_cols + 8)
+    # wizard magic from matlab - precompute angle range
+    nfft_ang = 256  # Fixed size like MATLAB
+    angle_range = np.linspace(-1, 1, nfft_ang)
 
-    # Find detections
+    # use the cfar data to specify where to take fft
     detections = np.argwhere(cfar_detections > 0)
 
     if len(detections) == 0:
         return angle_matrix
 
-    # Convert to torch if using GPU
-    angle_range_torch = torch.from_numpy(angle_range).to(device)
+    num_detections = len(detections)
 
-    for detection in detections:
+    # Extract all samples at once for batch processing
+    # Build virtual arrays for all detections in one go
+    virtual_arrays = np.zeros((num_detections, 8), dtype=np.complex64)
+
+    for i, detection in enumerate(detections):
         doppler_bin, range_bin = detection
+        sample_rd = clean_rdmap[doppler_bin, :, :, range_bin]
 
-        # Extract MIMO sample for this range-Doppler bin
-        # Assuming clean_rdmap has shape [doppler, rx, tx, range]
-        if clean_rdmap.ndim == 4:
-            if clean_rdmap.shape == (
-                num_doppler,
-                num_rx_channels,
-                num_tx_channels,
-                num_range,
-            ):
-                sample_rd = clean_rdmap[doppler_bin, :, :, range_bin]
-            elif clean_rdmap.shape == (
-                num_doppler,
-                num_range,
-                num_rx_channels,
-                num_tx_channels,
-            ):
-                sample_rd = clean_rdmap[doppler_bin, range_bin, :, :]
-            else:
-                raise ValueError(f"Unexpected clean_rdmap shape: {clean_rdmap.shape}")
-        else:
-            raise ValueError(f"Expected 4D clean_rdmap, got shape: {clean_rdmap.shape}")
+        # Build virtual array inline (optimized version)
+        # Only extract row 1 data which is what we need
+        virtual_arrays[i, 4:8] = sample_rd[:, 1]  # tx=1
 
-        # Build virtual array
-        virtual_array = build_virtual_array(num_tx_channels, sample_rd)
+    # Pad all virtual arrays at once
+    padded_size = 8 + 2 * zero_pad_cols
+    virtual_arrays_padded = np.zeros((num_detections, padded_size), dtype=np.complex64)
+    virtual_arrays_padded[:, :8] = virtual_arrays
 
-        # Add zero padding on both sides
-        zeros = np.zeros(zero_pad_cols, dtype=virtual_array.dtype)
-        virtual_array_padded = np.concatenate([virtual_array, zeros, zeros])
+    # Convert to torch once for all detections
+    va_torch = torch.from_numpy(virtual_arrays_padded).to(device)
 
-        # Perform FFT on the virtual array
-        nfft_ang = len(virtual_array_padded)
+    # Batch FFT - process all detections at once!
+    angle_fft_result = torch.fft.fft(va_torch, n=nfft_ang, dim=1)
+    angle_fft_result = torch.fft.fftshift(angle_fft_result, dim=1)
+    angle_fft_mag = torch.abs(angle_fft_result)
 
-        va_torch = torch.from_numpy(virtual_array_padded).to(device)
-        angle_fft_result = torch.fft.fftshift(torch.fft.fft(va_torch, n=nfft_ang))
-        angle_fft_mag = torch.abs(angle_fft_result)
-        max_idx = torch.argmax(angle_fft_mag).item()
-        ang_val = angle_range_torch[max_idx].item()
-        # Convert from sin(theta) to theta in degrees
-        # Clamp to [-1, 1] to avoid numerical issues with arcsin
-        ang_val = np.clip(ang_val, -1.0, 1.0)
-        angle_deg = np.rad2deg(np.arcsin(ang_val))
+    # Find max indices for all detections at once
+    max_indices = torch.argmax(angle_fft_mag, dim=1).cpu().numpy()
 
-        # Store angle estimate
-        angle_matrix[doppler_bin, range_bin] = angle_deg
+    # Convert indices to angles (vectorized)
+    ang_vals = angle_range[max_indices]
+    ang_vals = np.clip(ang_vals, -1.0, 1.0)
+    angle_degs = np.rad2deg(np.arcsin(ang_vals))
 
-    return angle_matrix
-
-
-def angle_fft_simple(
-    cfar_detections,
-    rdmap_2d,
-    zero_pad_cols=124,
-    device="cpu",
-):
-    """
-    Simplified angle estimation for 2D range-Doppler map (no MIMO data).
-
-    This is a placeholder that uses the range profile as a proxy for angular FFT.
-    For true angle estimation, you need the full MIMO channel data.
-
-    Args:
-        cfar_detections: Binary detection map [num_doppler, num_range]
-        rdmap_2d: 2D range-Doppler map [num_doppler, num_range]
-        zero_pad_cols: Number of zero columns to pad on each side (default: 124)
-        device: Device to run on, 'cuda' or 'cpu' (default: 'cpu')
-
-    Returns:
-        angle_matrix: Placeholder angle estimates [num_doppler, num_range]
-    """
-    # Get dimensions
-    num_doppler, num_range = cfar_detections.shape
-
-    # Initialize angle matrix
-    angle_matrix = np.zeros((num_doppler, num_range), dtype=np.float32)
-
-    # Without MIMO data, we can't perform true angle estimation
-    # This is a placeholder that returns zeros
-    # In a real system, you would need access to the raw MIMO channel data
+    # Store all angle estimates at once
+    angle_matrix[detections[:, 0], detections[:, 1]] = angle_degs
 
     return angle_matrix
 

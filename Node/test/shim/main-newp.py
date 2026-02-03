@@ -1,21 +1,21 @@
 import os
 import time
 from multiprocessing import Process, Queue
+from queue import Empty, Full
 
 import numpy as np
 import psutil
 import socketio
+from new_pipe import daq_fast
 from new_pipe.angle import angle_fft
-
-# from _typeshed import ExcInfo
 from new_pipe.cfar import cfar_pytorch
-from new_pipe.daqv2 import DataAcquisition
+from new_pipe.daqv3 import DataAcquisition
 from new_pipe.rdm import RangeDoppler
 
 # ================= CONFIG =================
 SERVER_URL = "http://127.0.0.1:5001"
-RAW_QUEUE_SIZE = 10  # queue between DAQ and processing
-PROCESSED_QUEUE_SIZE = 10  # queue between processing and socket (real-time)
+RAW_QUEUE_SIZE = 5  # queue between DAQ and processing (smaller = lower latency)
+PROCESSED_QUEUE_SIZE = 2  # queue between processing and socket (real-time)
 TARGET_FPS = 10  # limit processing loop speed
 # =========================================
 
@@ -40,20 +40,24 @@ def daq_process(raw_queue):
     print("[DAQ] Running on core 0")
 
     daq = DataAcquisition()
+    # daq = daq_fast.DataAcquisition()
 
     while True:
-        frame_data = daq.process()
+        t0 = time.perf_counter_ns()
+        frame_data = daq.process_v6().copy()
+        t1 = time.perf_counter_ns()
+        print(f"DAQ: {(t1 - t0) // 1_000}")
+        # frame_data = daq.capture_frame()
         # aight this is some actual wizard magic idk
         # 0.02 sleep time is 170ms
         # 0.05 sleep time is 150ms
-        time.sleep(0.05)
+        # time.sleep(0.01)
 
-        # Drop old frame if queue full (keep pipeline flowing)
-        if raw_queue.full():
-            print("drop")
-            raw_queue.get()
-
-        raw_queue.put(frame_data)
+        # Non-blocking put - drop current frame if queue full
+        try:
+            raw_queue.put_nowait(frame_data)
+        except Full:
+            pass  # Drop frame silently to avoid latency
 
 
 # -------- RDM/CFAR Processing Process (Core 1) --------
@@ -69,7 +73,12 @@ def processing_process(raw_queue, processed_queue):
         t0 = time.perf_counter_ns()
         t0_fps = time.time()
 
-        frame_data = raw_queue.get()
+        # Non-blocking get to minimize wait time
+        try:
+            frame_data = raw_queue.get_nowait()
+        except Empty:
+            time.sleep(0.001)  # Brief sleep if no data
+            continue
 
         # Process through RDM
         t1 = time.perf_counter_ns()
@@ -106,20 +115,21 @@ def processing_process(raw_queue, processed_queue):
         # Package original RDM, CFAR and angle data
         output_data = {"rdm": frame, "cfar": cfar_data, "angles": angle_data}
 
-        # Drop old frame if queue full (real-time behavior)
-        if processed_queue.full():
-            processed_queue.get()
+        # Non-blocking put - drop current frame if queue full
+        try:
+            processed_queue.put_nowait(output_data)
+        except Full:
+            pass  # Drop frame to maintain real-time behavior
 
-        processed_queue.put(output_data)
         t5 = time.perf_counter_ns()
 
         # FPS limit to avoid CPU overload
         dt = time.time() - t0_fps
         sleep_time = max(0, (1 / TARGET_FPS) - dt)
-        print(
-            f"dt: {(t5 - t0) // 1_000}, rdm: {(t2 - t1) // 1_000}, cfar: {(t3 - t2) // 1_000}, angle: {(t4 - t3) // 1_000}"
-        )
-        time.sleep(sleep_time)
+        # print(
+        #     f"DP: {(t5 - t0) // 1_000}, RDM: {(t2 - t1) // 1_000}, CFAR: {(t3 - t2) // 1_000}, ANGLE: {(t4 - t3) // 1_000}"
+        # )
+        # time.sleep(sleep_time)
 
 
 # -------- Socket Sender Process (Core 2) --------
@@ -133,9 +143,13 @@ def socket_process(processed_queue):
 
     while True:
         t0 = time.time()
-        # Blocking wait = zero CPU spin
 
-        frame = processed_queue.get()
+        # Non-blocking get with brief sleep fallback
+        try:
+            frame = processed_queue.get_nowait()
+        except Empty:
+            time.sleep(0.001)
+            continue
 
         if sio is None or not sio.connected:
             sio = reconnect_socketio()

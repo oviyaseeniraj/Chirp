@@ -169,23 +169,6 @@ class RangeDoppler:
 
         return rdm_final
 
-    def process_with_mimo_data(self):
-        """
-        Process and return both averaged RDM and clean MIMO data.
-
-        Returns:
-            tuple: (averaged_rdm_flat, clean_mimo_rdm)
-            - averaged_rdm_flat: 1D array for visualization/CFAR
-            - clean_mimo_rdm: 4D complex array for angle estimation
-        """
-        # Run normal processing
-        avg_rdm = self.process()
-
-        # Get clean MIMO data
-        clean_mimo = self.get_clean_rdmap_post_bpm()
-
-        return avg_rdm, clean_mimo
-
     def rdm_process_cube(self):
         np.copyto(
             self.fftw_in, self.adc_complex.reshape((TX * RX, SLOW_TIME, FAST_TIME))

@@ -6,7 +6,8 @@ from queue import Empty, Full
 import numpy as np
 import psutil
 import socketio
-from new_pipe import daq_fast
+
+# from new_pipe import daq_fast
 from new_pipe.angle import angle_fft
 from new_pipe.cfar import cfar_pytorch
 from new_pipe.daqv3 import DataAcquisition
@@ -89,7 +90,7 @@ def daq_process(raw_queue):
         # aight this is some actual wizard magic idk
         # 0.02 sleep time is 170ms
         # 0.05 sleep time is 150ms
-        time.sleep(0.1)
+        time.sleep(0.12)
 
         # Non-blocking put - drop current frame if queue full
         try:
@@ -105,7 +106,7 @@ def processing_process(raw_queue, processed_queue):
     psutil.Process(os.getpid()).cpu_affinity([1])
     print("[PROCESSING] Running on core 1")
 
-    rdm = RangeDoppler(window="blackman")
+    rdm = RangeDoppler(window="blackman", alpha=0.1)
 
     # FPS tracking
     last_frame_time = None
@@ -165,8 +166,8 @@ def processing_process(raw_queue, processed_queue):
             zero_pad_cols=124,
             device="cpu",
         )
-        t4 = time.perf_counter_ns()
 
+        t4 = time.perf_counter_ns()
         # Package original RDM, CFAR and angle data
         output_data = {"rdm": frame, "cfar": cfar_data, "angles": angle_data}
 

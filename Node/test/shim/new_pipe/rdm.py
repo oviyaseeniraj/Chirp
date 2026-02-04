@@ -66,9 +66,7 @@ class RangeDoppler:
         self.adc_complex = np.zeros(SIZE, dtype=np.complex64)
         self.norm = np.zeros(SIZE_W_IQ, dtype=np.float32)
         self.avg = np.zeros(SIZE_W_IQ, dtype=np.float32)
-        self.background = np.zeros(SIZE, dtype=np.float32).reshape(
-            TX * RX, SLOW_TIME, FAST_TIME
-        )
+        self.background = np.zeros((TX * RX, SLOW_TIME, FAST_TIME), dtype=np.complex64)
 
         self.alpha = alpha
 
@@ -115,11 +113,10 @@ class RangeDoppler:
 
         return self.adc_complex.reshape((TX * RX, SLOW_TIME, FAST_TIME))
 
-    def iir_filter(self, frame):
-        self.background
-        result = frame - self.background
-        self.background = self.alpha * frame + (1 - self.alpha) * self.background
-        return result
+    def iir_filter(self, rdm_complex):
+        self.background = self.alpha * rdm_complex + (1 - self.alpha) * self.background
+        clean_rdm = rdm_complex - self.background
+        return clean_rdm
 
     def process(self):
         t0 = time.perf_counter()
@@ -132,12 +129,14 @@ class RangeDoppler:
         self.plan()
         rdm = self.fftw_out
 
-        rdm = self.iir_filter(rdm)
-
         t2 = time.perf_counter()
 
+        # Apply IIR filter on complex data (like MATLAB: subtract mean, then take abs)
+        rdm = self.iir_filter(rdm)
+
+        # Now compute magnitude squared
         mag2 = rdm.real * rdm.real + rdm.imag * rdm.imag
-        self.norm = np.log2(mag2) * 0.5
+        self.norm = np.log2(mag2 + 1e-10) * 0.5
 
         t3 = time.perf_counter()
 

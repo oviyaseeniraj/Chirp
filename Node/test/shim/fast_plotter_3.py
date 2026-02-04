@@ -534,7 +534,7 @@ def handle_array(data):
                     detections = extract_detections(
                         cfar_array, angles_array, array_data
                     )
-                    print(f"Found {len(detections)} detections with angles")
+                    # print(f"Found {len(detections)} detections with angles")
             except Exception as angle_error:
                 print(f"Error processing angles/CFAR: {angle_error}")
         elif "angles" in data:

@@ -17,6 +17,8 @@ SERVER_URL = "http://127.0.0.1:5001"
 RAW_QUEUE_SIZE = 5  # queue between DAQ and processing (smaller = lower latency)
 PROCESSED_QUEUE_SIZE = 2  # queue between processing and socket (real-time)
 TARGET_FPS = 10  # limit processing loop speed
+FRAME_AVG = 100
+FRAME_RPL = 100
 # =========================================
 
 
@@ -42,16 +44,52 @@ def daq_process(raw_queue):
     daq = DataAcquisition()
     # daq = daq_fast.DataAcquisition()
 
+    # FPS tracking
+    last_frame_time = None
+    frame_times = []
+    frame_count = 0
+
     while True:
         t0 = time.perf_counter_ns()
         frame_data = daq.process_v6().copy()
         t1 = time.perf_counter_ns()
-        print(f"DAQ: {(t1 - t0) // 1_000}")
+
+        # Track frame arrival time for FPS calculation
+        current_time = time.time()
+        if last_frame_time is not None:
+            frame_interval = current_time - last_frame_time
+            frame_times.append(frame_interval)
+
+            # Keep last 30 frame intervals for rolling average
+            if len(frame_times) > FRAME_AVG:
+                frame_times.pop(0)
+
+            # Print FPS every 10 frames
+            frame_count += 1
+            if frame_count % FRAME_RPL == 0:
+                avg_interval = sum(frame_times) / len(frame_times)
+                fps = 1.0 / avg_interval if avg_interval > 0 else 0
+
+                # Calculate variance and standard deviation
+                variance = sum((t - avg_interval) ** 2 for t in frame_times) / len(
+                    frame_times
+                )
+                std_dev = variance**0.5
+
+                print(
+                    f"[DAQ] FPS: {fps:.2f} | Avg interval: {avg_interval * 1000:.1f}ms | "
+                    f"Std dev: {std_dev * 1000:.2f}ms | Variance: {variance * 1000000:.2f}ms² | "
+                    f"Last: {frame_interval * 1000:.1f}ms"
+                )
+
+        last_frame_time = current_time
+
+        # print(f"DAQ: {(t1 - t0) // 1_000}")
         # frame_data = daq.capture_frame()
         # aight this is some actual wizard magic idk
         # 0.02 sleep time is 170ms
         # 0.05 sleep time is 150ms
-        # time.sleep(0.01)
+        time.sleep(0.1)
 
         # Non-blocking put - drop current frame if queue full
         try:
@@ -69,6 +107,11 @@ def processing_process(raw_queue, processed_queue):
 
     rdm = RangeDoppler(window="blackman")
 
+    # FPS tracking
+    last_frame_time = None
+    frame_times = []
+    frame_count = 0
+
     while True:
         t0 = time.perf_counter_ns()
         t0_fps = time.time()
@@ -79,6 +122,18 @@ def processing_process(raw_queue, processed_queue):
         except Empty:
             time.sleep(0.001)  # Brief sleep if no data
             continue
+
+        # Track frame processing time for FPS calculation
+        current_time = time.time()
+        if last_frame_time is not None:
+            frame_interval = current_time - last_frame_time
+            frame_times.append(frame_interval)
+
+            # Keep last 30 frame intervals for rolling average
+            if len(frame_times) > FRAME_AVG:
+                frame_times.pop(0)
+
+        last_frame_time = current_time
 
         # Process through RDM
         t1 = time.perf_counter_ns()
@@ -125,10 +180,17 @@ def processing_process(raw_queue, processed_queue):
 
         # FPS limit to avoid CPU overload
         dt = time.time() - t0_fps
-        sleep_time = max(0, (1 / TARGET_FPS) - dt)
-        # print(
-        #     f"DP: {(t5 - t0) // 1_000}, RDM: {(t2 - t1) // 1_000}, CFAR: {(t3 - t2) // 1_000}, ANGLE: {(t4 - t3) // 1_000}"
-        # )
+        # sleep_time = max(0, (1 / TARGET_FPS) - dt)
+
+        # Print timing every 10 frames with FPS
+        frame_count += 1
+        if frame_count % FRAME_RPL == 0 and len(frame_times) > 0:
+            avg_interval = sum(frame_times) / len(frame_times)
+            fps = 1.0 / avg_interval if avg_interval > 0 else 0
+            print(
+                f"[PROCESSING] FPS: {fps:.2f} | Avg interval: {avg_interval * 1000:.1f}ms | "
+                f"DP: {(t5 - t0) // 1_000}us, RDM: {(t2 - t1) // 1_000}us, CFAR: {(t3 - t2) // 1_000}us, ANGLE: {(t4 - t3) // 1_000}us"
+            )
         # time.sleep(sleep_time)
 
 

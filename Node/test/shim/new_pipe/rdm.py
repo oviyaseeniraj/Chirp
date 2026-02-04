@@ -58,7 +58,7 @@ class RangeDoppler:
 
     mid_idx = tx_o + rx_o + slow_o + fast_o + iq
 
-    def __init__(self, window="blackman"):
+    def __init__(self, window="blackman", alpha=0.5):
         self.window_type = window.lower()
 
         self.adc_data_flat = np.zeros(SIZE_W_IQ, dtype=np.float32)
@@ -66,6 +66,11 @@ class RangeDoppler:
         self.adc_complex = np.zeros(SIZE, dtype=np.complex64)
         self.norm = np.zeros(SIZE_W_IQ, dtype=np.float32)
         self.avg = np.zeros(SIZE_W_IQ, dtype=np.float32)
+        self.background = np.zeros(SIZE, dtype=np.float32).reshape(
+            TX * RX, SLOW_TIME, FAST_TIME
+        )
+
+        self.alpha = alpha
 
         if self.window_type == "blackman":
             self.window = np.blackman(FAST_TIME).astype(np.float32)
@@ -110,6 +115,12 @@ class RangeDoppler:
 
         return self.adc_complex.reshape((TX * RX, SLOW_TIME, FAST_TIME))
 
+    def iir_filter(self, frame):
+        self.background
+        result = frame - self.background
+        self.background = self.alpha * frame + (1 - self.alpha) * self.background
+        return result
+
     def process(self):
         t0 = time.perf_counter()
 
@@ -120,6 +131,8 @@ class RangeDoppler:
         np.copyto(self.fftw_in, cube)
         self.plan()
         rdm = self.fftw_out
+
+        rdm = self.iir_filter(rdm)
 
         t2 = time.perf_counter()
 

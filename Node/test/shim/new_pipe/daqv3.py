@@ -1,3 +1,4 @@
+import fcntl
 import gc
 import os
 import socket
@@ -845,4 +846,663 @@ class DataAcquisition:
             return d
         finally:
             if e:
+                gc.enable()
+
+    def process_v7(self):
+        """
+        Frame-buffered approach: Wait until entire frame worth of data is available,
+        then read all packets at once.
+
+        Instead of reading packets one-by-one, this method:
+        - Waits for enough data to accumulate in the socket buffer
+        - Reads multiple packets in rapid succession
+        - Processes complete frames when all packets arrive
+
+        This reduces the overhead of individual socket calls by batching reads.
+        """
+
+        # Setup
+        if self.sockfd is None:
+            self.create_bind_socket()
+
+        # Constants
+        P = self.BYTES_IN_FRAME_CLIPPED // BYTES_IN_PACKET  # packets per frame
+        F = self.BYTES_IN_FRAME_CLIPPED  # frame bytes
+        U = self.UINT16_IN_PACKET  # uint16 per packet
+        B = BYTES_IN_PACKET  # bytes per packet
+
+        # State
+        current_frame = UINT64_MAX
+        packet_received = np.zeros(P, dtype=np.uint8)  # track received packets
+        packets_in_frame = 0
+        first_slot = -1
+
+        # Refs
+        frame_data = self.frame_data
+        buffer = self.buffer
+        sock = self.sockfd
+
+        # Disable GC for performance
+        gc_was_enabled = gc.isenabled()
+        gc.disable()
+
+        try:
+            while True:
+                # Wait for data to accumulate - check if we can read a burst of packets
+                # Read packets rapidly until we complete a frame or run out of immediate data
+                packets_read_this_iteration = 0
+
+                while packets_read_this_iteration < P * 2:  # safety limit
+                    try:
+                        # Read next packet
+                        nbytes, _ = sock.recvfrom_into(buffer, BUFFER_SIZE)
+                        packets_read_this_iteration += 1
+                    except socket.timeout:
+                        # No more data immediately available
+                        if current_frame != UINT64_MAX and packets_in_frame > 0:
+                            # We have partial frame, wait a bit longer
+                            continue
+                        else:
+                            # Reset and try again
+                            current_frame = UINT64_MAX
+                            packet_received[:] = 0
+                            packets_in_frame = 0
+                            first_slot = -1
+                            continue
+                    except Exception:
+                        # Socket error, reset state
+                        current_frame = UINT64_MAX
+                        packet_received[:] = 0
+                        packets_in_frame = 0
+                        first_slot = -1
+                        continue
+
+                    # Validate packet size
+                    if nbytes < 1466:
+                        continue
+
+                    # Extract byte_count (48-bit value at bytes 4-9)
+                    byte_count = (
+                        buffer[4]
+                        | (buffer[5] << 8)
+                        | (buffer[6] << 16)
+                        | (buffer[7] << 24)
+                        | (buffer[8] << 32)
+                        | (buffer[9] << 40)
+                    )
+
+                    # Calculate frame ID and packet slot
+                    frame_id = byte_count // F
+                    slot = (byte_count % F) // B
+
+                    # Handle packet based on current state
+                    if current_frame == UINT64_MAX:
+                        # Initialize new frame
+                        current_frame = frame_id
+                        packet_received[:] = 0
+                        packets_in_frame = 0
+                        first_slot = slot
+                        frame_data[:] = 0
+
+                        if slot < P:
+                            # Store packet data
+                            dst_offset = (slot * B) >> 1
+                            frame_data[dst_offset : dst_offset + U] = np.frombuffer(
+                                buffer, np.uint16, U, 10
+                            )
+                            packet_received[slot] = 1
+                            packets_in_frame = 1
+
+                    elif frame_id == current_frame:
+                        # Packet belongs to current frame
+                        if slot < P and not packet_received[slot]:
+                            # Store packet data
+                            dst_offset = (slot * B) >> 1
+                            frame_data[dst_offset : dst_offset + U] = np.frombuffer(
+                                buffer, np.uint16, U, 10
+                            )
+                            packet_received[slot] = 1
+                            packets_in_frame += 1
+
+                            # Check if frame is complete
+                            if packets_in_frame == P:
+                                if first_slot == 0 or self.first_frame_captured:
+                                    self.first_frame_captured = True
+                                    # Frame complete, return it
+                                    return frame_data
+                                else:
+                                    # First partial frame, skip it
+                                    current_frame = UINT64_MAX
+                                    packet_received[:] = 0
+                                    packets_in_frame = 0
+                                    first_slot = -1
+                                    break  # Exit inner loop to restart
+
+                    elif frame_id > current_frame:
+                        # New frame arrived, previous frame incomplete
+                        if (
+                            self.first_frame_captured
+                            and packets_in_frame < P - (P >> 2)
+                            and self.debug_level
+                        ):
+                            print(
+                                f"[!] Frame {current_frame}: incomplete {packets_in_frame}/{P} packets"
+                            )
+
+                        # Start new frame
+                        current_frame = frame_id
+                        packet_received[:] = 0
+                        packets_in_frame = 0
+                        first_slot = slot
+                        frame_data[:] = 0
+
+                        if slot < P:
+                            dst_offset = (slot * B) >> 1
+                            frame_data[dst_offset : dst_offset + U] = np.frombuffer(
+                                buffer, np.uint16, U, 10
+                            )
+                            packet_received[slot] = 1
+                            packets_in_frame = 1
+                    # else: frame_id < current_frame, ignore old packet
+
+        finally:
+            if gc_was_enabled:
+                gc.enable()
+
+    def process_v8(self):
+        """
+        Burst-optimized approach: Drain entire socket buffer when packets arrive.
+
+        Designed for networks where packets arrive in periodic bursts rather than
+        steadily (e.g., 110ms burst, 180ms gap pattern for 150ms frame periods).
+
+        Strategy:
+        - Wait (blocking) for first packet to arrive
+        - Immediately switch to non-blocking mode and drain ALL available packets
+        - Process complete frames from the burst
+        - Switch back to blocking for next burst
+
+        This minimizes per-packet overhead by reading entire bursts at once.
+        """
+
+        # Setup
+        if self.sockfd is None:
+            self.create_bind_socket()
+
+        # Constants
+        P = self.BYTES_IN_FRAME_CLIPPED // BYTES_IN_PACKET  # packets per frame
+        F = self.BYTES_IN_FRAME_CLIPPED  # frame bytes
+        U = self.UINT16_IN_PACKET  # uint16 per packet
+        B = BYTES_IN_PACKET  # bytes per packet
+
+        # State
+        current_frame = UINT64_MAX
+        packet_received = np.zeros(P, dtype=np.uint8)
+        packets_in_frame = 0
+        first_slot = -1
+
+        # Refs
+        frame_data = self.frame_data
+        buffer = self.buffer
+        sock = self.sockfd
+
+        # Disable GC
+        gc_was_enabled = gc.isenabled()
+        gc.disable()
+
+        try:
+            while True:
+                # PHASE 1: Wait for burst to start (blocking)
+                sock.setblocking(True)
+                try:
+                    nbytes, _ = sock.recvfrom_into(buffer, BUFFER_SIZE)
+                except Exception:
+                    current_frame = UINT64_MAX
+                    packet_received[:] = 0
+                    packets_in_frame = 0
+                    first_slot = -1
+                    continue
+
+                # Process first packet of burst
+                if nbytes >= 1466:
+                    byte_count = (
+                        buffer[4]
+                        | (buffer[5] << 8)
+                        | (buffer[6] << 16)
+                        | (buffer[7] << 24)
+                        | (buffer[8] << 32)
+                        | (buffer[9] << 40)
+                    )
+                    frame_id = byte_count // F
+                    slot = (byte_count % F) // B
+
+                    if current_frame == UINT64_MAX:
+                        current_frame = frame_id
+                        packet_received[:] = 0
+                        packets_in_frame = 0
+                        first_slot = slot
+                        frame_data[:] = 0
+
+                    if (
+                        frame_id == current_frame
+                        and slot < P
+                        and not packet_received[slot]
+                    ):
+                        dst_offset = (slot * B) >> 1
+                        frame_data[dst_offset : dst_offset + U] = np.frombuffer(
+                            buffer, np.uint16, U, 10
+                        )
+                        packet_received[slot] = 1
+                        packets_in_frame += 1
+                    elif frame_id > current_frame:
+                        if (
+                            self.first_frame_captured
+                            and packets_in_frame < P - (P >> 2)
+                            and self.debug_level
+                        ):
+                            print(f"[!] Frame {current_frame}: {packets_in_frame}/{P}")
+                        current_frame = frame_id
+                        packet_received[:] = 0
+                        packets_in_frame = 0
+                        first_slot = slot
+                        frame_data[:] = 0
+                        if slot < P:
+                            dst_offset = (slot * B) >> 1
+                            frame_data[dst_offset : dst_offset + U] = np.frombuffer(
+                                buffer, np.uint16, U, 10
+                            )
+                            packet_received[slot] = 1
+                            packets_in_frame = 1
+
+                # PHASE 2: Drain remaining packets in burst (non-blocking)
+                sock.setblocking(False)
+                burst_packets = 0
+                while burst_packets < P * 3:  # safety limit
+                    try:
+                        nbytes, _ = sock.recvfrom_into(buffer, BUFFER_SIZE)
+                        burst_packets += 1
+                    except BlockingIOError:
+                        # No more packets available in this burst
+                        break
+                    except Exception:
+                        # Other error, stop draining
+                        break
+
+                    if nbytes < 1466:
+                        continue
+
+                    byte_count = (
+                        buffer[4]
+                        | (buffer[5] << 8)
+                        | (buffer[6] << 16)
+                        | (buffer[7] << 24)
+                        | (buffer[8] << 32)
+                        | (buffer[9] << 40)
+                    )
+                    frame_id = byte_count // F
+                    slot = (byte_count % F) // B
+
+                    if frame_id == current_frame:
+                        if slot < P and not packet_received[slot]:
+                            dst_offset = (slot * B) >> 1
+                            frame_data[dst_offset : dst_offset + U] = np.frombuffer(
+                                buffer, np.uint16, U, 10
+                            )
+                            packet_received[slot] = 1
+                            packets_in_frame += 1
+
+                            # Check if frame complete
+                            if packets_in_frame == P:
+                                if first_slot == 0 or self.first_frame_captured:
+                                    self.first_frame_captured = True
+                                    return frame_data
+                                else:
+                                    current_frame = UINT64_MAX
+                                    packet_received[:] = 0
+                                    packets_in_frame = 0
+                                    first_slot = -1
+                                    break
+                    elif frame_id > current_frame:
+                        if (
+                            self.first_frame_captured
+                            and packets_in_frame < P - (P >> 2)
+                            and self.debug_level
+                        ):
+                            print(f"[!] Frame {current_frame}: {packets_in_frame}/{P}")
+                        current_frame = frame_id
+                        packet_received[:] = 0
+                        packets_in_frame = 0
+                        first_slot = slot
+                        frame_data[:] = 0
+                        if slot < P:
+                            dst_offset = (slot * B) >> 1
+                            frame_data[dst_offset : dst_offset + U] = np.frombuffer(
+                                buffer, np.uint16, U, 10
+                            )
+                            packet_received[slot] = 1
+                            packets_in_frame = 1
+
+        finally:
+            if gc_was_enabled:
+                gc.enable()
+
+    def process_v9(self):
+        """
+        Buffer-aware approach: Check socket buffer size and wait for full frame.
+
+        Uses ioctl FIONREAD to query how many bytes are buffered in the socket,
+        and only starts reading when approximately a full frame's worth of data
+        is available. This handles burst arrivals by letting packets accumulate
+        before processing.
+
+        For 150ms frame periods with burst arrivals, this waits until the socket
+        buffer contains enough data for a complete frame, then drains it rapidly.
+        """
+
+        # Setup
+        if self.sockfd is None:
+            self.create_bind_socket()
+
+        # Constants
+        P = self.BYTES_IN_FRAME_CLIPPED // BYTES_IN_PACKET  # packets per frame
+        F = self.BYTES_IN_FRAME_CLIPPED  # frame bytes
+        U = self.UINT16_IN_PACKET  # uint16 per packet
+        B = BYTES_IN_PACKET  # bytes per packet
+        PACKET_WITH_HEADER = 1472  # approximate packet size with UDP header
+        MIN_BYTES_FOR_FRAME = P * PACKET_WITH_HEADER  # ~90% of frame
+
+        # State
+        current_frame = UINT64_MAX
+        packet_received = np.zeros(P, dtype=np.uint8)
+        packets_in_frame = 0
+        first_slot = -1
+
+        # Refs
+        frame_data = self.frame_data
+        buffer = self.buffer
+        sock = self.sockfd
+
+        # Disable GC
+        gc_was_enabled = gc.isenabled()
+        gc.disable()
+
+        # For ioctl FIONREAD
+        FIONREAD = 0x541B  # Linux constant, on macOS it's different
+
+        try:
+            # Determine FIONREAD constant for platform
+            import sys
+
+            if sys.platform == "darwin":
+                FIONREAD = 0x4004667F
+            elif sys.platform == "win32":
+                FIONREAD = 0x4004667F
+
+            while True:
+                # Wait until enough data is buffered
+                sock.setblocking(True)
+                sock.settimeout(1.0)  # 1 second timeout to check periodically
+
+                # Poll socket buffer size
+                while True:
+                    try:
+                        # Check how many bytes are available
+                        import array as arr
+
+                        buf = arr.array("i", [0])
+                        fcntl.ioctl(sock.fileno(), FIONREAD, buf)
+                        bytes_available = buf[0]
+
+                        if bytes_available >= MIN_BYTES_FOR_FRAME * 0.8:
+                            # Enough data for at least 80% of a frame
+                            break
+
+                        # Not enough data, wait a bit and check again
+                        time.sleep(0.010)  # 10ms
+                    except Exception:
+                        # Fallback: just try to read
+                        break
+
+                # Now drain all available packets rapidly
+                sock.setblocking(False)
+                packets_read = 0
+
+                while packets_read < P * 3:  # safety limit
+                    try:
+                        nbytes, _ = sock.recvfrom_into(buffer, BUFFER_SIZE)
+                        packets_read += 1
+                    except BlockingIOError:
+                        # Buffer drained
+                        break
+                    except Exception:
+                        break
+
+                    if nbytes < 1466:
+                        continue
+
+                    # Extract byte_count
+                    byte_count = (
+                        buffer[4]
+                        | (buffer[5] << 8)
+                        | (buffer[6] << 16)
+                        | (buffer[7] << 24)
+                        | (buffer[8] << 32)
+                        | (buffer[9] << 40)
+                    )
+
+                    frame_id = byte_count // F
+                    slot = (byte_count % F) // B
+
+                    # State machine
+                    if current_frame == UINT64_MAX:
+                        current_frame = frame_id
+                        packet_received[:] = 0
+                        packets_in_frame = 0
+                        first_slot = slot
+                        frame_data[:] = 0
+
+                        if slot < P:
+                            dst_offset = (slot * B) >> 1
+                            frame_data[dst_offset : dst_offset + U] = np.frombuffer(
+                                buffer, np.uint16, U, 10
+                            )
+                            packet_received[slot] = 1
+                            packets_in_frame = 1
+
+                    elif frame_id == current_frame:
+                        if slot < P and not packet_received[slot]:
+                            dst_offset = (slot * B) >> 1
+                            frame_data[dst_offset : dst_offset + U] = np.frombuffer(
+                                buffer, np.uint16, U, 10
+                            )
+                            packet_received[slot] = 1
+                            packets_in_frame += 1
+
+                            if packets_in_frame == P:
+                                if first_slot == 0 or self.first_frame_captured:
+                                    self.first_frame_captured = True
+                                    return frame_data
+                                else:
+                                    current_frame = UINT64_MAX
+                                    packet_received[:] = 0
+                                    packets_in_frame = 0
+                                    first_slot = -1
+                                    break
+
+                    elif frame_id > current_frame:
+                        if (
+                            self.first_frame_captured
+                            and packets_in_frame < P - (P >> 2)
+                            and self.debug_level
+                        ):
+                            print(f"[!] Frame {current_frame}: {packets_in_frame}/{P}")
+
+                        current_frame = frame_id
+                        packet_received[:] = 0
+                        packets_in_frame = 0
+                        first_slot = slot
+                        frame_data[:] = 0
+
+                        if slot < P:
+                            dst_offset = (slot * B) >> 1
+                            frame_data[dst_offset : dst_offset + U] = np.frombuffer(
+                                buffer, np.uint16, U, 10
+                            )
+                            packet_received[slot] = 1
+                            packets_in_frame = 1
+
+        finally:
+            if gc_was_enabled:
+                gc.enable()
+
+    def process_v10(self):
+        """
+        Time-aligned batching: Wait fixed time period, then drain socket buffer.
+
+        Since frames are produced every 150ms, wait ~140ms after reading starts,
+        then drain all accumulated packets. This aligns with the production timing
+        and reads entire frames worth of packets at once.
+
+        Strategy:
+        - Read first packet to start timing
+        - Wait 140ms (slightly less than frame period)
+        - Drain all accumulated packets rapidly
+        - Repeat
+
+        This should smooth out the 110ms/180ms burst pattern by imposing our own
+        batching schedule that matches the 150ms production rate.
+        """
+
+        # Setup
+        if self.sockfd is None:
+            self.create_bind_socket()
+
+        # Constants
+        P = self.BYTES_IN_FRAME_CLIPPED // BYTES_IN_PACKET  # packets per frame
+        F = self.BYTES_IN_FRAME_CLIPPED  # frame bytes
+        U = self.UINT16_IN_PACKET  # uint16 per packet
+        B = BYTES_IN_PACKET  # bytes per packet
+        BATCH_WAIT_TIME = 0.140  # 140ms - slightly less than 150ms frame period
+
+        # State
+        current_frame = UINT64_MAX
+        packet_received = np.zeros(P, dtype=np.uint8)
+        packets_in_frame = 0
+        first_slot = -1
+
+        # Refs
+        frame_data = self.frame_data
+        buffer = self.buffer
+        sock = self.sockfd
+
+        # Disable GC
+        gc_was_enabled = gc.isenabled()
+        gc.disable()
+
+        try:
+            while True:
+                # Wait for batch period to let packets accumulate
+                time.sleep(BATCH_WAIT_TIME)
+
+                # Now drain all available packets rapidly (non-blocking)
+                sock.setblocking(False)
+                packets_read = 0
+
+                while packets_read < P * 3:  # safety limit
+                    try:
+                        nbytes, _ = sock.recvfrom_into(buffer, BUFFER_SIZE)
+                        packets_read += 1
+                    except BlockingIOError:
+                        # No more packets available
+                        break
+                    except Exception:
+                        # Socket error
+                        break
+
+                    if nbytes < 1466:
+                        continue
+
+                    # Extract byte_count
+                    byte_count = (
+                        buffer[4]
+                        | (buffer[5] << 8)
+                        | (buffer[6] << 16)
+                        | (buffer[7] << 24)
+                        | (buffer[8] << 32)
+                        | (buffer[9] << 40)
+                    )
+
+                    frame_id = byte_count // F
+                    slot = (byte_count % F) // B
+
+                    # State machine
+                    if current_frame == UINT64_MAX:
+                        current_frame = frame_id
+                        packet_received[:] = 0
+                        packets_in_frame = 0
+                        first_slot = slot
+                        frame_data[:] = 0
+
+                        if slot < P:
+                            dst_offset = (slot * B) >> 1
+                            frame_data[dst_offset : dst_offset + U] = np.frombuffer(
+                                buffer, np.uint16, U, 10
+                            )
+                            packet_received[slot] = 1
+                            packets_in_frame = 1
+
+                    elif frame_id == current_frame:
+                        if slot < P and not packet_received[slot]:
+                            dst_offset = (slot * B) >> 1
+                            frame_data[dst_offset : dst_offset + U] = np.frombuffer(
+                                buffer, np.uint16, U, 10
+                            )
+                            packet_received[slot] = 1
+                            packets_in_frame += 1
+
+                            if packets_in_frame == P:
+                                if first_slot == 0 or self.first_frame_captured:
+                                    self.first_frame_captured = True
+                                    return frame_data
+                                else:
+                                    current_frame = UINT64_MAX
+                                    packet_received[:] = 0
+                                    packets_in_frame = 0
+                                    first_slot = -1
+                                    break
+
+                    elif frame_id > current_frame:
+                        if (
+                            self.first_frame_captured
+                            and packets_in_frame < P - (P >> 2)
+                            and self.debug_level
+                        ):
+                            print(f"[!] Frame {current_frame}: {packets_in_frame}/{P}")
+
+                        current_frame = frame_id
+                        packet_received[:] = 0
+                        packets_in_frame = 0
+                        first_slot = slot
+                        frame_data[:] = 0
+
+                        if slot < P:
+                            dst_offset = (slot * B) >> 1
+                            frame_data[dst_offset : dst_offset + U] = np.frombuffer(
+                                buffer, np.uint16, U, 10
+                            )
+                            packet_received[slot] = 1
+                            packets_in_frame = 1
+
+                # If no packets were read, switch back to blocking for a moment
+                if packets_read == 0:
+                    sock.setblocking(True)
+                    sock.settimeout(0.5)
+                    try:
+                        nbytes, _ = sock.recvfrom_into(buffer, BUFFER_SIZE)
+                        # Process this packet on next iteration
+                    except:
+                        pass
+
+        finally:
+            if gc_was_enabled:
                 gc.enable()

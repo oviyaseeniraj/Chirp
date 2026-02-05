@@ -47,6 +47,19 @@ export LD_LIBRARY_PATH
 sudo ldconfig $(pwd)
 popd
 
+#jetgpio for hardware trigger
+pushd /home/chirp/Downloads/
+git clone https://github.com/Rubberazer/JETGPIO.git
+cd JETGPIO 
+sudo make
+sudo make install
+cd ..
+rm -rf JETGPIO 
+popd
+
+#python
+sudo apt install python3.10-venv
+
 # network setup
 INTERFACE=$(nmcli device status | grep ethernet | awk '{print $1}' | head -n 1)
 # sometimes the interface is unavailable, this is the only way I have found to make sure it works

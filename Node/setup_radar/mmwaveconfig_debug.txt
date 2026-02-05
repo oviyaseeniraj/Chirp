@@ -60,7 +60,6 @@ adcFormat=1; ###################################################################
 #rlDevDataFmtCfg_t
 #
 rxChanEn=15;
-txChanEn=7;
 adcBitsD=2;
 adcFmt=1;
 iqSwapSel=0;
@@ -124,25 +123,27 @@ laneParamCfg=1;
 #rlProfileCfg_t
 #
 profileId=0;
-startFreqConst=1417038016;
+pfVcoSelect=2;
+startFreqConst=1435384035;
 idleTimeConst=700;
-adcStartTimeConst=600;
-rampEndTime=6000;
+adcStartTimeConst=700;
+rampEndTime=2500;
 txOutPowerBackoffCode=0;
 txPhaseShifter=0;
-freqSlopeConst=1719;
-txStartTime=0;
-numAdcSamples=512;
-digOutSampleRate=10000;
+freqSlopeConst=2071;
+txStartTime=100;
+numAdcSamples=256;
+digOutSampleRate=15000;
 hpfCornerFreq1=0;
 hpfCornerFreq2=0;
-#rxGain=48;
-rxGain=112;
+rxGain=160;#32+2<<6
 #END
 
 #
-#Chirp Configuration parameters, please modify if needed.
+#Chirp #1 Configuration parameters, please modify if needed.
 #rlChirpCfg_t
+# txEnable = {b0 (ant0), b1 (ant1), b2 (ant2)}
+# numOfChirpsToConfig = the number of defined chirp configs.
 #
 numOfChirpsToConfig=3;
 chirpStartIdx=0;
@@ -153,12 +154,7 @@ freqSlopeVar=0;
 idleTimeVar=0;
 adcStartTimeVar=0;
 txEnable=1;
-#END
 
-#
-#Chirp Configuration parameters, please modify if needed.
-#rlChirpCfg_t
-#
 chirpStartIdx=1;
 chirpEndIdx=1;
 profileIdCPCFG=0;
@@ -167,12 +163,7 @@ freqSlopeVar=0;
 idleTimeVar=0;
 adcStartTimeVar=0;
 txEnable=2;
-#END
 
-#
-#Chirp Configuration parameters, please modify if needed.
-#rlChirpCfg_t
-#
 chirpStartIdx=2;
 chirpEndIdx=2;
 profileIdCPCFG=0;
@@ -181,6 +172,7 @@ freqSlopeVar=0;
 idleTimeVar=0;
 adcStartTimeVar=0;
 txEnable=4;
+
 #END
 
 #
@@ -191,8 +183,8 @@ chirpStartIdxFCF=0;
 chirpEndIdxFCF=2;
 frameCount=0;
 loopCount=64;
-periodicity=13000000;
+periodicity=20000000;
 triggerDelay=0;
-numAdcSamples=1024;
+numAdcSamples=512;
 triggerSelect=1;
 #END

@@ -97,7 +97,7 @@ def cfar_pytorch(
         print(f"[CFAR DEBUG] Input shape: {slow_time}x{fast_time}")
 
     # Step 2: Extract only the positive range bins (first half of fast time)
-    rdm_half = rdm_data[:, : fast_time // 2]
+    rdm_half = rdm_data[:, :fast_time]
 
     # Step 3: Calculate window sizes for each dimension
     window_size_doppler = guard_cells_doppler + training_cells_doppler
@@ -196,9 +196,7 @@ def cfar_pytorch(
         pad_doppler - window_size_doppler : pad_doppler
         + slow_time
         + window_size_doppler,
-        pad_range - window_size_range : pad_range
-        + (fast_time // 2)
-        + window_size_range,
+        pad_range - window_size_range : pad_range + (fast_time) + window_size_range,
     ]
 
     H_extract, W_extract = extract_region.shape

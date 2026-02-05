@@ -90,7 +90,7 @@ def daq_process(raw_queue):
         # aight this is some actual wizard magic idk
         # 0.02 sleep time is 170ms
         # 0.05 sleep time is 150ms
-        time.sleep(0.12)
+        # time.sleep(0.12)
 
         # Non-blocking put - drop current frame if queue full
         try:
@@ -223,17 +223,17 @@ def socket_process(processed_queue):
                 "send_frame",
                 {
                     "array": frame["rdm"][:, :256].tobytes(),
-                    "angles": frame["angles"][:, :256].tolist(),
-                    "cfar": frame["cfar"][:, :256].tolist(),
+                    "angles": frame["angles"][:, :256].tobytes(),
+                    "cfar": frame["cfar"][:, :256].tobytes(),
                 },
             )
         except Exception as e:
             print("[SOCKET] Send error:", e)
             sio = None
-        dt = time.time() - t0
-        sleep_time = max(0, (1 / TARGET_FPS) - dt)
+        # dt = time.time() - t0
+        # sleep_time = max(0, (1 / TARGET_FPS) - dt)
 
-        time.sleep(sleep_time)
+        # time.sleep(sleep_time)
 
 
 # -------- MAIN --------

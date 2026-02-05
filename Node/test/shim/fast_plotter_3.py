@@ -526,8 +526,12 @@ def handle_array(data):
         detections = []
         if "angles" in data and "cfar" in data:
             try:
-                angles_array = np.array(data["angles"], dtype=np.float32)
-                cfar_array = np.array(data["cfar"], dtype=np.float32)
+                angles_array = np.frombuffer(data["angles"], dtype=np.float32).reshape(
+                    64, 256
+                )
+                cfar_array = np.frombuffer(data["cfar"], dtype=np.float32).reshape(
+                    64, 256
+                )
 
                 if angles_array.shape == (64, 256) and cfar_array.shape == (64, 256):
                     # Use actual CFAR detections

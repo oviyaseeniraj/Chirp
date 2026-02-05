@@ -4,11 +4,15 @@ if [[ $EUID -ne 0 ]]; then
    exit 1
 fi
 
+
 INTERFACE=$(nmcli device status | grep ethernet | awk '{print $1}' | head -n 1)
 # Suppress output of ip check
 if ! ip addr show $INTERFACE | grep -q "inet " > /dev/null 2>&1; then
    sudo nmcli connection up $INTERFACE > /dev/null 2>&1 || { echo "Failed to bring up nmcli connection $INTERFACE"; exit 1; }
 fi
+
+sudo sysctl -w net.core.rmem_max=16777216
+sudo sysctl -w net.core.wmem_max=16777216
 
 pushd ../setup_radar/build/ > /dev/null 2>&1 || { echo "Failed to cd to ../setup_radar/build/"; exit 1; }
 # Background process, output redirected also

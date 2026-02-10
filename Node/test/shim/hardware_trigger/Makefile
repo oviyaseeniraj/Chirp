@@ -1,9 +1,19 @@
+CC      = gcc
+CFLAGS  = -Wall
+LIBS    = -ljetgpio
 
-all: jetgpio_example.c
-	gcc -Wall -o jetgpio_example jetgpio_example.c -ljetgpio
+EXES = jetgpio_example trigger_test
 
+all: $(EXES)
 
-trigger_test: trigger_test.c
-	gcc -Wall -o trigger_test trigger_test.c -ljetgpio
+jetgpio_example: jetgpio_example.o
+	$(CC) $(CFLAGS) -o $@ $^ $(LIBS)
 
+trigger_test: trigger_test.o
+	$(CC) $(CFLAGS) -o $@ $^ $(LIBS)
 
+%.o: %.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+clean:
+	rm -f $(EXES) *.o

@@ -10,10 +10,9 @@
 #include <jetgpio.h>
 #include <time.h>
 
-
 #define OUTPUT_PIN 8
 #define PULSE_WIDTH_NS 50
-#define PULSE_PERIOD_US 60
+#define PULSE_PERIOD_US 60e3
 
 int main(int argc, char *argv[])
 {
@@ -51,25 +50,25 @@ int main(int argc, char *argv[])
   int x = 0;
   int level = 0;
   
+  //Delay is not required
   struct timespec spec;
   spec.tv_sec = 0;
-  spec.tv_nsec = 10000;
+  spec.tv_nsec = 10000000;
+  
 
-  printf("%d\n",x);
+  //printf("%d\n",x);
   gpioWrite(OUTPUT_PIN, 0);
-  while (x<1) {
+  while (x<2) {
     gpioWrite(OUTPUT_PIN, 1);
     //nanosleep(&spec,0);
     gpioWrite(OUTPUT_PIN, 0);
-    usleep(PULSE_PERIOD_US); 
+    //nanosleep(&spec,0); 
+    usleep(PULSE_PERIOD_US);
     //printf("%d\n",x);
 
     x++;
   }
-
   // Terminating library 
   gpioTerminate();
-
   exit(0);
-	
 }

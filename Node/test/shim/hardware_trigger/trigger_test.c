@@ -48,24 +48,41 @@ int main(int argc, char *argv[])
 
   // Writing 1 and 0 to pin 3 a 1 second intervals while reading pin 7 
   int x = 0;
-  int level = 0;
   
-  //Delay is not required
-  struct timespec spec;
-  spec.tv_sec = 0;
-  spec.tv_nsec = 10000000;
+  // Synchronize to the next 100ms boundary of CLOCK_REALTIME
+  struct timespec next_trigger;
+  clock_gettime(CLOCK_REALTIME, &next_trigger);
   
+  // Round up to the next 100ms boundary
+  next_trigger.tv_nsec = (next_trigger.tv_nsec / 100000000 + 1) * 100000000;
+  if (next_trigger.tv_nsec >= 1000000000) {
+      next_trigger.tv_nsec -= 1000000000;
+      next_trigger.tv_sec += 1;
+  }
 
-  //printf("%d\n",x);
   gpioWrite(OUTPUT_PIN, 0);
-  while (1) {
-    gpioWrite(OUTPUT_PIN, 1);
-    //nanosleep(&spec,0);
-    gpioWrite(OUTPUT_PIN, 0);
-    //nanosleep(&spec,0); 
-    usleep(PULSE_PERIOD_US);
-    //printf("%d\n",x);
+  printf("Starting synchronized trigger every 100ms...\n");
 
+  while (1) {
+    // Wait for the next 100ms boundary
+    clock_nanosleep(CLOCK_REALTIME, TIMER_ABSTIME, &next_trigger, NULL);
+    
+    // Pulse GPIO pin
+    gpioWrite(OUTPUT_PIN, 1);
+    gpioWrite(OUTPUT_PIN, 0);
+
+    // Calculate next 100ms boundary
+    next_trigger.tv_nsec += 100000000;
+    if (next_trigger.tv_nsec >= 1000000000) {
+        next_trigger.tv_nsec -= 1000000000;
+        next_trigger.tv_sec += 1;
+    }
+
+    if (x < 10) {
+        struct timespec now;
+        clock_gettime(CLOCK_REALTIME, &now);
+        printf("Pulse %d at %ld.%09ld\n", x, now.tv_sec, now.tv_nsec);
+    }
     x++;
   }
   // Terminating library 

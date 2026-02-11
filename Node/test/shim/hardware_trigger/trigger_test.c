@@ -58,7 +58,7 @@ int main(int argc, char *argv[])
 
   //printf("%d\n",x);
   gpioWrite(OUTPUT_PIN, 0);
-  while (x<2) {
+  while (1) {
     gpioWrite(OUTPUT_PIN, 1);
     //nanosleep(&spec,0);
     gpioWrite(OUTPUT_PIN, 0);

@@ -19,7 +19,7 @@ RAW_QUEUE_SIZE = 5  # queue between DAQ and processing (smaller = lower latency)
 PROCESSED_QUEUE_SIZE = 2  # queue between processing and socket (real-time)
 TARGET_FPS = 10  # limit processing loop speed
 FRAME_AVG = 100
-FRAME_RPL = 100
+FRAME_RPL = 20
 # =========================================
 
 
@@ -146,7 +146,7 @@ def processing_process(raw_queue, processed_queue):
         # Apply CFAR
         cfar_data = cfar_pytorch(
             frame,
-            pad_value=np.mean(frame[:, :256]),
+            pad_value=np.mean(frame[:, :512]),
             guard_cells_doppler=4,
             guard_cells_range=16,
             training_cells_doppler=6,
@@ -158,6 +158,8 @@ def processing_process(raw_queue, processed_queue):
         )
 
         t3 = time.perf_counter_ns()
+
+        # print(cfar_data.shape)
 
         # Estimate angles for detections
         angle_data = angle_fft(
@@ -222,9 +224,9 @@ def socket_process(processed_queue):
             sio.emit(
                 "send_frame",
                 {
-                    "array": frame["rdm"][:, :256].tobytes(),
-                    "angles": frame["angles"][:, :256].tobytes(),
-                    "cfar": frame["cfar"][:, :256].tobytes(),
+                    "array": frame["rdm"][:, :512].tobytes(),
+                    "angles": frame["angles"][:, :512].tobytes(),
+                    "cfar": frame["cfar"][:, :512].tobytes(),
                 },
             )
         except Exception as e:

@@ -24,7 +24,7 @@ RANGE_ANGLE_PLOT_HEIGHT = 300  # Height of range-angle plot in pixels
 TRANSITION_MID = 128  # Middle point (white)
 
 # Pre-compute RdBu colormap lookup table once as a constant
-COLORMAP = np.zeros((256, 3), dtype=np.uint8)
+COLORMAP = np.zeros((512, 3), dtype=np.uint8)
 for i in range(256):
     if i < TRANSITION_MID:
         # Dark blue to white (first half)
@@ -158,7 +158,7 @@ def extract_detections(cfar_array, angles_array, rdm_array=None):
         # After scaling: doppler_idx * 8, range_idx * 2
         # After rot90(k=1): new_x = old_y, new_y = width - old_x - 1
 
-        scaled_x = int(range_idx * 2)  # column scaling
+        scaled_x = int(range_idx)  # column scaling
         scaled_y = int(doppler_idx * 8)  # row scaling
 
         # Apply 90-degree CCW rotation transformation
@@ -515,10 +515,10 @@ def handle_array(data):
         # Convert RDM array data
         array_data = np.frombuffer(data["array"], dtype=np.float32)
 
-        if array_data.size == 64 * 256:
-            array_data = array_data.reshape(64, 256)
+        if array_data.size == 64 * 512:
+            array_data = array_data.reshape(64, 512)
 
-        if array_data.shape != (64, 256):
+        if array_data.shape != (64, 512):
             print(f"Invalid array shape: {array_data.shape}")
             return
 
@@ -527,13 +527,13 @@ def handle_array(data):
         if "angles" in data and "cfar" in data:
             try:
                 angles_array = np.frombuffer(data["angles"], dtype=np.float32).reshape(
-                    64, 256
+                    64, 512
                 )
                 cfar_array = np.frombuffer(data["cfar"], dtype=np.float32).reshape(
-                    64, 256
+                    64, 512
                 )
 
-                if angles_array.shape == (64, 256) and cfar_array.shape == (64, 256):
+                if angles_array.shape == (64, 512) and cfar_array.shape == (64, 512):
                     # Use actual CFAR detections
                     detections = extract_detections(
                         cfar_array, angles_array, array_data
@@ -544,7 +544,7 @@ def handle_array(data):
         elif "angles" in data:
             try:
                 angles_array = np.array(data["angles"], dtype=np.float32)
-                if angles_array.shape == (64, 256):
+                if angles_array.shape == (64, 512):
                     # Fallback: create CFAR-like detection map from RDM data
                     threshold = np.mean(array_data) + 2 * np.std(array_data)
                     cfar_detections = (array_data > threshold).astype(np.uint8)

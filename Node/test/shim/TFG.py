@@ -80,8 +80,10 @@ def convert_npy_to_mat(input_dir, output_file):
             continue
 
         # Reshape to [TX, RX, SLOW_TIME, FAST_TIME] - already complex
-        # print(data.shape)
+        print(data.shape)
         cube = data.reshape((TX, RX, SLOW_TIME, FAST_TIME))
+        print(cube.shape)
+        #
         # Current shape: (TX=3, RX=4, SLOW_TIME=64, FAST_TIME=512)
         # Target shape: (SLOW_TIME=64, RX=4, TX=3, FAST_TIME=512)
         # Transpose indices:

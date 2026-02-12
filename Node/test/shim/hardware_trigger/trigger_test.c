@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 /* Usage example of the JETGPIO library
  * Compile with: gcc -Wall -o jetgpio_example jetgpio_example.c -ljetgpio
  * Execute with: sudo ./jetgpio_example
@@ -9,6 +10,8 @@
 #include <unistd.h>
 #include <jetgpio.h>
 #include <time.h>
+#include <sched.h>
+#include <sys/mman.h>
 
 #define OUTPUT_PIN 8
 #define PULSE_WIDTH_NS 50
@@ -48,6 +51,26 @@ int main(int argc, char *argv[])
 
   // Writing 1 and 0 to pin 3 a 1 second intervals while reading pin 7 
   int x = 0;
+
+  // Set real-time priority
+  struct sched_param param;
+  param.sched_priority = sched_get_priority_max(SCHED_FIFO);
+  if (sched_setscheduler(0, SCHED_FIFO, &param) == -1) {
+      perror("sched_setscheduler failed");
+  }
+
+  // Lock memory to prevent swapping
+  if (mlockall(MCL_CURRENT | MCL_FUTURE) == -1) {
+      perror("mlockall failed");
+  }
+
+  // Pin to CPU core 6
+  cpu_set_t cpumask;
+  CPU_ZERO(&cpumask);
+  CPU_SET(5, &cpumask);
+  if (sched_setaffinity(0, sizeof(cpumask), &cpumask) == -1) {
+      perror("sched_setaffinity failed");
+  }
   
   // Synchronize to the next 100ms boundary of CLOCK_REALTIME
   struct timespec next_trigger;

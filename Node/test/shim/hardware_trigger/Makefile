@@ -1,5 +1,5 @@
 
-all: jetgpio_example.c
+all: jetgpio_example.c trigger_test
 	gcc -Wall -o jetgpio_example jetgpio_example.c -ljetgpio
 
 

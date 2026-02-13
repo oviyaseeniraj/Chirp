@@ -87,7 +87,7 @@ elif [ "$choice" = "2" ] || [ "$choice" = "3" ]; then
 # ================================
 
 # Use local master as time source
-server $master_ip iburst minpoll 0 maxpoll 4
+server $master_ip trust prefer require iburst minpoll 0 maxpoll 4
 
 # Fallback to internet NTP if local master unavailable
 pool time.google.com iburst

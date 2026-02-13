@@ -16,8 +16,10 @@ fi
 
 # Install Chrony and fake-hwclock (dependencies)
 echo "[1/4] Installing Chrony and fake-hwclock..."
-apt-get update
-apt-get install -y chrony fake-hwclock
+if ! dpkg -s chrony fake-hwclock >/dev/null 2>&1; then
+    apt-get update
+    apt-get install -y chrony fake-hwclock
+fi
 
 echo ""
 echo "[2/4] Which Jetson is this?"

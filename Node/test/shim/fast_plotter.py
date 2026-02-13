@@ -195,10 +195,10 @@ def handle_array(data):
         # Convert to numpy array
         array_data = np.frombuffer(data["array"], dtype=np.float32)
 
-        if array_data.size == 64 * 256:
-            array_data = array_data.reshape(64, 256)
+        if array_data.size == 64 * 512:
+            array_data = array_data.reshape(64, 512)
 
-        if array_data.shape != (64, 256):
+        if array_data.shape != (64, 512):
             return
         # Convert to fast image format
         rgb_image = array_to_raw_image(array_data)

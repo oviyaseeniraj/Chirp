@@ -14,7 +14,7 @@
 #include <fcntl.h>
 
 #define OUTPUT_PIN 8
-#define MASTER_IP "169.231.217.32"
+#define MASTER_IP "169.231.42.44"
 #define MASTER_PORT 1210
 #define SYNC_INTERVAL_SEC 5
 

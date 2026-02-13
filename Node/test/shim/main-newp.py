@@ -6,12 +6,15 @@ from queue import Empty, Full
 import numpy as np
 import psutil
 import socketio
+import math
 
 # from new_pipe import daq_fast
 from new_pipe.angle import angle_fft
 from new_pipe.cfar import cfar_pytorch
 from new_pipe.daqv3 import DataAcquisition
 from new_pipe.rdm import RangeDoppler
+from dbscan import dbscan_cluster 
+from dbscan3d import dbscan_cluster_3d
 
 # ================= CONFIG =================
 SERVER_URL = "http://127.0.0.1:5001"
@@ -22,6 +25,16 @@ FRAME_AVG = 100
 FRAME_RPL = 20
 # =========================================
 
+# Set the measurement noise parameters for mahalonobis distance - taken from Anirban's code
+sigma_azimuth = pi/4
+sigma_range = 0.0318
+sigma_doppler = 0.1534; % For 64 chirps per frame
+#sigma_doppler = 0.1637; % For 60 chirps per frame
+measurement_noise = np.array([
+    [sigma_range**2, 0, 0],
+    [0, sigma_doppler**2, 0],
+    [0, 0, sigma_azimuth**2]
+])
 
 # -------- Socket.IO --------
 def reconnect_socketio():
@@ -31,7 +44,7 @@ def reconnect_socketio():
         print("[SOCKET] Connected")
         return sio
     except Exception as e:
-        print("[SOCKET] Connect failed:", e)
+        # print("[SOCKET] Connect failed:", e)
         return None
 
 
@@ -157,9 +170,16 @@ def processing_process(raw_queue, processed_queue):
             device="cpu",
         )
 
+        #zero out the zero doppler bins
+        #cfar_data[32, :] = 0
+
         t3 = time.perf_counter_ns()
 
         # print(cfar_data.shape)
+
+        #range doppler, spatial frequency / angle first, use mahalonbis distance 
+
+        #range, dopller ,spatial frequency / angle, received power
 
         # Estimate angles for detections
         angle_data = angle_fft(
@@ -170,8 +190,19 @@ def processing_process(raw_queue, processed_queue):
         )
 
         t4 = time.perf_counter_ns()
+
+        #2D DBSCAN rather than 3D
+        dbscan_data = dbscan_cluster(cfar_data,eps=0.5,min_samples=5,col_weight=0.25,metric='euclidean')
+
+        #np.set_printoptions(threshold=np.inf)
+        #print(dbscan_data)
+        #print(np.max(dbscan_data))
+
+        t5 = time.perf_counter_ns()
+
         # Package original RDM, CFAR and angle data
-        output_data = {"rdm": frame, "cfar": cfar_data, "angles": angle_data}
+        #output_data = {"rdm": dbscan_data, "cfar": cfar_data, "angles": angle_data}
+        output_data = {"rdm": cfar_data, "cfar": cfar_data, "angles": angle_data}
 
         # Non-blocking put - drop current frame if queue full
         try:
@@ -179,7 +210,7 @@ def processing_process(raw_queue, processed_queue):
         except Full:
             pass  # Drop frame to maintain real-time behavior
 
-        t5 = time.perf_counter_ns()
+        t6 = time.perf_counter_ns()
 
         # FPS limit to avoid CPU overload
         dt = time.time() - t0_fps
@@ -192,8 +223,10 @@ def processing_process(raw_queue, processed_queue):
             fps = 1.0 / avg_interval if avg_interval > 0 else 0
             print(
                 f"[PROCESSING] FPS: {fps:.2f} | Avg interval: {avg_interval * 1000:.1f}ms | "
-                f"DP: {(t5 - t0) // 1_000}us, RDM: {(t2 - t1) // 1_000}us, CFAR: {(t3 - t2) // 1_000}us, ANGLE: {(t4 - t3) // 1_000}us"
+                f"DP: {(t5 - t0) // 1_000}us, RDM: {(t2 - t1) // 1_000}us, CFAR: {(t3 - t2) // 1_000}us, ANGLE: {(t4 - t3) // 1_000}us, DBSCAN: {(t5 - t4) // 1_000}us"
             )
+            print(f"CFAR Detections: {np.sum(cfar_data)}")
+
         # time.sleep(sleep_time)
 
 

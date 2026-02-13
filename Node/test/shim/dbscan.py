@@ -2,8 +2,8 @@
 PyTorch-based DBSCAN (Density-Based Spatial Clustering of Applications with Noise)
 Implementation optimized for GPU acceleration with exposed critical parameters.
 
-Input: 64 * 256 detection array (1s for detections, 0s for background)
-Output: 64 * 256 array with cluster labels (0 for background, 1-n for clusters)
+Input: 64 * 512 detection array (1s for detections, 0s for background)
+Output: 64 * 512 array with cluster labels (0 for background, 1-n for clusters)
 """
 
 from typing import Optional, Tuple
@@ -11,7 +11,6 @@ from typing import Optional, Tuple
 import numpy as np
 import torch
 import torch.nn.functional as F
-
 
 class DBSCAN:
     """
@@ -34,7 +33,7 @@ class DBSCAN:
         Default: 'euclidean'
 
     scale_coords : bool
-        Whether to normalize coordinates to balance the 64x256 aspect ratio.
+        Whether to normalize coordinates to balance the 64x512 aspect ratio.
         When True, coordinates are scaled so distances are balanced across dimensions.
         Default: True
 
@@ -45,7 +44,7 @@ class DBSCAN:
         Default: 1.0
 
     col_weight : float
-        Weight multiplier for column dimension (256). Use this to adjust relative importance
+        Weight multiplier for column dimension (512). Use this to adjust relative importance
         of horizontal vs vertical distances. Higher values make horizontal distances more important.
         Only used when scale_coords=True.
         Default: 0.25 (compensates for 4x wider dimension)
@@ -110,6 +109,10 @@ class DBSCAN:
         elif self.metric == "manhattan":
             # Manhattan distance (L1 norm)
             distances = torch.cdist(X, X, p=1)
+
+        elif self.metric == "mahalanobis":
+            #need a measurement
+            distances = torch.
 
         else:
             raise ValueError(f"Unsupported metric: {self.metric}")
@@ -220,19 +223,19 @@ class DBSCAN:
 
         Parameters:
         -----------
-        detection_array : numpy array of shape (64, 256)
+        detection_array : numpy array of shape (64, 512)
             Detection array with 1s for detections, 0s for background
 
         Returns:
         --------
-        cluster_output : numpy array of shape (64, 256)
+        cluster_output : numpy array of shape (64, 512)
             Array with cluster labels (0 for background, 1-n for clusters)
         """
-        if detection_array.shape != (64, 256):
-            raise ValueError(f"Expected shape (64, 256), got {detection_array.shape}")
+        if detection_array.shape != (64, 512):
+            raise ValueError(f"Expected shape (64, 512), got {detection_array.shape}")
 
         # Initialize output array with 0 (background label)
-        cluster_output = np.full((64, 256), 0, dtype=np.int32)
+        cluster_output = np.full((64, 512), 0, dtype=np.int32)
 
         # Extract detection coordinates
         detection_coords = np.argwhere(detection_array == 1)
@@ -309,7 +312,7 @@ def dbscan_cluster(
 
     Parameters:
     -----------
-    detection_array : numpy array of shape (64, 256)
+    detection_array : numpy array of shape (64, 512)
         Detection array with 1s for detections, 0s for background
 
     eps : float
@@ -324,26 +327,26 @@ def dbscan_cluster(
         The distance metric to use ('euclidean', 'cosine', 'manhattan')
 
     scale_coords : bool
-        Whether to normalize coordinates to balance the 64x256 aspect ratio.
+        Whether to normalize coordinates to balance the 64x512 aspect ratio.
         Default: True
 
     row_weight : float
         Weight multiplier for row dimension (64). Default: 1.0
 
     col_weight : float
-        Weight multiplier for column dimension (256). Default: 0.25
+        Weight multiplier for column dimension (512). Default: 0.25
 
     device : str or torch.device, optional
         Device to run computations on
 
     Returns:
     --------
-    cluster_output : numpy array of shape (64, 256)
+    cluster_output : numpy array of shape (64, 512)
         Array with cluster labels (0 for background, 1-n for clusters)
 
     Example:
     --------
-    >>> detection_array = np.zeros((64, 256))
+    >>> detection_array = np.zeros((64, 512))
     >>> detection_array[10:15, 20:25] = 1  # Add some detections
     >>> result = dbscan_cluster(detection_array, eps=5.0, min_samples=3)
     >>> print(f"Unique labels: {np.unique(result)}")
@@ -363,7 +366,7 @@ def dbscan_cluster(
 # Example usage
 if __name__ == "__main__":
     # Create sample detection array
-    test_array = np.zeros((64, 256))
+    test_array = np.zeros((64, 512))
 
     # Add some detections in different regions
     test_array[10:15, 20:25] = 1  # Region 1
@@ -371,7 +374,7 @@ if __name__ == "__main__":
     test_array[50:52, 200:203] = 1  # Region 3
     test_array[12, 102] = 1  # Potential noise point
 
-    print("Running DBSCAN on 64x256 detection array...")
+    print("Running DBSCAN on 64x512 detection array...")
     print(f"Device: {'cuda' if torch.cuda.is_available() else 'cpu'}")
     print(f"Total detections: {np.sum(test_array == 1)}")
 

@@ -23,7 +23,7 @@ popd > /dev/null 2>&1
 
 pushd ../DCA1000/SourceCode/Release/ > /dev/null 2>&1 || { echo "Failed to cd to ../DCA1000/SourceCode/Release/"; exit 1; }
 if ! ldconfig -p | grep -q "libRF.so" > /dev/null 2>&1; then
-   sudo apt-get install libusb-1.0-0-dev
+   sudo ldconfig $(pwd)
 fi
 sudo ./DCA1000EVM_CLI_Control fpga DCAconfig.json || { echo "Failed to configure FPGA"; exit 1; }
 sudo ./DCA1000EVM_CLI_Control record DCAconfig.json || { echo "Failed to configure record mode"; exit 1; }

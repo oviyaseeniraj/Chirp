@@ -26,10 +26,14 @@ FRAME_RPL = 20
 # =========================================
 
 # Set the measurement noise parameters for mahalonobis distance - taken from Anirban's code
-sigma_azimuth = pi/4
+# Set the measurement noise parameters for Mahalanobis distance
+# Based on Anirban's code - sigma values for [range, doppler, angle]
+pi = math.pi
 sigma_range = 0.0318
-sigma_doppler = 0.1534; % For 64 chirps per frame
-#sigma_doppler = 0.1637; % For 60 chirps per frame
+sigma_doppler = 0.1534  # For 64 chirps per frame
+sigma_azimuth = pi / 4
+
+# Create 3x3 measurement noise covariance matrix
 measurement_noise = np.array([
     [sigma_range**2, 0, 0],
     [0, sigma_doppler**2, 0],

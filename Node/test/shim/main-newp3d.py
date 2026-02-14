@@ -141,7 +141,7 @@ def create_3d_detection_map_spatial(cfar_data, angle_data, rdm_power):
     # Normalize spatial frequency to bins [0, ANGLE_BINS-1]
     # Spatial frequency ranges from -pi to +pi
     spatial_freq_bins = np.digitize(spatial_freq_values, bins=np.linspace(-np.pi, np.pi, ANGLE_BINS + 1)) - 1
-    spatial_freq_bins = np.clip(spatial_freq_bins, 0, ANGLE_BINS - 1)
+    spatial_freq_bins = np.clip(spatial_freq_bins, 0, ANGLE_BINS)
     
     # Stack into 3D coordinates
     detection_coords = np.column_stack([
@@ -153,10 +153,9 @@ def create_3d_detection_map_spatial(cfar_data, angle_data, rdm_power):
     # Extract power values from RDM data
     detection_power = rdm_power[range_indices, doppler_indices]
     
-    return detection_coords, detection_power
+    return detection_coords, detection_power    
 
-
-def extract_clusters_from_3d(detection_coords, cluster_labels, detection_power, cfar_data_shape):
+def extract_clusters_from_3d(detection_coords_3d, cluster_labels, detection_power, cfar_data_shape):
     """
     Convert 3D cluster labels back to 2D cluster map.
     
@@ -179,7 +178,7 @@ def extract_clusters_from_3d(detection_coords, cluster_labels, detection_power, 
     cluster_map = np.zeros(cfar_data_shape, dtype=np.int32)
     
     # Map back to 2D coordinates
-    for i, (coord, label) in enumerate(zip(detection_coords, cluster_labels)):
+    for i, (coord, label) in enumerate(zip(detection_coords_3d, cluster_labels)):
         range_idx = int(coord[0])
         doppler_idx = int(coord[1])
         
@@ -315,7 +314,7 @@ def processing_process(raw_queue, processed_queue):
             device="cpu",
         )
 
-        phase_data = pi * np.sin(angle_data)
+        #phase_data = pi * np.sin(angle_data)
 
         t4 = time.perf_counter_ns()
 
@@ -329,7 +328,7 @@ def processing_process(raw_queue, processed_queue):
         if len(detection_coords) > 0:
             print(len(detection_coords))
             # Perform 3D DBSCAN clustering with Mahalanobis distance
-            cluster_labels_3d = dbscan_cluster_3d(
+            cluster_labels_3d, n_clusters, centroids = dbscan_cluster_3d(
                 detection_coords,
                 eps=5.0,  # Tune based on your 3D space
                 min_samples=3,
@@ -341,7 +340,8 @@ def processing_process(raw_queue, processed_queue):
                 measurement_noise_matrix=measurement_noise,
                 device="cpu",
             )
-            
+            #print(n_clusters)
+            #print(centroids)
             # Convert 3D cluster labels back to 2D map (discard angle)
             dbscan_data_2d = extract_clusters_from_3d(
                 detection_coords,

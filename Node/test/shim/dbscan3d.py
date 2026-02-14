@@ -263,10 +263,39 @@ class DBSCAN3D:
 
             current_cluster += 1
 
+        # Compute cluster centroids using weighted coordinates
+        self.cluster_centroids_ = {}
+        for cluster_id in range(1, current_cluster):
+            cluster_mask = labels == cluster_id
+            cluster_points = detection_coords[cluster_mask]
+            
+            if len(cluster_points) > 0:
+                # Weighted range (x-coordinate)
+                weighted_x = torch.sum(cluster_points[:, 0] * self.x_weight) / torch.sum(
+                    torch.ones(len(cluster_points), device=self.device) * self.x_weight
+                )
+                
+                # Weighted Doppler velocity (y-coordinate)
+                weighted_y = torch.sum(cluster_points[:, 1] * self.y_weight) / torch.sum(
+                    torch.ones(len(cluster_points), device=self.device) * self.y_weight
+                )
+                
+                # Weighted circular angle mean (z-coordinate using circular mean)
+                angles = cluster_points[:, 2]
+                sin_sum = torch.sum(torch.sin(angles) * self.z_weight)
+                cos_sum = torch.sum(torch.cos(angles) * self.z_weight)
+                weighted_angle = torch.atan2(sin_sum, cos_sum)
+
+                self.cluster_centroids_[cluster_id] = torch.tensor(
+                    [weighted_x.item(), weighted_y.item(), weighted_angle.item()],
+                    device=self.device
+                )
+
         self.labels_ = labels
         self.n_clusters_ = current_cluster
 
         return self
+    
 
     def fit_predict(self, detection_coords: np.ndarray) -> np.ndarray:
         """
@@ -420,7 +449,7 @@ def dbscan_cluster_3d(
         measurement_noise_matrix=measurement_noise_matrix,
         device=device,
     )
-    return clusterer.fit_predict(detection_coords)
+    return clusterer.fit_predict(detection_coords), clusterer.n_clusters_, clusterer.cluster_centroids_
 
 
 # Example usage

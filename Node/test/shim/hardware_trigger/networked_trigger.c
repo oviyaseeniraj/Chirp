@@ -79,10 +79,11 @@ int main(int argc, char *argv[])
   }
 
   printf("Connecting to master at %s:%d...\n", MASTER_IP, MASTER_PORT);
-  if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
-      printf("\nConnection Failed \n");
-      return -1;
+  while (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
+      printf("Connection Failed. Retrying in 1 seconds...\n");
+      sleep(1);
   }
+  printf("Connected to master.\n");
 
   // Calculate next future time modulo sync_interval
   struct timespec now;

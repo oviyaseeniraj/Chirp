@@ -110,10 +110,6 @@ class DBSCAN:
             # Manhattan distance (L1 norm)
             distances = torch.cdist(X, X, p=1)
 
-        elif self.metric == "mahalanobis":
-            #need a measurement
-            distances = torch.
-
         else:
             raise ValueError(f"Unsupported metric: {self.metric}")
 

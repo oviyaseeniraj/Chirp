@@ -14,6 +14,7 @@ from new_pipe.cfar import cfar_pytorch
 from new_pipe.daqv3 import DataAcquisition
 from new_pipe.rdm import RangeDoppler
 from dbscan3d import dbscan_cluster_3d
+import pytorch as torch
 
 # ================= CONFIG =================
 SERVER_URL = "http://127.0.0.1:5001"
@@ -155,7 +156,7 @@ def create_3d_detection_map_spatial(cfar_data, angle_data, rdm_power):
     
     return detection_coords, detection_power    
 
-def extract_clusters_from_3d(detection_coords_3d, cluster_labels, detection_power, cfar_data_shape):
+def extract_clusters_from_3d(detection_coords_3d, cluster_labels):
     """
     Convert 3D cluster labels back to 2D cluster map.
     
@@ -175,7 +176,9 @@ def extract_clusters_from_3d(detection_coords_3d, cluster_labels, detection_powe
     cluster_map : np.ndarray of shape cfar_data_shape
         2D cluster map with cluster IDs at detection locations
     """
-    cluster_map = np.zeros(cfar_data_shape, dtype=np.int32)
+    shape3d= detection_coords_3d.shape
+    data_shape_2d = [shape3d[0], shape3d[1]]
+    cluster_map = np.zeros(data_shape_2d, dtype=np.int32)
     
     # Map back to 2D coordinates
     for i, (coord, label) in enumerate(zip(detection_coords_3d, cluster_labels)):
@@ -183,7 +186,7 @@ def extract_clusters_from_3d(detection_coords_3d, cluster_labels, detection_powe
         doppler_idx = int(coord[1])
         
         # Ensure indices are within bounds
-        if 0 <= range_idx < cfar_data_shape[0] and 0 <= doppler_idx < cfar_data_shape[1]:
+        if 0 <= range_idx < data_shape_2d[0] and 0 <= doppler_idx < data_shape_2d[1]:
             cluster_map[range_idx, doppler_idx] = label
     
     return cluster_map
@@ -343,12 +346,17 @@ def processing_process(raw_queue, processed_queue):
             #print(n_clusters)
             #print(centroids)
             # Convert 3D cluster labels back to 2D map (discard angle)
-            dbscan_data_2d = extract_clusters_from_3d(
-                detection_coords,
-                cluster_labels_3d,
-                detection_power,
-                cfar_data.shape
-            )
+            dbscan_data_2d = extract_clusters_from_3d(detection_coords, cluster_labels_3d)
+
+
+            centroids_2d = { cluster_id: torch.floor(centroid[:2]).int() for cluster_id, centroid in centroids.items()}
+            print(centroids_2d)
+
+            centroid_map = np.zeros(cfar_data.shape)
+            
+            centroids_2d = extract_clusters_from_3d()
+
+
         else:
             dbscan_data_2d = np.zeros_like(cfar_data, dtype=np.int32)
 

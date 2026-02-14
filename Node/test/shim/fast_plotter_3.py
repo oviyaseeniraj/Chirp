@@ -387,6 +387,9 @@ HTML_TEMPLATE = (
                 // Only plot if we have angle information
                 if (angle === null || angle === undefined) return;
 
+                //nuts!
+                if(velocity == 0) return;
+
                 // Map angle to x coordinate (-90 to 90 -> 0 to plotWidth)
                 const x = margin + ((angle + 90) / 180) * plotWidth;
 

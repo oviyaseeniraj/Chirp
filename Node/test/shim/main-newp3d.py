@@ -14,7 +14,7 @@ from new_pipe.cfar import cfar_pytorch
 from new_pipe.daqv3 import DataAcquisition
 from new_pipe.rdm import RangeDoppler
 from dbscan3d import dbscan_cluster_3d
-import pytorch as torch
+import torch
 
 # ================= CONFIG =================
 SERVER_URL = "http://127.0.0.1:5001"
@@ -28,6 +28,9 @@ FRAME_RPL = 20
 RANGE_BINS = 64  # Range dimension (from cfar_data rows)
 DOPPLER_BINS = 512  # Doppler dimension (from cfar_data columns)
 ANGLE_BINS = 16  # Angle dimension (discretized angle estimates)
+
+MIN_CLUSTER_SIZE = 5
+LOW_PASS_FILTER_DECAY = 0.75
 # =========================================
 
 # Set the measurement noise parameters for Mahalanobis distance
@@ -156,7 +159,7 @@ def create_3d_detection_map_spatial(cfar_data, angle_data, rdm_power):
     
     return detection_coords, detection_power    
 
-def extract_clusters_from_3d(detection_coords_3d, cluster_labels):
+def extract_clusters_from_3d(detection_coords_3d, cluster_labels, shape):
     """
     Convert 3D cluster labels back to 2D cluster map.
     
@@ -176,9 +179,7 @@ def extract_clusters_from_3d(detection_coords_3d, cluster_labels):
     cluster_map : np.ndarray of shape cfar_data_shape
         2D cluster map with cluster IDs at detection locations
     """
-    shape3d= detection_coords_3d.shape
-    data_shape_2d = [shape3d[0], shape3d[1]]
-    cluster_map = np.zeros(data_shape_2d, dtype=np.int32)
+    cluster_map = np.zeros(shape, dtype=np.int32)
     
     # Map back to 2D coordinates
     for i, (coord, label) in enumerate(zip(detection_coords_3d, cluster_labels)):
@@ -186,7 +187,7 @@ def extract_clusters_from_3d(detection_coords_3d, cluster_labels):
         doppler_idx = int(coord[1])
         
         # Ensure indices are within bounds
-        if 0 <= range_idx < data_shape_2d[0] and 0 <= doppler_idx < data_shape_2d[1]:
+        if 0 <= range_idx < shape[0] and 0 <= doppler_idx < shape[1]:
             cluster_map[range_idx, doppler_idx] = label
     
     return cluster_map
@@ -250,6 +251,9 @@ def daq_process(raw_queue):
 
 
 # -------- RDM/CFAR/3D Detection Processing Process (Core 1) --------
+
+
+
 def processing_process(raw_queue, processed_queue):
     """Process raw data through RDM, CFAR, angle estimation, and 3D DBSCAN"""
     # Pin to CPU core 1
@@ -262,6 +266,12 @@ def processing_process(raw_queue, processed_queue):
     last_frame_time = None
     frame_times = []
     frame_count = 0
+
+
+    m_cfar_data = np.zeros( (RANGE_BINS,DOPPLER_BINS), dtype=np.float32)
+    m_dbscan_data = np.zeros( (RANGE_BINS,DOPPLER_BINS), dtype=np.float32)
+    m_angle_data = np.zeros( (RANGE_BINS,DOPPLER_BINS), dtype=np.float32)
+    m_cluster_data = np.zeros( (RANGE_BINS,DOPPLER_BINS), dtype=np.float32)
 
     while True:
         t0 = time.perf_counter_ns()
@@ -309,6 +319,8 @@ def processing_process(raw_queue, processed_queue):
 
         t3 = time.perf_counter_ns()
 
+        #cfar_data[32,:]= 0
+
         # Estimate angles for detections
         angle_data = angle_fft(
             cfar_detections=cfar_data,
@@ -329,12 +341,11 @@ def processing_process(raw_queue, processed_queue):
 
         # ========== 3D DBSCAN CLUSTERING ==========
         if len(detection_coords) > 0:
-            print(len(detection_coords))
             # Perform 3D DBSCAN clustering with Mahalanobis distance
             cluster_labels_3d, n_clusters, centroids = dbscan_cluster_3d(
                 detection_coords,
-                eps=5.0,  # Tune based on your 3D space
-                min_samples=3,
+                eps=7.0,  # Tune based on your 3D space
+                min_samples=8,
                 metric="mahalanobis",
                 scale_coords=True,
                 x_weight=1.0,  # Range weight (512)
@@ -343,31 +354,92 @@ def processing_process(raw_queue, processed_queue):
                 measurement_noise_matrix=measurement_noise,
                 device="cpu",
             )
+
             #print(n_clusters)
-            #print(centroids)
             # Convert 3D cluster labels back to 2D map (discard angle)
-            dbscan_data_2d = extract_clusters_from_3d(detection_coords, cluster_labels_3d)
+            dbscan_data_2d = extract_clusters_from_3d(detection_coords, cluster_labels_3d, cfar_data.shape)
 
+            t4c = time.perf_counter_ns()
 
-            centroids_2d = { cluster_id: torch.floor(centroid[:2]).int() for cluster_id, centroid in centroids.items()}
-            print(centroids_2d)
+            if len(centroids) > 0:
 
-            centroid_map = np.zeros(cfar_data.shape)
+                cluster_labels, centroid_data = zip(*centroids.items())
+                #ignore centroids with small point counts
+                # Find indices where cluster size > MIN_CLUSTER_SIZE
+                large_cluster_mask = np.array([c[1] for c in centroid_data]) > 0
+                large_cluster_idx = np.where(large_cluster_mask)[0]
+
+                # Filter centroid_data using the indices
+                centroid_data = tuple(centroid_data[i] for i in large_cluster_idx)
+                cluster_labels = tuple(cluster_labels[i] for i in large_cluster_idx)
+
+                # Extract centroids
+                centroids_3d = [centroid[0] for centroid in centroid_data]
+                centroids_map = np.zeros(cfar_data.shape, dtype=np.int32)
+
+                centroids_tensor = torch.stack(centroids_3d)  # Shape: (n_clusters, 3)
+                
+                # Round all values
+                centroids_rounded = torch.round(centroids_tensor)
+                
+                #print(centroids_rounded)
+
+                # Clip each dimension to its respective range
+                centroids_clipped = torch.stack([
+                    torch.clamp(centroids_rounded[:, 0], 0, RANGE_BINS - 1),
+                    torch.clamp(centroids_rounded[:, 1], 0, DOPPLER_BINS - 1),
+                    torch.clamp(centroids_rounded[:, 2], 0, ANGLE_BINS - 1)
+                ]).T
+                
+                #print(centroids_clipped)
+                # Convert to numpy integers for indexing
+                centroids_3d_int = centroids_clipped.cpu().numpy().astype(int)
+                
+                # Create centroids map
+                
+                # Assign cluster labels to centroids_map using first two dimensions as indices
+                for label_idx, (range_idx, doppler_idx, _) in enumerate(centroids_3d_int):
+                    centroids_map[range_idx, doppler_idx] = cluster_labels[label_idx]
             
-            centroids_2d = extract_clusters_from_3d()
-
+            #np.set_printoptions(threshold=np.inf)
 
         else:
             dbscan_data_2d = np.zeros_like(cfar_data, dtype=np.int32)
+            centroids_map = np.zeros_like(cfar_data, dtype=np.uint8)
 
         t5 = time.perf_counter_ns()
 
 
-        # Package original RDM, CFAR, angle and 3D DBSCAN data
+        #low_pass filter everthing across time
+        #m_cfar_data = (m_cfar_data * LOW_PASS_FILTER_DECAY + cfar_data)
+        m_dbscan_data = m_dbscan_data * LOW_PASS_FILTER_DECAY + dbscan_data_2d.astype(np.float32) * (1-LOW_PASS_FILTER_DECAY)
+
+        m_angle_data = m_angle_data * LOW_PASS_FILTER_DECAY + angle_data * (1-LOW_PASS_FILTER_DECAY)
+        #m_centroids_map = m_cluster_data * LOW_PASS_FILTER_DECAY + centroids_map
+
+
+        np.set_printoptions(threshold=np.inf)
+        #print(np.sum(m_cfar_data.astype(int)))
+        #print("max",np.max(m_angle_data))
+        #print("median",np.median(m_angle_data))
+        #print("variance",np.variance(m_cfar_data))
+        #print("90th percentile",np.percentile(m_angle_data,50))
+        
+        m_angle_data[np.where(m_angle_data > 5*np.max(m_angle_data)/6)] = 0
+        #print(type(m_angle_data))
+        #print(type(angle_data))
+
+        print(m_dbscan_data.dtype)
+
+        #print(m_angle_data.astype(int).shape)
+        #print(angle_data.shape)
+        #print(m_angle_data.dtype)
+        #print(angle_data.dtype)
+
         output_data = {
             "rdm": dbscan_data_2d,
             "cfar": cfar_data,
-            "angles": angle_data,
+            "angles": m_angle_data,
             "dbscan_data_2d": dbscan_data_2d,
             "detection_coords": detection_coords,
             "cluster_labels": cluster_labels_3d if len(detection_coords) > 0 else np.array([])
@@ -389,7 +461,7 @@ def processing_process(raw_queue, processed_queue):
             print(
                 f"[PROCESSING] FPS: {fps:.2f} | Avg interval: {avg_interval * 1000:.1f}ms | "
                 f"Total: {(t5 - t0) // 1_000}us, RDM: {(t2 - t1) // 1_000}us, CFAR: {(t3 - t2) // 1_000}us, "
-                f"ANGLE: {(t4 - t3) // 1_000}us, 3D_MAP: {(t4b - t4) // 1_000}us, DBSCAN3D: {(t5 - t4b) // 1_000}us"
+                f"ANGLE: {(t4 - t3) // 1_000}us, 3D_MAP: {(t4b - t4) // 1_000}us, DBSCAN3D: {(t4c - t4b) // 1_000}us, CENTROID: {(t5 - t4c) // 1_000}us"
             )
             print(f"CFAR Detections: {np.sum(cfar_data > 0)} | 3D Clusters: {np.max(dbscan_data_2d)}")
 

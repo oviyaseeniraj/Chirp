@@ -228,6 +228,7 @@ class DBSCAN3D:
         current_cluster = 1  # Start from 1 (0 reserved for background)
         visited = torch.zeros(n_samples, dtype=torch.bool, device=self.device)
 
+        
         # Process only core points (optimization: skip non-core points initially)
         for core_idx in core_indices:
             core_idx_int = core_idx.item()
@@ -286,9 +287,12 @@ class DBSCAN3D:
                 cos_sum = torch.sum(torch.cos(angles) * self.z_weight)
                 weighted_angle = torch.atan2(sin_sum, cos_sum)
 
-                self.cluster_centroids_[cluster_id] = torch.tensor(
+                #
+                self.cluster_centroids_[cluster_id] = (torch.tensor(
                     [weighted_x.item(), weighted_y.item(), weighted_angle.item()],
                     device=self.device
+                ),
+                    len(cluster_points) 
                 )
 
         self.labels_ = labels

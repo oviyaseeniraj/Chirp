@@ -20,9 +20,18 @@ echo "Select a test to run:"
 echo "1) Full Integration Test (Live Radar + UI)"
 echo "2) Data Capture (Save to Node/data)"
 echo "3) Playback Test (Read from Node/data)"
-echo "4) Exit"
+echo "4) Reset Radar"
+echo "5) Exit"
 echo "------------------------------------------"
-read -p "Choice [1-4]: " test_choice
+read -p "Choice [1-5]: " test_choice
+
+# Determine python executable and activate environment
+if [ -f "$NODE_DIR/.venv/bin/activate" ]; then
+    source "$NODE_DIR/.venv/bin/activate"
+    PYTHON_EXEC="python3"
+else
+    PYTHON_EXEC="python3"
+fi
 
 case $test_choice in
     1|2)
@@ -68,14 +77,15 @@ case $test_choice in
 
         # 3. Run selected test
         echo ""
+        
         if [ "$test_choice" -eq 1 ]; then
             echo ">>> Starting Full Integration Test..."
-            python3 "$NODE_DIR/test/full_integration_test.py"
+            $PYTHON_EXEC "$NODE_DIR/test/full_integration_test.py"
         else
             echo ">>> Starting Data Capture (Target: $DATA_DIR)..."
             read -p "Enter number of frames to capture [100]: " frames
             frames=${frames:-100}
-            python3 "$NODE_DIR/test/run_capture.py" --capture --frames "$frames" --output "$DATA_DIR"
+            $PYTHON_EXEC "$NODE_DIR/test/run_capture.py" --capture --frames "$frames" --output "$DATA_DIR"
         fi
 
         # Cleanup hardware trigger if it was started
@@ -83,6 +93,7 @@ case $test_choice in
             echo "Stopping hardware trigger (PID: $TRIGGER_PID)..."
             sudo kill $TRIGGER_PID > /dev/null 2>&1
         fi
+        sudo bash "$NODE_DIR/scripts/reset_radar.sh"
         ;;
 
     3)
@@ -92,10 +103,15 @@ case $test_choice in
             echo "Error: $DATA_DIR is empty. Run Data Capture first."
             exit 1
         fi
-        python3 "$NODE_DIR/test/playback_test.py" --input-dir "$DATA_DIR" --loop
+        $PYTHON_EXEC "$NODE_DIR/test/playback_test.py" --input-dir "$DATA_DIR" --loop
+        ;;
+    4)
+        echo ""
+        echo "resetting radar"
+        sudo bash $NODE_DIR/scripts/reset_radar.sh
         ;;
 
-    4)
+    5)
         echo "Exiting."
         exit 0
         ;;

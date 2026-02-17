@@ -29,7 +29,7 @@ case $test_choice in
         # 1. Start Radar Hardware/FPGA
         echo ""
         echo ">>> Initializing Radar (requires sudo)..."
-        sudo "$NODE_DIR/scripts/start_radar.sh"
+        sudo bash "$NODE_DIR/scripts/start_radar.sh"
         if [ $? -ne 0 ]; then
             echo "Failed to start radar. Exiting."
             exit 1

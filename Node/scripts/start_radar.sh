@@ -22,7 +22,7 @@ echo -e "\n------------------------------------ \nignore the core dumped error m
 popd > /dev/null 2>&1
 
 pushd ../DCA1000/SourceCode/Release/ > /dev/null 2>&1 || { echo "Failed to cd to ../DCA1000/SourceCode/Release/"; exit 1; }
-sudo ./DCA1000EVM_CLI_Control fpga DCAconfig.json || { echo "Failed to configure FPGA"; exit 1; }
+sudo ./DCA1000EVM_CLI_Control fpga DCAconfig.json || { echo "Failed to configure FPGA"; echo "if failing to configure FPGA, try running reset_radar(.sh) first"; exit 1; }
 sudo ./DCA1000EVM_CLI_Control record DCAconfig.json || { echo "Failed to configure record mode"; exit 1; }
 popd > /dev/null 2>&1
 

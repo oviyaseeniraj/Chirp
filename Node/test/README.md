@@ -8,7 +8,7 @@ This script orchestrates hardware initialization, trigger selection, and test ex
 
 | Script | Description | Usage |
 | :--- | :--- | :--- |
-| `run_capture.py` | CLI utility for capturing radar data (raw ADC + processed RDM). | `python3 run_capture.py --capture --frames 100 --output data` |
+| `capture_data.py` | CLI utility for capturing radar data (raw ADC + processed RDM). | `python3 capture_data.py --capture --frames 100 --output data` |
 | `full_integration_test.py` | Full radar pipeline (DAQ -> Processing -> Visualizer) using live data. | `python3 full_integration_test.py` |
 | `playback_test.py` | Full radar pipeline using recorded data from a directory. | `python3 playback_test.py --input-dir data --loop` |
 

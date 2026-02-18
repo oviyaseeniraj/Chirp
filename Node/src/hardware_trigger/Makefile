@@ -1,7 +1,6 @@
 
 
-all: jetgpio_example.c local_trigger networked_trigger
-	gcc -Wall -o jetgpio_example jetgpio_example.c -ljetgpio
+all:  local_trigger networked_trigger
 
 
 local_trigger: local_trigger.c

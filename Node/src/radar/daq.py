@@ -98,7 +98,7 @@ class DataAcquisition:
                 # Zero-copy receive
                 try:
                     z, _ = s.recvfrom_into(b, config.BUFFER_SIZE)
-                except:
+                except Exception:
                     c = UINT64_MAX
                     g[:] = 0
                     n = 0
@@ -173,5 +173,6 @@ class DataAcquisition:
 
             return d
         finally:
+            self.close_socket()  # Ensure socket is closed!
             if e:
                 gc.enable()

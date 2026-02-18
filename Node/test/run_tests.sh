@@ -13,6 +13,19 @@ if [ ! -d "$DATA_DIR" ]; then
     mkdir -p "$DATA_DIR"
 fi
 
+# Function to cleanup child processes
+cleanup() {
+    echo ""
+    echo "Caught signal! Cleaning up..."
+    # Kill process group to ensure all children are dead
+    trap - SIGINT SIGTERM # Disable trap to avoid recursion
+    kill -- -$$ 2>/dev/null
+    exit 1
+}
+
+# Trap SIGINT (Ctrl+C) and SIGTERM
+trap cleanup SIGINT SIGTERM
+
 echo "=========================================="
 echo "      Chirp Radar Test Runner             "
 echo "=========================================="
@@ -25,10 +38,9 @@ echo "5) Exit"
 echo "------------------------------------------"
 read -p "Choice [1-5]: " test_choice
 
-# Determine python executable and activate environment
-if [ -f "$NODE_DIR/.venv/bin/activate" ]; then
-    source "$NODE_DIR/.venv/bin/activate"
-    PYTHON_EXEC="python3"
+# Determine python executable
+if [ -f "$NODE_DIR/.venv/bin/python3" ]; then
+    PYTHON_EXEC="$NODE_DIR/.venv/bin/python3"
 else
     PYTHON_EXEC="python3"
 fi

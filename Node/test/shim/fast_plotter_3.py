@@ -430,6 +430,7 @@ HTML_TEMPLATE = (
             detections.forEach(detection => {
                 const { x, y, angle } = detection;
 
+                return; 
                 // Draw detection marker (red circle)
                 overlayCtx.strokeStyle = '#ff6666';
                 overlayCtx.fillStyle = '#ff6666';

@@ -324,9 +324,9 @@ def processing_process(raw_queue, processed_queue):
         # print(angle_data.dtype)
 
         output_data = {
-            "rdm": frame,
-            "cfar": dbscan_data_2d,
-            "angles": dbscan_angles,
+            "rdm": centroids_map,
+            "cfar": centroids_map,
+            "angles": centroids_angles,
             "dbscan_data_2d": dbscan_data_2d,
             "detection_coords": detection_coords_3d
             #"cluster_labels": cluster_labels_3d

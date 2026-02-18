@@ -208,10 +208,13 @@ class DBSCAN3D:
             detection_coords = torch.tensor(detection_coords, dtype=torch.float32)
 
         detection_coords = detection_coords.to(self.device)
+        detection_coords[:,2] = torch.deg2rad(detection_coords[:,2])
 
-        #spatial frequency transformation
-        detection_coords[:,2] = np.pi * np.sin(detection_coords[:,2])
+        # Store original angles BEFORE spatial frequency transformation
+        original_angles = detection_coords[:, 2].clone()
 
+        # Apply spatial frequency transformation for clustering
+        detection_coords[:, 2] = np.pi * torch.sin(original_angles)
 
         n_samples = detection_coords.shape[0]
 
@@ -291,6 +294,7 @@ class DBSCAN3D:
         for cluster_id in range(1, current_cluster):
             cluster_mask = labels == cluster_id
             cluster_points = detection_coords[cluster_mask]
+            cluster_original_angles = original_angles[cluster_mask]
             
             if len(cluster_points) > 0:
                 # Weighted range (x-coordinate)
@@ -303,19 +307,17 @@ class DBSCAN3D:
                     torch.ones(len(cluster_points), device=self.device) * self.y_weight
                 )
                 
-                # Weighted circular angle mean (z-coordinate using circular mean)
-                #may not be necessary for spatial frequencies
+                # Weighted circular mean in spatial frequency domain
+                frequencies = cluster_points[:, 2]  # Already in spatial frequency space
+                #sum_sin = torch.sum(torch.sin(frequencies)) * self.z_weight
+                #sum_cos = torch.sum(torch.cos(frequencies)) * self.z_weight
+                
+                #weighted_freq = torch.atan2(sum_sin,sum_cos)
+                weighted_freq = torch.mean(frequencies)
 
-                frequencies = cluster_points[:, 2]
-                sin_sum = torch.sum(torch.sin(frequencies) * self.z_weight)
-                cos_sum = torch.sum(torch.cos(frequencies) * self.z_weight)
-                weighted_freq = torch.atan2(sin_sum, cos_sum)
+                # Convert spatial frequency back to angle
+                weighted_angle = torch.arcsin(torch.clamp(weighted_freq / np.pi, -1.0, 1.0))
 
-
-                #TODO: Remove this magic conversion
-                weighted_angle = np.arcsin(weighted_freq / np.pi)
-
-                #
                 self.cluster_centroids_[cluster_id] = (torch.tensor(
                     [weighted_x.item(), weighted_y.item(), weighted_angle.item()],
                     device=self.device
@@ -521,7 +523,11 @@ def dbscan_process(detection_coords, shape):
         
     else:
         dbscan_data_2d = np.zeros(shape, dtype=np.int32)
-        dbscan_angles = np.zeros(shape,dtype=np.int32)
+        dbscan_angles = np.zeros(shape,dtype=np.float32)
+
+    #TODO: remove the zero velocity bins - do this in a more intelligent manner
+    dbscan_data_2d[32,:] = 0
+    dbscan_angles[32,:] = 0
 
     return dbscan_data_2d, dbscan_angles, centroids
 
@@ -533,54 +539,51 @@ def centroid_process(centroids, shape):
     centroids_map = np.zeros(shape, dtype=np.int32)
     centroids_angles = np.zeros(shape, dtype=np.float32)
 
-    if len(centroids) > 0:
-        cluster_labels, centroid_data = zip(*centroids.items())
-        # ignore centroids with small point counts
-        # Find indices where cluster size > MIN_CLUSTER_SIZE
 
-        #TODO: not removing anything right now
+
+    if len(centroids) > 0:
+        #print(centroids)
+
+        cluster_labels, centroid_data = zip(*centroids.items())
+        
         large_cluster_mask = np.array([c[1] for c in centroid_data]) > 0
         large_cluster_idx = np.where(large_cluster_mask)[0]
-        # Filter centroid_data using the indices
         filtered_centroids = tuple(centroid_data[i] for i in large_cluster_idx)
         cluster_labels = tuple(cluster_labels[i] for i in large_cluster_idx)
 
-        #centroid locations
         centroids_3d = [centroid[0] for centroid in filtered_centroids]
-
-        centroids_tensor = torch.stack(centroids_3d)  # Shape: (n_clusters, 3)
+        centroids_tensor = torch.stack(centroids_3d)
 
         # Round only the first two dimensions (range and doppler)
-        # Keep the third dimension (angle) as float
         centroids_rounded = torch.stack(
             [
                 torch.round(centroids_tensor[:, 0]),
                 torch.round(centroids_tensor[:, 1]),
-                centroids_tensor[:, 2]  # Keep angle as float
+                centroids_tensor[:, 2]  # Keep spatial frequency as float
             ]
         ).T
 
-        # Clip each dimension to its respective range
+       # Clip each dimension to its respective range
         centroids_clipped = torch.stack(
             [
                 torch.clamp(centroids_rounded[:, 0], 0, shape[0] - 1),
                 torch.clamp(centroids_rounded[:, 1], 0, shape[1] - 1),
-                centroids_rounded[:, 2]  # Angle not clipped
+                centroids_rounded[:, 2]  # Spatial frequency not clipped
             ]
         ).T
 
-        #print(centroids_clipped)
-        
-        # Convert to numpy with appropriate dtypes
-        # First two columns as int for indexing, third column as float
+        # Convert to numpy
         centroids_3d_for_indexing = centroids_clipped[:, :2].cpu().numpy().astype(int)
-        centroids_3d_angles = centroids_clipped[:, 2].cpu().numpy().astype(np.float32)
-
-        # Assign cluster labels to centroids_map using first two dimensions as indices
+        centroids_3d_angles_rad = centroids_clipped[:,2].cpu().numpy().astype(np.float32)
+        centroids_3d_angles = np.rad2deg(centroids_3d_angles_rad)
+        # Assign cluster labels to maps
         for label_idx, (range_idx, doppler_idx) in enumerate(centroids_3d_for_indexing):
             centroids_map[range_idx, doppler_idx] = cluster_labels[label_idx]
             centroids_angles[range_idx, doppler_idx] = centroids_3d_angles[label_idx]
-    
+
+    centroids_map[32, :] = 0
+    centroids_angles[32, :] = 0
+
     return centroids_map, centroids_angles
 
 

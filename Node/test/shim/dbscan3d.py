@@ -13,6 +13,21 @@ import torch
 import torch.nn.functional as F
 
 
+# Set the measurement noise parameters for Mahalanobis distance
+# Based on Anirban's code - sigma values for [range, doppler, angle]
+pi = np.pi
+sigma_range = 0.035
+sigma_doppler = 0.2  # For 64 chirps per frame
+sigma_azimuth = pi / 4
+
+# Create 3x3 measurement noise covariance matrix
+measurement_noise = np.array(
+    [[sigma_range**2, 0, 0], [0, sigma_doppler**2, 0], [0, 0, sigma_azimuth**2]]
+)
+    
+
+
+
 class DBSCAN3D:
     """
     3D DBSCAN clustering algorithm implemented in PyTorch for GPU acceleration.
@@ -193,6 +208,11 @@ class DBSCAN3D:
             detection_coords = torch.tensor(detection_coords, dtype=torch.float32)
 
         detection_coords = detection_coords.to(self.device)
+
+        #spatial frequency transformation
+        detection_coords[:,2] = np.pi * np.sin(detection_coords[:,2])
+
+
         n_samples = detection_coords.shape[0]
 
         # Early exit for empty input
@@ -207,6 +227,8 @@ class DBSCAN3D:
             scaled_coords[:, 0] = scaled_coords[:, 0] * self.x_weight
             scaled_coords[:, 1] = scaled_coords[:, 1] * self.y_weight
             scaled_coords[:, 2] = scaled_coords[:, 2] * self.z_weight
+
+
         else:
             scaled_coords = detection_coords
 
@@ -282,10 +304,16 @@ class DBSCAN3D:
                 )
                 
                 # Weighted circular angle mean (z-coordinate using circular mean)
-                angles = cluster_points[:, 2]
-                sin_sum = torch.sum(torch.sin(angles) * self.z_weight)
-                cos_sum = torch.sum(torch.cos(angles) * self.z_weight)
-                weighted_angle = torch.atan2(sin_sum, cos_sum)
+                #may not be necessary for spatial frequencies
+
+                frequencies = cluster_points[:, 2]
+                sin_sum = torch.sum(torch.sin(frequencies) * self.z_weight)
+                cos_sum = torch.sum(torch.cos(frequencies) * self.z_weight)
+                weighted_freq = torch.atan2(sin_sum, cos_sum)
+
+
+                #TODO: Remove this magic conversion
+                weighted_angle = np.arcsin(weighted_freq / np.pi)
 
                 #
                 self.cluster_centroids_[cluster_id] = (torch.tensor(
@@ -454,6 +482,106 @@ def dbscan_cluster_3d(
         device=device,
     )
     return clusterer.fit_predict(detection_coords), clusterer.n_clusters_, clusterer.cluster_centroids_
+
+def dbscan_process(detection_coords, shape):
+    # ========== 3D DBSCAN and CENTROIDS CLUSTERING ==========
+    if len(detection_coords) > 0:
+        # Perform 3D DBSCAN clustering with Mahalanobis distance
+        cluster_labels_3d, n_clusters, centroids = dbscan_cluster_3d(
+            detection_coords,
+            eps=3.0,  # Tune based on your 3D space
+            min_samples=10,
+            metric="mahalanobis",
+            scale_coords=True,
+            x_weight=sigma_range,  # Range weight (512)
+            y_weight=sigma_doppler,  # Doppler weight (64 dimension)
+            z_weight=sigma_azimuth,  # Angle weight (64 smaller dimension)
+            measurement_noise_matrix=measurement_noise,
+            device="cpu",
+        )
+
+        #print(centroids)
+
+        # print(n_clusters)
+        # Convert 3D cluster labels back to 2D map (discard angle)
+
+        dbscan_data_2d = np.zeros(shape, dtype=np.int32)
+        dbscan_angles = np.zeros(shape,dtype=np.float32)
+
+        # Map back to 2D coordinates
+        for i, (coord, label) in enumerate(zip(detection_coords, cluster_labels_3d)):
+            range_idx = int(coord[0])
+            doppler_idx = int(coord[1])
+            angle = coord[2] 
+
+            # Ensure indices are within bounds
+            if 0 <= range_idx < shape[0] and 0 <= doppler_idx < shape[1]:
+                dbscan_data_2d[range_idx, doppler_idx] = label
+                dbscan_angles[range_idx, doppler_idx] = angle        
+        
+    else:
+        dbscan_data_2d = np.zeros(shape, dtype=np.int32)
+        dbscan_angles = np.zeros(shape,dtype=np.int32)
+
+    return dbscan_data_2d, dbscan_angles, centroids
+
+#more efficient to compute centroids along with dbscan clustering
+def centroid_process(centroids, shape):
+    #CENTROIDS ==============
+
+    # Create centroids map for plotting
+    centroids_map = np.zeros(shape, dtype=np.int32)
+    centroids_angles = np.zeros(shape, dtype=np.float32)
+
+    if len(centroids) > 0:
+        cluster_labels, centroid_data = zip(*centroids.items())
+        # ignore centroids with small point counts
+        # Find indices where cluster size > MIN_CLUSTER_SIZE
+
+        #TODO: not removing anything right now
+        large_cluster_mask = np.array([c[1] for c in centroid_data]) > 0
+        large_cluster_idx = np.where(large_cluster_mask)[0]
+        # Filter centroid_data using the indices
+        filtered_centroids = tuple(centroid_data[i] for i in large_cluster_idx)
+        cluster_labels = tuple(cluster_labels[i] for i in large_cluster_idx)
+
+        #centroid locations
+        centroids_3d = [centroid[0] for centroid in filtered_centroids]
+
+        centroids_tensor = torch.stack(centroids_3d)  # Shape: (n_clusters, 3)
+
+        # Round only the first two dimensions (range and doppler)
+        # Keep the third dimension (angle) as float
+        centroids_rounded = torch.stack(
+            [
+                torch.round(centroids_tensor[:, 0]),
+                torch.round(centroids_tensor[:, 1]),
+                centroids_tensor[:, 2]  # Keep angle as float
+            ]
+        ).T
+
+        # Clip each dimension to its respective range
+        centroids_clipped = torch.stack(
+            [
+                torch.clamp(centroids_rounded[:, 0], 0, shape[0] - 1),
+                torch.clamp(centroids_rounded[:, 1], 0, shape[1] - 1),
+                centroids_rounded[:, 2]  # Angle not clipped
+            ]
+        ).T
+
+        #print(centroids_clipped)
+        
+        # Convert to numpy with appropriate dtypes
+        # First two columns as int for indexing, third column as float
+        centroids_3d_for_indexing = centroids_clipped[:, :2].cpu().numpy().astype(int)
+        centroids_3d_angles = centroids_clipped[:, 2].cpu().numpy().astype(np.float32)
+
+        # Assign cluster labels to centroids_map using first two dimensions as indices
+        for label_idx, (range_idx, doppler_idx) in enumerate(centroids_3d_for_indexing):
+            centroids_map[range_idx, doppler_idx] = cluster_labels[label_idx]
+            centroids_angles[range_idx, doppler_idx] = centroids_3d_angles[label_idx]
+    
+    return centroids_map, centroids_angles
 
 
 # Example usage

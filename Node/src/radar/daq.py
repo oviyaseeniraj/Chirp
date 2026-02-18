@@ -192,6 +192,5 @@ class DataAcquisition:
 
             return d
         finally:
-            self.close_socket()  # Ensure socket is closed!
             if e:
                 gc.enable()

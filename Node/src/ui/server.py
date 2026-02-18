@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import logging
 import time
@@ -5,8 +6,9 @@ import sys
 import os
 import numpy as np
 import cv2
-from flask import Flask, render_template
-from flask_socketio import SocketIO, emit
+from aiohttp import web
+import socketio
+from jinja2 import Environment, FileSystemLoader
 
 # Add project root to sys.path to allow absolute imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -16,22 +18,12 @@ try:
 except ImportError:
     from ..radar import config
 
-# Disable all logging
-logging.getLogger("werkzeug").disabled = True
-logging.getLogger("socketio").disabled = True
-logging.getLogger("engineio").disabled = True
-
-# Specify template folder explicitly
-template_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), 'templates'))
-app = Flask(__name__, template_folder=template_dir)
-app.config["SECRET_KEY"] = "fast-plotter3"
-
 # Configuration
 SHOW_RANGE_ANGLE_PLOT = True
 RANGE_ANGLE_PLOT_WIDTH = 400
 RANGE_ANGLE_PLOT_HEIGHT = 300
 
-# Pre-compute RdBu colormap lookup table once as a constant (BGR format for OpenCV)
+# Pre-compute RdBu colormap lookup table
 TRANSITION_MID = 128
 COLORMAP_BGR = np.zeros((256, 3), dtype=np.uint8)
 for i in range(256):
@@ -45,45 +37,47 @@ for i in range(256):
         red = int(255 - (255 - 139) * ratio)
         green = int(255 * (1 - ratio))
         blue = int(255 * (1 - ratio))
-    # BGR for OpenCV
     COLORMAP_BGR[i] = [blue, green, red]
 
-socketio = SocketIO(
-    app,
-    cors_allowed_origins="*",
-    async_mode="threading",
-    logger=False,
-    engineio_logger=False,
+# Async SocketIO Server
+sio = socketio.AsyncServer(
+    async_mode='aiohttp', 
+    cors_allowed_origins='*',
+    max_http_buffer_size=10000000 # 10MB to handle large radar frames
 )
+app = web.Application()
+sio.attach(app)
+
+@sio.event
+async def connect(sid, environ):
+    print(f"DEBUG: Client connected: {sid}")
+
+@sio.event
+async def disconnect(sid):
+    print(f"DEBUG: Client disconnected: {sid}")
+
+# Jinja2 setup
+template_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), 'templates'))
+jinja_env = Environment(loader=FileSystemLoader(template_dir))
 
 def array_to_raw_image(data_array):
     """Optimized conversion of 64x512 array to 512x512 BGR image data"""
-    # Normalize to 0-255 range using OpenCV (highly optimized)
+    # Normalize to 0-255
     normalized = cv2.normalize(data_array, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-
-    # Resize to 512x512 (Nearest neighbor is fastest and matches previous behavior)
-    # Input is 64x512 (H, W)
+    # Resize to 512x512
     scaled = cv2.resize(normalized, (512, 512), interpolation=cv2.INTER_NEAREST)
-    
-    # Rotate 90 CCW to match target orientation
+    # Rotate 90 CCW
     rotated = cv2.rotate(scaled, cv2.ROTATE_90_COUNTERCLOCKWISE)
-
-    # Apply colormap using optimized numpy indexing
-    bgr_image = COLORMAP_BGR[rotated]
-
-    return bgr_image
+    # Apply colormap
+    return COLORMAP_BGR[rotated]
 
 def encode_image_data(bgr_array):
-    """Encode BGR array as base64 JPEG data (much smaller and faster than BMP)"""
-    # Quality 80-90 is usually plenty and much smaller
+    """Encode BGR array as base64 JPEG data"""
     success, buffer = cv2.imencode('.jpg', bgr_array, [cv2.IMWRITE_JPEG_QUALITY, 85])
-    if not success:
-        return ""
-    return base64.b64encode(buffer).decode("ascii")
+    return base64.b64encode(buffer).decode("ascii") if success else ""
 
 def extract_detections(cfar_array, angles_array, rdm_array=None):
     """Vectorized extraction of detection information"""
-    # Find detection positions
     detection_indices = np.where(cfar_array > 0)
     doppler_indices = detection_indices[0]
     range_indices = detection_indices[1]
@@ -91,26 +85,19 @@ def extract_detections(cfar_array, angles_array, rdm_array=None):
     if len(doppler_indices) == 0:
         return []
 
-    # Get values at points
     angles = angles_array[doppler_indices, range_indices]
     
-    # Physics constants from config
     SLOW_TIME = config.SLOW_TIME
     VELOCITY_RES = config.VELOCITY_RES
     
-    # Vectorized calculations
     doppler_offsets = doppler_indices - SLOW_TIME // 2
     velocities = doppler_offsets * VELOCITY_RES
     
     magnitudes = rdm_array[doppler_indices, range_indices] if rdm_array is not None else np.zeros_like(velocities)
     
-    # Pixel mapping (matching rot90 k=1 CCW)
-    # new_row = 511 - old_col, new_col = old_row
-    # In JS: x is col, y is row
     pixel_xs = doppler_indices * 8
     pixel_ys = 511 - range_indices
     
-    # Build list of dicts (already pre-computed vectorized)
     return [
         {
             "x": int(px),
@@ -124,63 +111,90 @@ def extract_detections(cfar_array, angles_array, rdm_array=None):
         for px, py, di, ri, a, v, m in zip(pixel_xs, pixel_ys, doppler_indices, range_indices, angles, velocities, magnitudes)
     ]
 
-@app.route("/")
-def index():
-    return render_template(
-        "index.html",
+class PerformanceStats:
+    def __init__(self):
+        self.last_arrival = 0
+        self.frame_count = 0
+
+stats = PerformanceStats()
+
+def process_frame(data):
+    """CPU-bound processing logic separated from the event loop"""
+    start_time = time.time()
+    
+    # 1. Parse array
+    try:
+        array_data = np.frombuffer(data["array"], dtype=np.float32)
+        if array_data.size == 64 * 512:
+            array_data = array_data.reshape(64, 512)
+        else:
+            return None, 0
+    except Exception:
+        return None, 0
+
+    # 2. Process detections
+    detections = []
+    if data.get("angles") is not None and data.get("cfar") is not None:
+        try:
+            angles_array = np.frombuffer(data["angles"], dtype=np.float32).reshape(64, 512)
+            cfar_array = np.frombuffer(data["cfar"], dtype=np.float32).reshape(64, 512)
+            detections = extract_detections(cfar_array, angles_array, array_data)
+        except Exception:
+            pass
+
+    # 3. Handle image
+    bgr_image = array_to_raw_image(array_data)
+    image_data = encode_image_data(bgr_image)
+    
+    proc_time = (time.time() - start_time) * 1000
+    
+    payload = {
+        "image": image_data,
+        "detections": detections,
+        "mime": "image/jpeg"
+    }
+    return payload, proc_time
+
+@sio.on("send_frame")
+async def handle_array(sid, data):
+    """Async handler for incoming radar frames"""
+    now = time.time()
+    arrival_delta = (now - stats.last_arrival) * 1000 if stats.last_arrival > 0 else 0
+    stats.last_arrival = now
+    stats.frame_count += 1
+
+    try:
+        # Offload CPU work to a thread
+        payload, proc_time = await asyncio.to_thread(process_frame, data)
+        
+        if payload:
+            await sio.emit("radar_plot", payload)
+            print(f"Frame {stats.frame_count} | Arrival: {arrival_delta:.1f}ms | Process: {proc_time:.1f}ms | Detections: {len(payload['detections'])}")
+        else:
+            print(f"Frame {stats.frame_count} | Arrival: {arrival_delta:.1f}ms | ERROR: process_frame returned None")
+    except Exception as e:
+        print(f"Frame {stats.frame_count} | ERROR in handle_array: {e}")
+
+async def index_handler(request):
+    """Serve the main UI page using Jinja2"""
+    print("DEBUG: index.html requested")
+    template = jinja_env.get_template('index.html')
+    content = template.render(
         show_range_angle_plot=SHOW_RANGE_ANGLE_PLOT,
         range_angle_plot_width=RANGE_ANGLE_PLOT_WIDTH,
         range_angle_plot_height=RANGE_ANGLE_PLOT_HEIGHT
     )
+    return web.Response(text=content, content_type='text/html')
 
-@socketio.on("send_frame")
-def handle_array(data):
-    """Process array data with optimized pipelines"""
-    try:
-        start_time = time.time()
+async def status_handler(request):
+    """Simple health check"""
+    return web.Response(text="Server is UP", content_type='text/plain')
 
-        # Convert RDM array data
-        array_data = np.frombuffer(data["array"], dtype=np.float32)
-
-        if array_data.size == 64 * 512:
-            array_data = array_data.reshape(64, 512)
-        else:
-            return
-
-        # Process detections and angles if available
-        detections = []
-        if data.get("angles") is not None and data.get("cfar") is not None:
-            try:
-                angles_array = np.frombuffer(data["angles"], dtype=np.float32).reshape(64, 512)
-                cfar_array = np.frombuffer(data["cfar"], dtype=np.float32).reshape(64, 512)
-                detections = extract_detections(cfar_array, angles_array, array_data)
-            except Exception as angle_error:
-                print(f"Error processing angles: {angle_error}")
-
-        # Convert to image (Optimized with CV2 and JPEG)
-        bgr_image = array_to_raw_image(array_data)
-        image_data = encode_image_data(bgr_image)
-
-        # Send to all clients
-        emit(
-            "radar_plot",
-            {
-                "image": image_data,
-                "detections": detections,
-                "mime": "image/jpeg"
-            },
-            broadcast=True,
-        )
-
-        # Performance logging
-        process_time = (time.time() - start_time) * 1000
-        if process_time > 1: # Log any significant processing
-            # print(f"Frame processed in {process_time:.1f}ms (Detections: {len(detections)})")
-            pass
-
-    except Exception as e:
-        print(f"Error processing array: {e}")
+# Setup routes
+app.router.add_get('/', index_handler)
+app.router.add_get('/status', status_handler)
 
 if __name__ == "__main__":
-    print("Starting Optimized Radar Plotter on port 5001")
-    socketio.run(app, host="0.0.0.0", port=5001, debug=False)
+    print("Starting Optimized Asyncio/Aiohttp Radar Plotter on port 5001")
+    # Disable access log for performance, but we can check manual prints
+    web.run_app(app, host="0.0.0.0", port=5001, access_log=None)

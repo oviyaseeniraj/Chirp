@@ -292,7 +292,8 @@
 
                 frameCount++;
             };
-            img.src = 'data:image/bmp;base64,' + data.image;
+            const mimeType = data.mime || 'image/bmp';
+            img.src = 'data:' + mimeType + ';base64,' + data.image;
         });
 
         // Handle connection events

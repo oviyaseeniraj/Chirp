@@ -99,6 +99,8 @@ def processing_process(raw_queue, processed_queue):
             # 1. Range-Doppler Processing
             rd.set_buffer(frame_data)
             rmd_loss = rd.process()
+            # Reshape 1D output to 2D for CFAR
+            rmd_loss = rmd_loss.reshape((config.SLOW_TIME, config.FAST_TIME))
             
             # 2. CFAR Detection
             clean_rdm = rd.get_clean_rdm()

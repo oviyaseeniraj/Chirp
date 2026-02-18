@@ -2,6 +2,12 @@
 
 # Interactive Test Runner for Chirp Radar Node
 
+# Check for root privilege
+if [[ $EUID -ne 0 ]]; then
+   echo "This script must be run as root (sudo)" 
+   exit 1
+fi
+
 # Get the directory where this script is located
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 NODE_DIR="$( dirname "$SCRIPT_DIR" )"
@@ -47,13 +53,22 @@ fi
 
 case $test_choice in
     1|2)
-        # 1. Start Radar Hardware/FPGA
-        echo ""
-        echo ">>> Initializing Radar (requires sudo)..."
-        sudo bash "$NODE_DIR/scripts/start_radar.sh"
-        if [ $? -ne 0 ]; then
-            echo "Failed to start radar. Exiting."
-            exit 1
+        # 1. Check/Start Radar Hardware/FPGA
+        RADAR_STATUS_FILE="/tmp/chirp_radar_status"
+        
+        if [ -f "$RADAR_STATUS_FILE" ]; then
+            echo ""
+            echo ">>> Radar already initialized (Lockfile found at $RADAR_STATUS_FILE). Skipping startup."
+        else
+            echo ""
+            echo ">>> Initializing Radar (requires sudo)..."
+            sudo bash "$NODE_DIR/scripts/start_radar.sh"
+            if [ $? -ne 0 ]; then
+                echo "Failed to start radar. Exiting."
+                exit 1
+            fi
+            # Create lockfile to indicate radar is initialized
+            touch "$RADAR_STATUS_FILE"
         fi
 
         # 2. Select Hardware Triggering
@@ -65,13 +80,13 @@ case $test_choice in
         echo "------------------------------------------"
         read -p "Choice [1-3]: " trigger_choice
 
-        TRIGGER_CMD=""
+        TRIGGER_EXE=""
         case $trigger_choice in
             1)
-                TRIGGER_CMD="sudo $NODE_DIR/src/hardware_trigger/local_trigger"
+                TRIGGER_EXE="$NODE_DIR/src/hardware_trigger/local_trigger"
                 ;;
             2)
-                TRIGGER_CMD="sudo $NODE_DIR/src/hardware_trigger/networked_trigger"
+                TRIGGER_EXE="$NODE_DIR/src/hardware_trigger/networked_trigger"
                 ;;
             *)
                 echo "Skipping hardware trigger."
@@ -79,12 +94,19 @@ case $test_choice in
         esac
 
         # Start hardware trigger in background if selected
-        if [ ! -z "$TRIGGER_CMD" ]; then
+        if [ ! -z "$TRIGGER_EXE" ]; then
+            if [ ! -f "$TRIGGER_EXE" ]; then
+                echo "Error: Hardware trigger executable not found at: $TRIGGER_EXE"
+                echo "Please compile it first: (cd $NODE_DIR/src/hardware_trigger && make)"
+                exit 1
+            fi
+
             echo "Starting hardware trigger in background..."
-            $TRIGGER_CMD > /dev/null 2>&1 &
+            # Launch without sudo since script is already root
+            "$TRIGGER_EXE" > /dev/null 2>&1 &
             TRIGGER_PID=$!
             # Trap signals to ensure the trigger is killed when the script ends
-            trap "echo 'Killing hardware trigger...'; sudo kill $TRIGGER_PID; exit" SIGINT SIGTERM
+            trap "echo 'Killing hardware trigger...'; kill $TRIGGER_PID; exit" SIGINT SIGTERM
         fi
 
         # 3. Run selected test
@@ -97,30 +119,33 @@ case $test_choice in
             echo ">>> Starting Data Capture (Target: $DATA_DIR)..."
             read -p "Enter number of frames to capture [100]: " frames
             frames=${frames:-100}
-            $PYTHON_EXEC "$NODE_DIR/test/run_capture.py" --capture --frames "$frames" --output "$DATA_DIR"
+            $PYTHON_EXEC "$NODE_DIR/test/capture_data.py" --capture --frames "$frames" --output "$DATA_DIR"
         fi
 
         # Cleanup hardware trigger if it was started
         if [ ! -z "$TRIGGER_PID" ]; then
             echo "Stopping hardware trigger (PID: $TRIGGER_PID)..."
-            sudo kill $TRIGGER_PID > /dev/null 2>&1
+            kill $TRIGGER_PID > /dev/null 2>&1
         fi
-        sudo bash "$NODE_DIR/scripts/reset_radar.sh"
+        # Automatic radar reset removed for persistence
+        # sudo bash "$NODE_DIR/scripts/reset_radar.sh"
         ;;
 
     3)
         echo ""
         echo ">>> Starting Playback Test from $DATA_DIR..."
-        if [ ! "$(ls -A $DATA_DIR)" ]; then
-            echo "Error: $DATA_DIR is empty. Run Data Capture first."
+        if [ -z "$(ls -A "$DATA_DIR/raw" 2>/dev/null)" ]; then
+            echo "Error: $DATA_DIR/raw is empty. Run Data Capture first."
             exit 1
         fi
-        $PYTHON_EXEC "$NODE_DIR/test/playback_test.py" --input-dir "$DATA_DIR" --loop
+        $PYTHON_EXEC "$NODE_DIR/test/playback_test.py" --input-dir "$DATA_DIR/raw" --loop
         ;;
     4)
         echo ""
         echo "resetting radar"
         sudo bash $NODE_DIR/scripts/reset_radar.sh
+        # Clear lockfile so next run re-initializes
+        rm -f "/tmp/chirp_radar_status"
         ;;
 
     5)

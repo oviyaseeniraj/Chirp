@@ -61,10 +61,14 @@ class DataAcquisition:
             self.sockfd.close()
             self.sockfd = None
 
-    def capture(self):
+    def capture(self, timeout=None):
         """
         ABSOLUTE MAXIMUM PERFORMANCE - Nuclear option.
         formerly process_v6
+        
+        Args:
+            timeout (float, optional): Seconds to wait for a frame before raising TimeoutError.
+                                     If None, wait indefinitely (default behavior).
         """
 
         # Setup
@@ -93,11 +97,26 @@ class DataAcquisition:
         e = gc.isenabled()
         gc.disable()
 
+        start_time = time.time()
+
         try:
             while True:
+                # Check for timeout
+                if timeout is not None:
+                    if (time.time() - start_time) > timeout:
+                        raise TimeoutError(f"Timed out waiting for frame data after {timeout}s")
+
                 # Zero-copy receive
                 try:
                     z, _ = s.recvfrom_into(b, config.BUFFER_SIZE)
+                except socket.timeout:
+                    # Socket timeout allows checking the loop condition (and our overall timeout)
+                    # It resets the partial frame state, which is correct for UDP
+                    c = UINT64_MAX
+                    g[:] = 0
+                    n = 0
+                    f = -1
+                    continue
                 except Exception:
                     c = UINT64_MAX
                     g[:] = 0

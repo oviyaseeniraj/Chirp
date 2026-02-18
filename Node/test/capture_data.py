@@ -19,6 +19,7 @@ def main():
     # Capture arguments
     parser.add_argument("--frames", type=int, default=100, help="Number of frames to capture")
     parser.add_argument("--output", type=str, default="data_capture", help="Output directory for captured data")
+    parser.add_argument("--timeout", type=float, default=5.0, help="Timeout in seconds for each frame (default: 5.0)")
     parser.add_argument("--no-raw", action="store_true", help="Do not save raw data")
     parser.add_argument("--no-rdm", action="store_true", help="Do not save processed RDM data")
     
@@ -37,9 +38,9 @@ def main():
         save_rdm = not args.no_rdm
         
         print(f"Starting capture: {args.frames} frames -> {output_dir}")
-        print(f"Saving Raw: {save_raw}, Saving RDM: {save_rdm}")
+        print(f"Saving Raw: {save_raw}, Saving RDM: {save_rdm}, Timeout: {args.timeout}s")
         
-        session.capture_frames(args.frames, save_raw=save_raw, save_rdm=save_rdm)
+        session.capture_frames(args.frames, save_raw=save_raw, save_rdm=save_rdm, timeout=args.timeout)
         
     elif args.convert:
         if not args.input_dir or not args.output_file:

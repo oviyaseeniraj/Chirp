@@ -23,9 +23,15 @@ class CaptureSession:
         logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
         self.logger = logging.getLogger(__name__)
 
-    def capture_frames(self, num_frames, save_raw=True, save_rdm=True):
+    def capture_frames(self, num_frames, save_raw=True, save_rdm=True, timeout=None):
         """
         Captures a specified number of frames and optionally saves raw and/or RDM data.
+        
+        Args:
+            num_frames: Number of frames to capture
+            save_raw: Whether to save raw ADC data
+            save_rdm: Whether to save processed RDM cubes
+            timeout: Timeout in seconds for each frame. None means wait forever.
         """
         self.logger.info(f"Starting capture of {num_frames} frames...")
         
@@ -33,8 +39,13 @@ class CaptureSession:
             try:
                 # 1. Capture Raw Data
                 # daq.capture() returns a uint16 numpy array
-                frame_data = self.daq.capture().copy()
-                
+                try:
+                    frame_data = self.daq.capture(timeout=timeout).copy()
+                except TimeoutError as te:
+                    self.logger.error(f"Timeout capturing frame {i}: {te}")
+                    self.logger.error("Stopping capture due to timeout.")
+                    break
+
                 # 2. Save Raw Data
                 if save_raw:
                     raw_filename = os.path.join(self.raw_dir, f"raw_frame_{i:04d}.npy")

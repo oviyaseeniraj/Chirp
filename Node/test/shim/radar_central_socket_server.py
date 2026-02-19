@@ -12,15 +12,25 @@ app = Flask(__name__)
 # Store latest centroids per node and frame (optional, for debugging)
 latest_data = {}
 
+
+@sio.event
+def connect(sid, environ):
+    print(f"[SERVER] Client connected: {sid}")
+
+@sio.event
+def disconnect(sid):
+    print(f"[SERVER] Client disconnected: {sid}")
+
 @sio.on('send_frame')
 def handle_send_frame(sid, data):
+    node_id = data.get('node_id', 'unknown')
+    frame_num = data.get('frame_num', -1)
+    centroids = data.get('centroids', b'')
+    print(f"[SERVER] Received frame {frame_num} from {node_id} | centroids bytes: {len(centroids)} | sid: {sid}")
     # Broadcast to all connected calibration clients
     sio.emit('send_frame', data)
     # Optionally store for debugging
-    node_id = data.get('node_id', 'unknown')
-    frame_num = data.get('frame_num', -1)
     latest_data[(node_id, frame_num)] = data
-    print(f"Received frame {frame_num} from {node_id} (len={len(data.get('centroids', b''))})")
 
 @app.route('/')
 def index():

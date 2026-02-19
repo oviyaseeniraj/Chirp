@@ -24,8 +24,8 @@ for NODE in "${NODES[@]}"; do
   NODE_ID="${NODE%%:*}"
   IP="${NODE##*:}"
   echo -e "\n--- Connecting to $NODE_ID ($IP) ---"
-  sshpass -p "$NODE_PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 $NODE_USER@$IP \
-    "cd $GIT_REPO_PATH && git switch $GIT_BRANCH && git pull && export NODE_ID=$NODE_ID; nohup python3 $SCRIPT_PATH > ${NODE_ID}_log.txt 2>&1 &" &
+  sshpass -p "$NODE_PASS" ssh -o PreferredAuthentications=password -o PubkeyAuthentication=no -o StrictHostKeyChecking=no -o ConnectTimeout=10 $NODE_USER@$IP \
+    "cd $GIT_REPO_PATH && git switch $GIT_BRANCH && git pull && export NODE_ID=$NODE_ID; echo $NODE_PASS | sudo -S bash Node/scripts/start_radar.sh && nohup python3 $SCRIPT_PATH > ${NODE_ID}_log.txt 2>&1 &" &
 done
 
 # Wait a few seconds for nodes to start

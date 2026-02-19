@@ -4,12 +4,11 @@
 
 echo "\n--- Starting real-time spatial calibration on this machine ---"
 
-# List of nodes (hostname:IP)
+# List of nodes (hostname:IP) - updated to tien1, tien2, tien4
 NODES=(
-  "tien-desktop:169.231.105.114"
-  "chirp1:169.231.200.9"
-  "chirp2:169.231.117.140"
-  "chirp3:169.231.86.85"
+  "tien1:169.231.200.9"
+  "tien3:169.231.86.85"
+  "tien4:169.231.105.114"
 )
 
 SCRIPT_PATH="/Users/oseeniraj/Chirp-1/Node/test/shim/main-newp3d.py"

@@ -9,7 +9,7 @@
 #define PULSE_PERIOD 100  // Period in milliseconds
 
 // Networking (used by networked_trigger.c)
-#define MASTER_IP "169.231.42.44"
+#define MASTER_IP "169.231.38.239"
 #define MASTER_PORT 1210
 #define SYNC_INTERVAL_SEC 5
 

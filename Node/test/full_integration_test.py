@@ -46,8 +46,8 @@ def daq_process(raw_queue):
     with DataAcquisition() as daq:
         while True:
             try:
-                # Capture frame (nuclear option)
-                frame_data = daq.capture()
+                # Capture frame (nuclear option) with 5s timeout
+                frame_data = daq.capture(timeout=5.0)
 
                 # Push to queue (non-blocking, drop if full)
                 try:
@@ -56,6 +56,9 @@ def daq_process(raw_queue):
                 except mp.queues.Full:
                     pass  # Drop frame if processing is too slow
 
+            except TimeoutError:
+                print("DAQ Timeout: No frame received.")
+                continue
             except Exception as e:
                 print(f"DAQ Error: {e}")
                 time.sleep(0.1)

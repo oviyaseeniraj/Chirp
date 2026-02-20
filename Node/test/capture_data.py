@@ -19,7 +19,7 @@ def main():
     # Capture arguments
     parser.add_argument("--frames", type=int, default=100, help="Number of frames to capture")
     parser.add_argument("--output", type=str, default="data_capture", help="Output directory for captured data")
-    parser.add_argument("--timeout", type=float, default=None, help="Timeout in seconds for each frame (default: indefinite)")
+    parser.add_argument("--timeout", type=float, default=5, help="Timeout in seconds for each frame (default: 5s)")
     parser.add_argument("--no-raw", action="store_true", help="Do not save raw data")
     parser.add_argument("--no-rdm", action="store_true", help="Do not save processed RDM data")
     

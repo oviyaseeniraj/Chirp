@@ -43,8 +43,7 @@ class CaptureSession:
                     frame_data = self.daq.capture(timeout=timeout).copy()
                 except TimeoutError as te:
                     self.logger.error(f"Timeout capturing frame {i}: {te}")
-                    self.logger.error("Stopping capture due to timeout.")
-                    break
+                    continue
 
                 # 2. Save Raw Data
                 if save_raw:

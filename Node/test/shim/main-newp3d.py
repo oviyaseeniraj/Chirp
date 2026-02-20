@@ -114,7 +114,7 @@ from new_pipe.rdm import RangeDoppler
 
 # ================= CONFIG =================
 import socket
-SERVER_URL = os.getenv("SERVER_URL", "http://169.231.42.35:5001")
+SERVER_URL = os.getenv("SERVER_URL", "http://http://127.0.0.1:5001")
 NODE_ID = os.getenv("NODE_ID", socket.gethostname())
 RAW_QUEUE_SIZE = 5  # queue between DAQ and processing (smaller = lower latency)
 PROCESSED_QUEUE_SIZE = 2  # queue between processing and socket (real-time)

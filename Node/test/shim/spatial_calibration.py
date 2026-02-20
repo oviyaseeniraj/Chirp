@@ -132,5 +132,16 @@ def on_send_frame(data):
 def disconnect():
     print("Disconnected from data stream.")
 if __name__ == "__main__":
-    sio.connect('http://127.0.0.1:5001')
+    # Connect to all node Socket.IO servers for spatial calibration
+    NODE_IPS = [
+        '169.231.200.9',  # tien1
+        '169.231.86.85',  # tien3
+        '169.231.105.114' # tien4
+    ]
+    for ip in NODE_IPS:
+        try:
+            sio.connect(f'http://{ip}:5001')
+            print(f"Connected to node server at {ip}:5001")
+        except Exception as e:
+            print(f"Failed to connect to node server at {ip}:5001: {e}")
     sio.wait()

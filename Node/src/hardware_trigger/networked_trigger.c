@@ -12,11 +12,8 @@
 #include <string.h>
 #include <errno.h>
 #include <fcntl.h>
+#include "config.h"
 
-#define OUTPUT_PIN 8
-#define MASTER_IP "169.231.42.44"
-#define MASTER_PORT 1210
-#define SYNC_INTERVAL_SEC 5
 
 int main(int argc, char *argv[])
 {
@@ -116,7 +113,7 @@ int main(int argc, char *argv[])
   next_trigger.tv_nsec = 0;
 
   gpioWrite(OUTPUT_PIN, 0);
-  printf("Starting synchronized trigger every 100ms at %ld.000000000...\n", consensus_sec);
+  printf("Starting synchronized trigger every %dms at %ld.000000000...\n", PULSE_PERIOD, consensus_sec);
 
   int x = 0;
   while (1) {
@@ -144,8 +141,8 @@ int main(int argc, char *argv[])
         // Optional: handle disconnection, e.g., continue pulsing or exit
     }
 
-    // Calculate next 100ms boundary
-    next_trigger.tv_nsec += 100000000;
+    // Calculate next boundary
+    next_trigger.tv_nsec += (long)PULSE_PERIOD * 1000000;
     if (next_trigger.tv_nsec >= 1000000000) {
         next_trigger.tv_nsec -= 1000000000;
         next_trigger.tv_sec += 1;

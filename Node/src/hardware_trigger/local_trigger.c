@@ -12,10 +12,8 @@
 #include <time.h>
 #include <sched.h>
 #include <sys/mman.h>
+#include "config.h"
 
-#define OUTPUT_PIN 8
-#define PULSE_WIDTH_NS 50
-#define PULSE_PERIOD_US 60e3
 
 int main(int argc, char *argv[])
 {
@@ -76,15 +74,15 @@ int main(int argc, char *argv[])
   struct timespec next_trigger;
   clock_gettime(CLOCK_REALTIME, &next_trigger);
   
-  // Round up to the next 100ms boundary
-  next_trigger.tv_nsec = (next_trigger.tv_nsec / 100000000 + 1) * 100000000;
+  // Round up to the next boundary
+  next_trigger.tv_nsec = (next_trigger.tv_nsec / ((long)PULSE_PERIOD * 1000000) + 1) * ((long)PULSE_PERIOD * 1000000);
   if (next_trigger.tv_nsec >= 1000000000) {
       next_trigger.tv_nsec -= 1000000000;
       next_trigger.tv_sec += 1;
   }
 
   gpioWrite(OUTPUT_PIN, 0);
-  printf("Starting synchronized trigger every 100ms...\n");
+  printf("Starting synchronized trigger every %dms...\n", PULSE_PERIOD);
 
   while (1) {
     // Wait for the next 100ms boundary
@@ -94,8 +92,8 @@ int main(int argc, char *argv[])
     gpioWrite(OUTPUT_PIN, 1);
     gpioWrite(OUTPUT_PIN, 0);
 
-    // Calculate next 100ms boundary
-    next_trigger.tv_nsec += 100000000;
+    // Calculate next boundary
+    next_trigger.tv_nsec += (long)PULSE_PERIOD * 1000000;
     if (next_trigger.tv_nsec >= 1000000000) {
         next_trigger.tv_nsec -= 1000000000;
         next_trigger.tv_sec += 1;

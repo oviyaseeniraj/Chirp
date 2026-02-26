@@ -109,11 +109,107 @@ def closed_form_calibration(calibration_data):
             theta_opt[i, k] = np.rad2deg(-phi)
             P_opt[i, k] = z_i_mean - np.exp(-1j * phi) * z_k_mean
     return P_opt, theta_opt
+from collections import defaultdict
+import threading
+
+# -------- Calibration Manager --------
+class CalibrationManager:
+    def __init__(self, num_nodes=4, calibration_window=50):
+        self.num_nodes = num_nodes
+        self.calibration_window = calibration_window
+        self.node_data = defaultdict(lambda: defaultdict(list))  # node_id -> frame_num -> detections
+        self.lock = threading.Lock()
+
+    def add_detection(self, node_id, frame_num, detection_coords):
+        with self.lock:
+            self.node_data[node_id][frame_num].append(detection_coords)
+
+    def check_ready(self):
+        with self.lock:
+            # Find frames present in all nodes
+            frame_sets = [set(frames.keys()) for frames in self.node_data.values()]
+            if len(frame_sets) < self.num_nodes:
+                return None
+            common_frames = set.intersection(*frame_sets)
+            # Only calibrate if enough frames
+            if len(common_frames) >= self.calibration_window:
+                return sorted(list(common_frames))[-self.calibration_window:]
+            return None
+
+    def get_calibration_data(self, frames):
+        with self.lock:
+            # Returns: node_id -> [detections for each frame]
+            calibration_data = {}
+            for node_id in self.node_data:
+                calibration_data[node_id] = []
+                for frame_num in frames:
+                    # Flatten detections for this frame
+                    detections = self.node_data[node_id][frame_num]
+                    if detections:
+                        calibration_data[node_id].append(np.concatenate(detections, axis=0))
+                    else:
+                        calibration_data[node_id].append(np.array([]))
+            return calibration_data
+
+    def clear_calibration_frames(self, frames):
+        with self.lock:
+            for node_id in self.node_data:
+                for frame_num in frames:
+                    if frame_num in self.node_data[node_id]:
+                        del self.node_data[node_id][frame_num]
+
+# -------- Closed-Form Calibration --------
+def closed_form_calibration(calibration_data):
+    """
+    calibration_data: dict of node_id -> [trajectory (complex) for each frame]
+    Returns: position and orientation matrices
+    """
+    node_ids = list(calibration_data.keys())
+    num_nodes = len(node_ids)
+    num_frames = len(calibration_data[node_ids[0]])
+    # Build trajectory matrix: shape (num_nodes, num_frames)
+    trajectory = np.zeros((num_nodes, num_frames), dtype=np.complex64)
+    for i, node_id in enumerate(node_ids):
+        for t in range(num_frames):
+            # Use centroid of detections for each frame
+            dets = calibration_data[node_id][t]
+            if dets.size == 0:
+                trajectory[i, t] = np.nan
+            else:
+                # Convert range, angle to complex position
+                # dets shape: (n, 3) [range_bin, doppler_bin, angle]
+                # Use mean range and angle
+                mean_range = np.mean(dets[:,0])
+                mean_angle = np.mean(dets[:,2])
+                trajectory[i, t] = mean_range * np.exp(1j * mean_angle)
+
+    # Remove frames with NaN
+    valid_mask = ~np.isnan(trajectory).any(axis=0)
+    trajectory = trajectory[:, valid_mask]
+    num_frames = trajectory.shape[1]
+    if num_frames == 0:
+        return None, None
+
+    # Closed-form calibration
+    P_opt = np.zeros((num_nodes, num_nodes), dtype=np.complex64)
+    theta_opt = np.zeros((num_nodes, num_nodes))
+    for i in range(num_nodes):
+        for k in range(num_nodes):
+            z_i = trajectory[i, :]
+            z_k = trajectory[k, :]
+            z_i_mean = np.mean(z_i)
+            z_k_mean = np.mean(z_k)
+            val = np.sum((z_k - z_k_mean) * np.conj(z_i - z_i_mean))
+            phi = np.arctan2(val.imag, val.real)
+            theta_opt[i, k] = np.rad2deg(-phi)
+            P_opt[i, k] = z_i_mean - np.exp(-1j * phi) * z_k_mean
+    return P_opt, theta_opt
 from new_pipe.cfar import cfar_pytorch
 from new_pipe.daqv3 import DataAcquisition
 from new_pipe.rdm import RangeDoppler
 
 # ================= CONFIG =================
+SERVER_URL = "http://169.231.42.35:5001"
 SERVER_URL = "http://169.231.42.35:5001"
 RAW_QUEUE_SIZE = 5  # queue between DAQ and processing (smaller = lower latency)
 PROCESSED_QUEUE_SIZE = 2  # queue between processing and socket (real-time)
@@ -299,6 +395,8 @@ def daq_process(raw_queue):
 
 
 def processing_process(raw_queue, processed_queue):
+    #input: centroid contains range, doppler, angle
+    #output contains: [x, y, vx, vy]
         def create_ekf():
             # State: [range, doppler, angle, vx, vy, omega]
             ekf = ExtendedKalmanFilter(dim_x=6, dim_z=3)
@@ -333,16 +431,30 @@ def processing_process(raw_queue, processed_queue):
 
         def apply_ekf_to_centroids(centroids, node_id='default'):
             # centroids: list/array of (range, doppler, angle)
+            # Output: [x, y, vx, vy] in Cartesian coordinates
             if centroids is None or len(centroids) == 0:
-                return centroids
+                return np.array([]).reshape(0, 4)
             ekf = ekf_dict[node_id]
             filtered = []
             for c in centroids:
                 z = np.array([c[0], c[1], c[2]])  # [range, doppler, angle]
                 ekf.predict()
                 ekf.update(z)
-                # Output: [range, doppler, angle] (filtered), vx, vy, omega
-                filtered.append([ekf.x[0], ekf.x[1], ekf.x[2], ekf.x[3], ekf.x[4], ekf.x[5]])
+                # Extract state: [range, doppler, angle, vx_polar, vy_polar, omega]
+                range_val = ekf.x[0]
+                angle_val = ekf.x[2]
+                vx_polar = ekf.x[3]
+                vy_polar = ekf.x[4]
+                
+                # Convert to Cartesian coordinates
+                x = range_val * np.cos(angle_val)
+                y = range_val * np.sin(angle_val)
+                # Velocity in Cartesian frame (approximate radial velocity in polar to vx, vy)
+                vx = vx_polar * np.cos(angle_val) - vy_polar * np.sin(angle_val)
+                vy = vx_polar * np.sin(angle_val) + vy_polar * np.cos(angle_val)
+                
+                # Output: [x, y, vx, vy]
+                filtered.append([x, y, vx, vy])
             return np.array(filtered, dtype=np.float32)
 
         
@@ -363,6 +475,12 @@ def processing_process(raw_queue, processed_queue):
     m_angle_data = np.zeros((RANGE_BINS, DOPPLER_BINS), dtype=np.float32)
     m_cluster_data = np.zeros((RANGE_BINS, DOPPLER_BINS), dtype=np.float32)
 
+    import pickle
+    node_id = os.getenv('NODE_ID', 'node1')
+    calibration_save_file = f"calibration_data_{node_id}.pkl"
+    calibration_data_dict = {}
+    save_interval = 10  # Save every N frames
+    frame_num = 0
     import pickle
     node_id = os.getenv('NODE_ID', 'node1')
     calibration_save_file = f"calibration_data_{node_id}.pkl"
@@ -398,6 +516,7 @@ def processing_process(raw_queue, processed_queue):
         frame = rdm.process().reshape(64, 512)
         clean_rdm = rdm.get_clean_rdm()
         t2 = time.perf_counter_ns()
+        frame_num += 1
         frame_num += 1
 
         # Apply CFAR
@@ -437,22 +556,22 @@ def processing_process(raw_queue, processed_queue):
         detection_coords_3d, detection_power = create_3d_detection_map_spatial(
             cfar_data, angle_data, frame
         )
+
         t4b = time.perf_counter_ns()
 
         dbscan_data_2d, dbscan_angles, centroids = dbscan_process(detection_coords_3d, cfar_data.shape)
 
         # Apply EKF to centroids immediately after extraction
+        # centroids_ekf output: [x, y, vx, vy] in Cartesian coordinates
         centroids_ekf = apply_ekf_to_centroids(centroids, node_id=node_id)
-        # For downstream compatibility, use only [range, doppler, angle] for centroid_map
-        centroids_for_map = centroids_ekf[:, :3] if centroids_ekf is not None and len(centroids_ekf) > 0 and centroids_ekf.shape[1] >= 3 else centroids_ekf
+        
+        # For visualization, continue using original centroids mapped to 2D
+        centroids_map, centroids_angles = centroid_process(centroids, cfar_data.shape)
 
-        t4c = time.perf_counter_ns()
-
-        centroids_map, centroids_angles = centroid_process(centroids_for_map, cfar_data.shape)
-
-        # --- Calibration Data Hook (save EKF-filtered centroids) ---
+        # --- Calibration Data Hook (save EKF-filtered centroids in Cartesian) ---
+        # Store [x, y, vx, vy] for real-time calibration
         if centroids_ekf is not None and len(centroids_ekf) > 0:
-            calibration_data_dict[frame_num] = np.array(centroids_ekf[:, :3])
+            calibration_data_dict[frame_num] = np.array(centroids_ekf)
         if frame_num % save_interval == 0 and len(calibration_data_dict) > 0:
             with open(calibration_save_file, 'wb') as f:
                 pickle.dump(calibration_data_dict, f)
@@ -492,6 +611,8 @@ def processing_process(raw_queue, processed_queue):
             "dbscan_data_2d": dbscan_data_2d,
             "detection_coords": detection_coords_3d if len(detection_coords_3d) > 0 else np.array([]),
             "centroids_ekf": centroids_ekf if centroids_ekf is not None and len(centroids_ekf) > 0 else np.array([]),
+            "node_id": node_id,
+            "frame_num": frame_num,
         }
 
         # Non-blocking put - drop current frame if queue full
@@ -548,6 +669,10 @@ def socket_process(processed_queue):
                     "angles": frame["angles"][:, :512].tobytes(),
                     "cfar": frame["cfar"][:, :512].tobytes(),
                     "dbscan_data_2d": frame["dbscan_data_2d"][:, :512].tobytes(),
+                    # Send EKF-filtered centroids to spatial_calibration
+                    "centroids_ekf": frame["centroids_ekf"].tobytes() if frame["centroids_ekf"].size > 0 else b'',
+                    "node_id": frame["node_id"],
+                    "frame_num": frame["frame_num"],
                 },
             )
         except Exception as e:

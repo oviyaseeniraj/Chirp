@@ -138,7 +138,14 @@ case $test_choice in
             echo "Error: $DATA_DIR/raw is empty. Run Data Capture first."
             exit 1
         fi
-        $PYTHON_EXEC "$NODE_DIR/test/playback_test.py" --input-dir "$DATA_DIR/raw" --loop
+        
+        read -p "Visualize Clusters Only? (y/N): " clusters_only
+        CLUSTERS_FLAG=""
+        if [[ "$clusters_only" =~ ^[Yy]$ ]]; then
+            CLUSTERS_FLAG="--clusters-only"
+        fi
+
+        $PYTHON_EXEC "$NODE_DIR/test/playback_test.py" --input-dir "$DATA_DIR/raw" --loop $CLUSTERS_FLAG
         ;;
     4)
         echo ""

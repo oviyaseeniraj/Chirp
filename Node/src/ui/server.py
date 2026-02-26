@@ -160,6 +160,8 @@ def process_frame(data):
     payload = {
         "image": image_data,
         "detections": detections,
+        "cluster_count": data.get("cluster_count", 0),
+        "clusters": data.get("clusters", []),
         "mime": "image/jpeg"
     }
     return payload, proc_time

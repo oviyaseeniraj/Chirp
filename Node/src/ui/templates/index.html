@@ -38,11 +38,13 @@
             pointer-events: none;
         }
 
-        #range-angle-container {
-            display: none;
+        #range-angle-container,
+        #cluster-container {
+            margin-top: 20px;
         }
 
-        #range-angle-canvas {
+        #range-angle-canvas,
+        #cluster-canvas {
             border: 1px solid #333;
             background-color: #1a1a1a;
         }
@@ -79,6 +81,9 @@
     <div id="legend">
         <div style="color: #ff6666;">● Detection Point</div>
         <div style="color: #ffff66;">Angle (degrees)</div>
+        <div style="margin-top: 8px;">Cluster Markers:</div>
+        <div style="color: #00ffff; border: 1px solid #00ffff; display: inline-block; width: 10px; height: 10px;"></div>
+        3D Cluster Mean
         <div style="margin-top: 8px;">Range-Angle Plot:</div>
         <div style="color: #00ff00;">Size = Velocity</div>
     </div>
@@ -124,9 +129,12 @@
             </div>
         </div>
 
-        <div id="range-angle-container" style="display: {{ 'block' if show_range_angle_plot else 'none' }}">
-            <canvas id="range-angle-canvas" width="{{ range_angle_plot_width }}"
-                height="{{ range_angle_plot_height }}"></canvas>
+        <div id="side-plots">
+            <div id="range-angle-container" style="display: {{ 'block' if show_range_angle_plot else 'none' }}">
+                <div style="color: #888; margin-bottom: 5px;">RANGE-ANGLE (Detections)</div>
+                <canvas id="range-angle-canvas" width="{{ range_angle_plot_width }}"
+                    height="{{ range_angle_plot_height }}"></canvas>
+            </div>
         </div>
     </div>
 
@@ -137,6 +145,7 @@
         let lastFrameTime = Date.now();
         let latency = 0;
         let detectionCount = 0;
+        let clusterCount = 0;
 
         const plotCanvas = document.getElementById('plot-canvas');
         const overlayCanvas = document.getElementById('overlay-canvas');
@@ -146,13 +155,16 @@
         const rangeAngleCanvas = document.getElementById('range-angle-canvas');
         const rangeAngleCtx = rangeAngleCanvas ? rangeAngleCanvas.getContext('2d') : null;
 
+        const clusterCanvas = document.getElementById('cluster-canvas');
+        const clusterCtx = clusterCanvas ? clusterCanvas.getContext('2d') : null;
+
         // Update FPS display
         setInterval(() => {
             const now = Date.now();
             const delta = (now - lastTime) / 1000;
             const fps = (frameCount / delta).toFixed(1);
             document.getElementById('fps-display').textContent =
-                `FPS: ${fps} | Latency: ${latency}ms | Detections: ${detectionCount}`;
+                `FPS: ${fps} | Latency: ${latency}ms | Clusters: ${clusterCount} | Detections: ${detectionCount}`;
             frameCount = 0;
             lastTime = now;
         }, 1000);
@@ -303,6 +315,95 @@
             }
         }
 
+        function drawClusters(clusters) {
+            if (!clusters || clusters.length === 0) return;
+
+            // 1. Draw on RDM Overlay
+            clusters.forEach(cluster => {
+                // doppler_idx is row (0-63), range_idx is col (0-511)
+                // x = doppler_idx * 8, y = 511 - range_idx
+                const x = cluster.doppler_idx * 8;
+                const y = 511 - cluster.range_idx;
+
+                overlayCtx.strokeStyle = '#00ffff';
+                overlayCtx.lineWidth = 1;
+                overlayCtx.strokeRect(x - 5, y - 5, 10, 10);
+
+                overlayCtx.fillStyle = '#00ffff';
+                overlayCtx.font = '10px Courier New';
+                overlayCtx.fillText(`ID:${cluster.id}`, x + 7, y - 7);
+            });
+
+            // 2. Draw on Cluster Canvas
+            if (clusterCtx) {
+                // Axes and Grid
+                ctx.strokeStyle = '#333';
+                ctx.lineWidth = 1;
+
+                // Draw Grid
+                for (let i = 0; i <= 4; i++) {
+                    const gx = margin + (i / 4) * plotWidth;
+                    ctx.beginPath();
+                    ctx.moveTo(gx, margin);
+                    ctx.lineTo(gx, height - margin);
+                    ctx.stroke();
+
+                    const gy = margin + (i / 4) * plotHeight;
+                    ctx.beginPath();
+                    ctx.moveTo(margin, gy);
+                    ctx.lineTo(width - margin, gy);
+                    ctx.stroke();
+                }
+
+                // Main Axes
+                ctx.strokeStyle = '#888';
+                ctx.beginPath();
+                ctx.moveTo(margin, margin);
+                ctx.lineTo(margin, height - margin);
+                ctx.lineTo(width - margin, height - margin);
+                ctx.stroke();
+
+                // Labels
+                ctx.fillStyle = '#aaa';
+                ctx.font = '10px Courier New';
+                ctx.textAlign = 'center';
+                ctx.fillText('ANGLE (deg)', width / 2, height - 10);
+
+                ctx.save();
+                ctx.translate(15, height / 2);
+                ctx.rotate(-Math.PI / 2);
+                ctx.fillText('RANGE (bins)', 0, 0);
+                ctx.restore();
+
+                // Ticks
+                ['-90', '0', '90'].forEach((label, i) => {
+                    ctx.fillText(label, margin + (i / 2) * plotWidth, height - margin + 15);
+                });
+
+                ctx.textAlign = 'right';
+                ['512', '256', '0'].forEach((label, i) => {
+                    ctx.fillText(label, margin - 5, margin + (i / 2) * plotHeight + 5);
+                });
+
+                ctx.textAlign = 'left';
+
+                clusters.forEach(cluster => {
+                    const x = margin + ((cluster.angle_deg + 90) / 180) * plotWidth;
+                    const y = margin + (1 - cluster.range_idx / 512) * plotHeight;
+                    const size = Math.min(10, 3 + (cluster.mass / 50));
+
+                    ctx.fillStyle = '#00ffff';
+                    ctx.beginPath();
+                    ctx.arc(x, y, size, 0, 2 * Math.PI);
+                    ctx.fill();
+
+                    ctx.fillStyle = '#ffffff';
+                    ctx.font = '9px Courier New';
+                    ctx.fillText(`C${cluster.id}`, x + size + 2, y);
+                });
+            }
+        }
+
         function drawDetections(detections) {
             // Clear overlay
             overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
@@ -314,8 +415,6 @@
 
             detections.forEach(detection => {
                 const { x, y, angle } = detection;
-
-                return;
 
                 // Draw detection marker (red circle)
                 overlayCtx.strokeStyle = '#ff6666';
@@ -369,6 +468,14 @@
                 if (data.detections) {
                     drawDetections(data.detections);
                     drawRangeAnglePlot(data.detections);
+                }
+
+                if (data.clusters) {
+                    drawClusters(data.clusters);
+                }
+
+                if (data.cluster_count !== undefined) {
+                    clusterCount = data.cluster_count;
                 }
 
                 frameCount++;

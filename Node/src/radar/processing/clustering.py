@@ -474,9 +474,9 @@ def dbscan_process(detection_coords, shape):
             angle = coord[2]
 
             # Ensure indices are within bounds
-            if 0 <= range_idx < shape[0] and 0 <= doppler_idx < shape[1]:
-                dbscan_data_2d[range_idx, doppler_idx] = label
-                dbscan_angles[range_idx, doppler_idx] = angle
+            if 0 <= doppler_idx < shape[0] and 0 <= range_idx < shape[1]:
+                dbscan_data_2d[doppler_idx, range_idx] = label
+                dbscan_angles[doppler_idx, range_idx] = angle
 
     else:
         dbscan_data_2d = np.zeros(shape, dtype=np.int32)
@@ -534,8 +534,8 @@ def centroid_process(centroids, shape):
         
         # Assign cluster labels to maps
         for label_idx, (range_idx, doppler_idx) in enumerate(centroids_3d_for_indexing):
-            centroids_map[range_idx, doppler_idx] = cluster_labels[label_idx]
-            centroids_angles[range_idx, doppler_idx] = centroids_3d_angles[label_idx]
+            centroids_map[doppler_idx, range_idx] = cluster_labels[label_idx]
+            centroids_angles[doppler_idx, range_idx] = centroids_3d_angles[label_idx]
 
     centroids_map[32, :] = 0
     centroids_angles[32, :] = 0

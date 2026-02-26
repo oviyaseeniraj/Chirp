@@ -29,18 +29,17 @@ def create_3d_detection_map_spatial(cfar_data, angle_data, rdm_power):
     Returns [range_bin, doppler_bin, angle]
     """
     detection_mask = cfar_data > 0
-    range_indices, doppler_indices = np.where(detection_mask)
+    doppler_indices, range_indices = np.where(detection_mask)
 
-    if len(range_indices) == 0:
+    if len(doppler_indices) == 0:
         return np.array([]).reshape(0, 3), np.array([])
 
-    angle_values = angle_data[range_indices, doppler_indices]
+    angle_values = angle_data[doppler_indices, range_indices]
 
     detection_coords = np.column_stack(
         [range_indices, doppler_indices, angle_values]
     ).astype(np.float32)
-
-    detection_power = rdm_power[range_indices, doppler_indices]
+    detection_power = rdm_power[doppler_indices, range_indices]
 
     return detection_coords, detection_power
 
@@ -212,6 +211,20 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
             final_cfar = centroids_map if visualize_clusters_only else cfar_data
             final_angles = centroids_angles if visualize_clusters_only else angle_data
 
+            # Prepare cluster metadata for the visualizer
+            clusters_meta = []
+            if centroids:
+                for label, (centroid_vec, mass) in centroids.items():
+                    c = centroid_vec.cpu().numpy()
+                    clusters_meta.append({
+                        "id": int(label),
+                        "range_idx": float(c[0]),
+                        "doppler_idx": float(c[1]),
+                        "angle_rad": float(c[2]),
+                        "angle_deg": float(np.rad2deg(c[2])),
+                        "mass": int(mass)
+                    })
+
             output_data = {
                 "node_id": node_id,
                 "timestamp": int(time.time() * 1000),
@@ -219,6 +232,8 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
                 "array": final_array.astype(np.float32).tobytes(),
                 "angles": final_angles.astype(np.float32).tobytes() if final_angles is not None else b"",
                 "cfar": final_cfar.astype(np.float32).tobytes() if final_cfar is not None else b"",
+                "cluster_count": len(centroids) if centroids else 0,
+                "clusters": clusters_meta,
                 # Additional keys for internal tracking or alternative consumers
                 "rdm_centroids": centroids_map,
                 "dbscan_2d": dbscan_data_2d
@@ -282,11 +297,11 @@ def socket_process(processed_queue, server_url, node_id):
             sio.emit("send_frame", {
                 "node_id": node_id,
                 "frame_num": data.get("timestamp", int(time.time() * 1000)),
-                "centroids": data.get("centroids", b""),
                 "array": data.get("array", b""),
                 "angles": data.get("angles", b""),
                 "cfar": data.get("cfar", b""),
-                "dbscan_data_2d": data.get("dbscan_2d", np.array([])).astype(np.float32).tobytes() if isinstance(data.get("dbscan_2d"), np.ndarray) else b""
+                "cluster_count": data.get("cluster_count", 0),
+                "clusters": data.get("clusters", []),
             })
         except Exception as e:
             print(f"[SOCKET] Send error: {e}")

@@ -1,3 +1,5 @@
+from filterpy.kalman import ExtendedKalmanFilter
+from filterpy.common import Q_discrete_white_noise
 import math
 import os
 import time
@@ -111,11 +113,8 @@ from new_pipe.cfar import cfar_pytorch
 from new_pipe.daqv3 import DataAcquisition
 from new_pipe.rdm import RangeDoppler
 
-
 # ================= CONFIG =================
-import socket
-SERVER_URL = os.getenv("SERVER_URL", "http://http://127.0.0.1:5001")
-NODE_ID = os.getenv("NODE_ID", socket.gethostname())
+SERVER_URL = "http://169.231.42.35:5001"
 RAW_QUEUE_SIZE = 5  # queue between DAQ and processing (smaller = lower latency)
 PROCESSED_QUEUE_SIZE = 2  # queue between processing and socket (real-time)
 TARGET_FPS = 10  # limit processing loop speed
@@ -300,6 +299,53 @@ def daq_process(raw_queue):
 
 
 def processing_process(raw_queue, processed_queue):
+        def create_ekf():
+            # State: [range, doppler, angle, vx, vy, omega]
+            ekf = ExtendedKalmanFilter(dim_x=6, dim_z=3)
+            ekf.x = np.zeros(6)
+            ekf.P *= 10.
+            # State transition: constant velocity + angular velocity
+            ekf.F = np.array([
+                [1,0,0,1,0,0],  # range += vx
+                [0,1,0,0,1,0],  # doppler += vy
+                [0,0,1,0,0,1],  # angle += omega
+                [0,0,0,1,0,0],  # vx
+                [0,0,0,0,1,0],  # vy
+                [0,0,0,0,0,1],  # omega
+            ])
+            ekf.Q = np.eye(6) * 0.01
+            # Measurement noise from dbscan tuning
+            sigma_range = 0.035
+            sigma_doppler = 0.2  # For 64 chirps per frame
+            sigma_azimuth = np.pi / 4
+            measurement_noise = np.array(
+                [[sigma_range**2, 0, 0], [0, sigma_doppler**2, 0], [0, 0, sigma_azimuth**2]]
+            )
+            ekf.R = measurement_noise
+            ekf.H = np.array([
+                [1,0,0,0,0,0],  # range
+                [0,1,0,0,0,0],  # doppler
+                [0,0,1,0,0,0],  # angle
+            ])
+            return ekf
+
+        ekf_dict = defaultdict(lambda: create_ekf())
+
+        def apply_ekf_to_centroids(centroids, node_id='default'):
+            # centroids: list/array of (range, doppler, angle)
+            if centroids is None or len(centroids) == 0:
+                return centroids
+            ekf = ekf_dict[node_id]
+            filtered = []
+            for c in centroids:
+                z = np.array([c[0], c[1], c[2]])  # [range, doppler, angle]
+                ekf.predict()
+                ekf.update(z)
+                # Output: [range, doppler, angle] (filtered), vx, vy, omega
+                filtered.append([ekf.x[0], ekf.x[1], ekf.x[2], ekf.x[3], ekf.x[4], ekf.x[5]])
+            return np.array(filtered, dtype=np.float32)
+
+        
     """Process raw data through RDM, CFAR, angle estimation, and 3D DBSCAN"""
     # Pin to CPU core 1
     psutil.Process(os.getpid()).cpu_affinity([1])
@@ -391,22 +437,25 @@ def processing_process(raw_queue, processed_queue):
         detection_coords_3d, detection_power = create_3d_detection_map_spatial(
             cfar_data, angle_data, frame
         )
-        # --- Calibration Data Hook (after centroids computation) ---
-        # Save centroids for calibration (range, doppler, angle)
-        if centroids is not None and len(centroids) > 0:
-            # centroids: list of (range, doppler, angle)
-            calibration_data_dict[frame_num] = np.array(centroids)
-        if frame_num % save_interval == 0 and len(calibration_data_dict) > 0:
-            with open(calibration_save_file, 'wb') as f:
-                pickle.dump(calibration_data_dict, f)
-
         t4b = time.perf_counter_ns()
 
         dbscan_data_2d, dbscan_angles, centroids = dbscan_process(detection_coords_3d, cfar_data.shape)
 
+        # Apply EKF to centroids immediately after extraction
+        centroids_ekf = apply_ekf_to_centroids(centroids, node_id=node_id)
+        # For downstream compatibility, use only [range, doppler, angle] for centroid_map
+        centroids_for_map = centroids_ekf[:, :3] if centroids_ekf is not None and len(centroids_ekf) > 0 and centroids_ekf.shape[1] >= 3 else centroids_ekf
+
         t4c = time.perf_counter_ns()
 
-        centroids_map, centroids_angles = centroid_process(centroids, cfar_data.shape)
+        centroids_map, centroids_angles = centroid_process(centroids_for_map, cfar_data.shape)
+
+        # --- Calibration Data Hook (save EKF-filtered centroids) ---
+        if centroids_ekf is not None and len(centroids_ekf) > 0:
+            calibration_data_dict[frame_num] = np.array(centroids_ekf[:, :3])
+        if frame_num % save_interval == 0 and len(calibration_data_dict) > 0:
+            with open(calibration_save_file, 'wb') as f:
+                pickle.dump(calibration_data_dict, f)
 
         #print(dbscan_data_2d)
         t5 = time.perf_counter_ns()
@@ -441,10 +490,8 @@ def processing_process(raw_queue, processed_queue):
             "cfar": centroids_map,
             "angles": centroids_angles,
             "dbscan_data_2d": dbscan_data_2d,
-            "detection_coords": detection_coords_3d
-            #"cluster_labels": cluster_labels_3d
-            if len(detection_coords_3d) > 0
-            else np.array([]),
+            "detection_coords": detection_coords_3d if len(detection_coords_3d) > 0 else np.array([]),
+            "centroids_ekf": centroids_ekf if centroids_ekf is not None and len(centroids_ekf) > 0 else np.array([]),
         }
 
         # Non-blocking put - drop current frame if queue full
@@ -497,9 +544,10 @@ def socket_process(processed_queue):
             sio.emit(
                 "send_frame",
                 {
-                    "node_id": NODE_ID,
-                    "frame_num": int(time.time() * 1000),
-                    "centroids": frame["detection_coords"].astype(np.float32).tobytes() if len(frame["detection_coords"]) > 0 else b"",
+                    "array": frame["rdm"][:, :512].tobytes(),
+                    "angles": frame["angles"][:, :512].tobytes(),
+                    "cfar": frame["cfar"][:, :512].tobytes(),
+                    "dbscan_data_2d": frame["dbscan_data_2d"][:, :512].tobytes(),
                 },
             )
         except Exception as e:

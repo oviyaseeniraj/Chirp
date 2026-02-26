@@ -18,9 +18,10 @@ class RealTimeCalibrationManager:
 
 
     def add_detection(self, node_id, frame_num, centroids):
-        # centroids: np.ndarray of shape (n, 3) [range, doppler, angle]
+        # centroids: np.ndarray of shape (n, 4) [x, y, vx, vy] from EKF in Cartesian coordinates
         with self.lock:
             self.node_data[node_id][frame_num].append(centroids)
+    
     def check_ready(self):
         with self.lock:
             frame_sets = [set(frames.keys()) for frames in self.node_data.values()]
@@ -30,6 +31,7 @@ class RealTimeCalibrationManager:
             if len(common_frames) >= self.calibration_window:
                 return sorted(list(common_frames))[-self.calibration_window:]
             return None
+    
     def get_calibration_data(self, frames):
         with self.lock:
             calibration_data = {}
@@ -42,6 +44,7 @@ class RealTimeCalibrationManager:
                     else:
                         calibration_data[node_id].append(np.array([]))
             return calibration_data
+    
     def clear_calibration_frames(self, frames):
         with self.lock:
             for node_id in self.node_data:
@@ -49,10 +52,22 @@ class RealTimeCalibrationManager:
                     if frame_num in self.node_data[node_id]:
                         del self.node_data[node_id][frame_num]
 
+
 def closed_form_calibration(calibration_data):
+    """
+    Calibration from EKF-filtered centroids in Cartesian coordinates.
+    
+    calibration_data: dict of node_id -> [detections for each frame]
+    detections format: (n, 4) [x, y, vx, vy]
+    
+    Returns: position and orientation matrices, trajectory
+    """
     node_ids = list(calibration_data.keys())
     num_nodes = len(node_ids)
     num_frames = len(calibration_data[node_ids[0]])
+    
+    # Build trajectory matrix: shape (num_nodes, num_frames)
+    # Store as complex numbers (x + 1j*y) for calibration
     trajectory = np.zeros((num_nodes, num_frames), dtype=np.complex64)
     for i, node_id in enumerate(node_ids):
         for t in range(num_frames):
@@ -60,14 +75,20 @@ def closed_form_calibration(calibration_data):
             if dets.size == 0:
                 trajectory[i, t] = np.nan
             else:
-                mean_range = np.mean(dets[:,0])
-                mean_angle = np.mean(dets[:,2])
-                trajectory[i, t] = mean_range * np.exp(1j * mean_angle)
+                # dets: (n, 4) [x, y, vx, vy]
+                # Use mean x, y position for calibration
+                mean_x = np.mean(dets[:, 0])
+                mean_y = np.mean(dets[:, 1])
+                trajectory[i, t] = mean_x + 1j * mean_y
+    
+    # Remove frames with NaN
     valid_mask = ~np.isnan(trajectory).any(axis=0)
     trajectory = trajectory[:, valid_mask]
     num_frames = trajectory.shape[1]
     if num_frames == 0:
         return None, None, None
+    
+    # Closed-form calibration
     P_opt = np.zeros((num_nodes, num_nodes), dtype=np.complex64)
     theta_opt = np.zeros((num_nodes, num_nodes))
     for i in range(num_nodes):
@@ -81,6 +102,7 @@ def closed_form_calibration(calibration_data):
             theta_opt[i, k] = np.rad2deg(-phi)
             P_opt[i, k] = z_i_mean - np.exp(-1j * phi) * z_k_mean
     return P_opt, theta_opt, trajectory
+
 
 def visualize(trajectory, P_opt, theta_opt, node_ids, output_dir):
     num_radars = trajectory.shape[0]
@@ -105,7 +127,11 @@ def visualize(trajectory, P_opt, theta_opt, node_ids, output_dir):
         plt.close()
         print(f"Saved: {filename}")
 
+
 def calibration_callback(manager, node_id, frame_num, centroids):
+    """
+    Callback when new EKF-filtered centroids arrive from the pipeline.
+    """
     manager.add_detection(node_id, frame_num, centroids)
     frames = manager.check_ready()
     if frames:
@@ -115,42 +141,46 @@ def calibration_callback(manager, node_id, frame_num, centroids):
             node_ids = list(calibration_data.keys())
             visualize(trajectory, P_opt, theta_opt, node_ids, manager.output_dir)
             print("Calibration complete. Visualizations updated.")
-            # --- Emit a synthetic 64x512 array for fast_plotter ---
-            # We'll create a heatmap of the most recent centroids for all nodes
-            heatmap = np.zeros((64, 512), dtype=np.float32)
-            for node in calibration_data:
-                for dets in calibration_data[node]:
-                    if dets.size > 0:
-                        # dets: (n, 3) [range, doppler, angle]
-                        for d in dets:
-                            r = int(np.clip(round(d[0]), 0, 63))
-                            dpl = int(np.clip(round(d[1]), 0, 511))
-                            heatmap[r, dpl] += 1.0
-            # Normalize for visualization
-            if np.max(heatmap) > 0:
-                heatmap = heatmap / np.max(heatmap)
-            # Emit to fast_plotter using the same socket event
-            sio.emit('send_frame', { 'array': heatmap.astype(np.float32).tobytes() })
             manager.clear_calibration_frames(frames)
+
 
 # Socket.IO client for real-time data
 sio = socketio.Client()
 manager = RealTimeCalibrationManager()
+
+
 @sio.event
 def connect():
     print("Connected to data stream.")
+
+
 @sio.on('send_frame')
 def on_send_frame(data):
-    # Example: data = { 'node_id': 'node1', 'frame_num': 123, 'centroids': ... }
+    """
+    Receives EKF-filtered centroids from main-newp3d.py.
+    
+    Expected data structure:
+    {
+        'node_id': str,
+        'frame_num': int,
+        'centroids_ekf': bytes (flattened [x, y, vx, vy] array)
+    }
+    """
     node_id = data.get('node_id', 'unknown')
     frame_num = data.get('frame_num', -1)
-    centroids_bytes = data.get('centroids', None)
+    centroids_bytes = data.get('centroids_ekf', None)
+    
     if centroids_bytes is not None:
-        centroids = np.frombuffer(centroids_bytes, dtype=np.float32).reshape(-1, 3)
+        # Reshape bytes to [x, y, vx, vy] format (4 columns)
+        centroids = np.frombuffer(centroids_bytes, dtype=np.float32).reshape(-1, 4)
         calibration_callback(manager, node_id, frame_num, centroids)
+
+
 @sio.event
 def disconnect():
     print("Disconnected from data stream.")
+
+
 if __name__ == "__main__":
     sio.connect('http://127.0.0.1:5001')
     sio.wait()

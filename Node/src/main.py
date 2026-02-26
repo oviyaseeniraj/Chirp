@@ -15,6 +15,7 @@ SERVER_URL = os.getenv("SERVER_URL", "http://127.0.0.1:5001")
 NODE_ID = os.getenv("NODE_ID", socket.gethostname())
 RAW_QUEUE_SIZE = 5
 PROCESSED_QUEUE_SIZE = 2
+VISUALIZE_CLUSTERS_ONLY = True # Set to False to see the raw RDM heatmap
 # =========================================
 
 def main():
@@ -45,6 +46,7 @@ def main():
         target=processing_process, 
         args=(raw_queue, processed_queue, NODE_ID), 
         kwargs={
+            'visualize_clusters_only': VISUALIZE_CLUSTERS_ONLY,
             'guard_cells_doppler': 4,
             'guard_cells_range': 16,
             'training_cells_doppler': 6,

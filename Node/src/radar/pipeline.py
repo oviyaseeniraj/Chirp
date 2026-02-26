@@ -13,6 +13,16 @@ from .processing.cfar import cfar_pytorch
 from .processing.rdm import RangeDoppler
 from .processing.clustering import dbscan_process, centroid_process
 
+def reconnect_socketio(server_url):
+    """Helper to reconnect to the Socket.IO server."""
+    sio = socketio.Client()
+    try:
+        sio.connect(server_url)
+        print(f"[SOCKET] Connected to {server_url}")
+        return sio
+    except Exception:
+        return None
+
 def create_3d_detection_map_spatial(cfar_data, angle_data, rdm_power):
     """
     Create a 3D detection map from 2D CFAR detections and angle estimates.
@@ -84,7 +94,7 @@ def daq_process(raw_queue, daq_class, **daq_kwargs):
                 print(f"[DAQ] Error: {e}")
                 time.sleep(0.1)
 
-def processing_process(raw_queue, processed_queue, node_id, device=None, save_calibration=True, **cfar_kwargs):
+def processing_process(raw_queue, processed_queue, node_id, device=None, save_calibration=True, visualize_clusters_only=False, **cfar_kwargs):
     """
     Signal processing pipeline: RDM -> CFAR -> Angle -> 3D Mapping -> DBSCAN -> Centroids.
     """
@@ -106,6 +116,11 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
     frame_avg = 100
     frame_rpl = 20
 
+    m_cfar_data = np.zeros((config.SLOW_TIME, config.FAST_TIME), dtype=np.float32)
+    m_dbscan_data = np.zeros((config.SLOW_TIME, config.FAST_TIME), dtype=np.float32)
+    m_angle_data = np.zeros((config.SLOW_TIME, config.FAST_TIME), dtype=np.float32)
+    m_cluster_data = np.zeros((config.SLOW_TIME, config.FAST_TIME), dtype=np.float32)
+
     calibration_save_file = f"calibration_data_{node_id}.pkl"
     calibration_data_dict = {}
     save_interval = 10
@@ -125,21 +140,35 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
 
     while True:
         try:
+            t0 = time.perf_counter_ns()
+            # Non-blocking get with timeout to minimize wait time
             try:
                 frame_data = raw_queue.get(timeout=1.0)
             except Empty:
+                time.sleep(0.001)  # Brief sleep if no data
                 continue
 
-            t0 = time.perf_counter_ns()
-            frame_num += 1
+            # Track frame processing time for FPS calculation
+            current_time = time.time()
+            if last_frame_time is not None:
+                frame_interval = current_time - last_frame_time
+                frame_times.append(frame_interval)
+                if len(frame_times) > frame_avg:
+                    frame_times.pop(0)
+
+            last_frame_time = current_time
 
             # 1. Range-Doppler Processing
-            rdm.set_buffer(frame_data)
+            t1 = time.perf_counter_ns()
+            rdm.set_buffer(np.array(frame_data, dtype=np.float32))
             rdm_mag = rdm.process().reshape(config.SLOW_TIME, config.FAST_TIME)
             clean_rdm = rdm.get_clean_rdm()
+            t2 = time.perf_counter_ns()
+            frame_num += 1
 
             # 2. CFAR Detection
             cfar_data = cfar_pytorch(rdm_mag, device=device, **cfar_params)
+            t3 = time.perf_counter_ns()
 
             # 3. Angle Estimation
             angle_data = angle_fft(
@@ -148,14 +177,21 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
                 zero_pad_cols=124,
                 device=device,
             )
+            t4 = time.perf_counter_ns()
 
             # 4. 3D Detection Mapping
             detection_coords_3d, _ = create_3d_detection_map_spatial(
                 cfar_data, angle_data, rdm_mag
             )
+            t4b = time.perf_counter_ns()
 
-            # 5. 3D DBSCAN and Centroids
-            _, _, centroids = dbscan_process(detection_coords_3d, cfar_data.shape)
+            # 5. 3D DBSCAN
+            dbscan_data_2d, dbscan_angles, centroids = dbscan_process(detection_coords_3d, cfar_data.shape)
+            t4c = time.perf_counter_ns()
+
+            # 6. Centroid Processing
+            centroids_map, centroids_angles = centroid_process(centroids, cfar_data.shape)
+            t5 = time.perf_counter_ns()
 
             # Calibration Hook
             if save_calibration and centroids and len(centroids) > 0:
@@ -170,13 +206,22 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
                         print(f"[PROCESSING] Save failed: {e}")
 
             # Pack output
+            # If visualize_clusters_only is True, we overwrite regular RDM and CFAR 
+            # with the centroids data to match the shim's visualization style.
+            final_array = centroids_map if visualize_clusters_only else rdm_mag
+            final_cfar = centroids_map if visualize_clusters_only else cfar_data
+            final_angles = centroids_angles if visualize_clusters_only else angle_data
+
             output_data = {
                 "node_id": node_id,
                 "timestamp": int(time.time() * 1000),
                 "centroids": detection_coords_3d.astype(np.float32).tobytes() if len(detection_coords_3d) > 0 else b"",
-                "array": rdm_mag.astype(np.float32).tobytes(),
-                "angles": angle_data.astype(np.float32).tobytes() if angle_data is not None else b"",
-                "cfar": cfar_data.astype(np.float32).tobytes() if cfar_data is not None else b""
+                "array": final_array.astype(np.float32).tobytes(),
+                "angles": final_angles.astype(np.float32).tobytes() if final_angles is not None else b"",
+                "cfar": final_cfar.astype(np.float32).tobytes() if final_cfar is not None else b"",
+                # Additional keys for internal tracking or alternative consumers
+                "rdm_centroids": centroids_map,
+                "dbscan_2d": dbscan_data_2d
             }
 
             try:
@@ -184,19 +229,21 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
             except Full:
                 pass
 
-            # Performance tracking
-            current_time = time.time()
-            if last_frame_time is not None:
-                frame_times.append(current_time - last_frame_time)
-                if len(frame_times) > frame_avg:
-                    frame_times.pop(0)
-                
-                frame_count += 1
-                if frame_count % frame_rpl == 0:
-                    fps = 1.0 / (sum(frame_times) / len(frame_times))
-                    print(f"[PROCESSING] FPS: {fps:.2f} | Detections: {len(detection_coords_3d)} | Clusters: {len(centroids) if centroids else 0}")
+            t6 = time.perf_counter_ns()
 
-            last_frame_time = current_time
+            # Print timing every 10 frames with FPS
+            frame_count += 1
+            if frame_count % frame_rpl == 0 and len(frame_times) > 0:
+                avg_interval = sum(frame_times) / len(frame_times)
+                fps = 1.0 / avg_interval if avg_interval > 0 else 0
+                print(
+                    f"[PROCESSING] FPS: {fps:.2f} | Avg: {avg_interval * 1000:.1f}ms | "
+                    f"Total: {(t5 - t0) // 1_000}us, RDM: {(t2 - t1) // 1_000}us, CFAR: {(t3 - t2) // 1_000}us, "
+                    f"ANGLE: {(t4 - t3) // 1_000}us, 3D_MAP: {(t4b - t4) // 1_000}us, DBSCAN3D: {(t4c - t4b) // 1_000}us, CENTROID: {(t5 - t4c) // 1_000}us"
+                )
+                print(
+                    f"CFAR Detections: {np.sum(cfar_data > 0)} | 3D Clusters: {len(centroids) if centroids else 0}"
+                )
 
         except Exception as e:
             print(f"[PROCESSING] Error: {e}")
@@ -207,40 +254,40 @@ def socket_process(processed_queue, server_url, node_id):
     """
     Process that sends processed data to the visualization server.
     """
-    print(f"[SOCKET] Started, connecting to {server_url}")
-    sio = socketio.Client()
-    connected = False
+    # Pin to CPU core 2
+    try:
+        psutil.Process(os.getpid()).cpu_affinity([2])
+    except Exception:
+        pass
+        
+    print(f"[SOCKET] Started on core 2, target: {server_url}")
+    sio = None
 
     while True:
+        # Non-blocking get with brief sleep fallback
         try:
-            if not connected:
-                try:
-                    sio.connect(server_url)
-                    print(f"[SOCKET] Connected to {server_url}")
-                    connected = True
-                except Exception:
-                    time.sleep(1)
-                    continue
+            data = processed_queue.get_nowait()
+        except Empty:
+            time.sleep(0.001)
+            continue
 
-            try:
-                data = processed_queue.get(timeout=1.0)
-            except Empty:
+        if sio is None or not sio.connected:
+            sio = reconnect_socketio(server_url)
+            if sio is None:
+                time.sleep(1)
                 continue
 
-            try:
-                sio.emit("send_frame", {
-                    "node_id": node_id,
-                    "frame_num": data["timestamp"],
-                    "centroids": data["centroids"],
-                    "array": data["array"],
-                    "angles": data["angles"],
-                    "cfar": data["cfar"]
-                })
-            except Exception as e:
-                print(f"[SOCKET] Send error: {e}")
-                connected = False
-
+        try:
+            # Emit data payload combining base requirements and shim enhancements
+            sio.emit("send_frame", {
+                "node_id": node_id,
+                "frame_num": data.get("timestamp", int(time.time() * 1000)),
+                "centroids": data.get("centroids", b""),
+                "array": data.get("array", b""),
+                "angles": data.get("angles", b""),
+                "cfar": data.get("cfar", b""),
+                "dbscan_data_2d": data.get("dbscan_2d", np.array([])).astype(np.float32).tobytes() if isinstance(data.get("dbscan_2d"), np.ndarray) else b""
+            })
         except Exception as e:
-            print(f"[SOCKET] Loop error: {e}")
-            connected = False
-            time.sleep(1)
+            print(f"[SOCKET] Send error: {e}")
+            sio = None

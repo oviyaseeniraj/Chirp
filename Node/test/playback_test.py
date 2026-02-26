@@ -22,6 +22,7 @@ def main():
     parser.add_argument("--input-dir", required=True, help="Directory containing .npy raw frames")
     parser.add_argument("--loop", action="store_true", help="Loop playback indefinitely")
     parser.add_argument("--delay", type=float, default=0.1, help="Delay between frames (seconds)")
+    parser.add_argument("--clusters-only", action="store_true", help="Visualize only clustered centroids (clean view)")
     args = parser.parse_args()
 
     # Create queues
@@ -39,6 +40,7 @@ def main():
     p_proc = mp.Process(
         target=processing_process, 
         args=(raw_queue, processed_queue, NODE_ID), 
+        kwargs={'visualize_clusters_only': args.clusters_only},
         name="Processing"
     )
     

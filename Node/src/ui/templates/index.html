@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html>
+
 <head>
     <title>Radar Plot with Angles</title>
     <script src="https://cdn.socket.io/4.0.0/socket.io.min.js"></script>
@@ -14,31 +15,38 @@
             min-height: 100vh;
             font-family: 'Courier New', monospace;
         }
+
         #main-container {
             display: flex;
             gap: 20px;
             align-items: flex-start;
         }
+
         #container {
             position: relative;
             display: inline-block;
         }
+
         #plot-canvas {
             border: 1px solid #333;
         }
+
         #overlay-canvas {
             position: absolute;
             top: 0;
             left: 0;
             pointer-events: none;
         }
+
         #range-angle-container {
-            display: {{ 'block' if show_range_angle_plot else 'none' }};
+            display: none;
         }
+
         #range-angle-canvas {
             border: 1px solid #333;
             background-color: #1a1a1a;
         }
+
         #fps-display {
             position: fixed;
             top: 10px;
@@ -50,6 +58,7 @@
             border-radius: 4px;
             border: 1px solid #555;
         }
+
         #legend {
             position: fixed;
             top: 10px;
@@ -64,6 +73,7 @@
         }
     </style>
 </head>
+
 <body>
     <div id="fps-display">FPS: 0 | Latency: 0ms | Detections: 0</div>
     <div id="legend">
@@ -74,12 +84,49 @@
     </div>
 
     <div id="main-container">
-        <div id="container">
-            <canvas id="plot-canvas" width="512" height="512"></canvas>
-            <canvas id="overlay-canvas" width="512" height="512"></canvas>
+        <!-- RMD Plot with Axes -->
+        <div id="rdm-plot-wrapper" style="position: relative; margin-left: 60px; margin-bottom: 50px;">
+            <!-- Y Axis (Range) -->
+            <div id="rdm-y-axis"
+                style="position: absolute; left: -50px; top: 0; height: 512px; display: flex; flex-direction: column; justify-content: space-between; color: #888; font-size: 10px; text-align: right; width: 45px; padding-right: 5px; border-right: 1px solid #333;">
+                <span>512</span>
+                <span>448</span>
+                <span>384</span>
+                <span>320</span>
+                <span>256</span>
+                <span>192</span>
+                <span>128</span>
+                <span>64</span>
+                <span>0</span>
+            </div>
+
+            <!-- X Axis (Doppler) -->
+            <div id="rdm-x-axis"
+                style="position: absolute; left: 0; bottom: -22px; width: 512px; display: flex; justify-content: space-between; color: #888; font-size: 10px; padding-top: 5px; border-top: 1px solid #333;">
+                <span>-{{ "%.1f"|format(max_velocity) }}</span>
+                <span>-{{ "%.1f"|format(max_velocity / 2) }}</span>
+                <span>0</span>
+                <span>+{{ "%.1f"|format(max_velocity / 2) }}</span>
+                <span>+{{ "%.1f"|format(max_velocity) }}</span>
+            </div>
+
+            <!-- Axis Labels -->
+            <div
+                style="position: absolute; left: 256px; bottom: -45px; transform: translateX(-50%); color: #aaa; font-size: 12px; letter-spacing: 2px;">
+                DOPPLER (m/s)</div>
+            <div
+                style="position: absolute; left: -85px; top: 256px; transform: rotate(-90deg) translateX(50%); color: #aaa; font-size: 12px; letter-spacing: 2px; width: 200px; text-align: center;">
+                RANGE (bins)</div>
+
+            <div id="container">
+                <canvas id="plot-canvas" width="512" height="512"></canvas>
+                <canvas id="overlay-canvas" width="512" height="512"></canvas>
+            </div>
         </div>
-        <div id="range-angle-container">
-            <canvas id="range-angle-canvas" width="{{ range_angle_plot_width }}" height="{{ range_angle_plot_height }}"></canvas>
+
+        <div id="range-angle-container" style="display: {{ 'block' if show_range_angle_plot else 'none' }}">
+            <canvas id="range-angle-canvas" width="{{ range_angle_plot_width }}"
+                height="{{ range_angle_plot_height }}"></canvas>
         </div>
     </div>
 
@@ -197,7 +244,7 @@
                 if (angle === null || angle === undefined) return;
 
                 //nuts!
-                if(velocity == 0) return;
+                if (velocity == 0) return;
 
                 // Map angle to x coordinate (-90 to 90 -> 0 to plotWidth)
                 const x = margin + ((angle + 90) / 180) * plotWidth;
@@ -230,9 +277,38 @@
             });
         }
 
+        function drawRDMGrid() {
+            const ctx = overlayCtx;
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+            ctx.lineWidth = 1;
+
+            // Vertical grid lines (Doppler)
+            // 8 vertical sections
+            for (let i = 0; i <= 8; i++) {
+                const x = i * 64;
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, 512);
+                ctx.stroke();
+            }
+
+            // Horizontal grid lines (Range)
+            // 8 horizontal sections
+            for (let i = 0; i <= 8; i++) {
+                const y = i * 64;
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(512, y);
+                ctx.stroke();
+            }
+        }
+
         function drawDetections(detections) {
             // Clear overlay
             overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+
+            // Draw grid first
+            drawRDMGrid();
 
             detectionCount = detections.length;
 
@@ -278,14 +354,14 @@
             });
         }
 
-        socket.on('radar_plot', function(data) {
+        socket.on('radar_plot', function (data) {
             const now = Date.now();
             latency = now - lastFrameTime;
             lastFrameTime = now;
 
             // Draw background RDM image
             const img = new Image();
-            img.onload = function() {
+            img.onload = function () {
                 plotCtx.clearRect(0, 0, plotCanvas.width, plotCanvas.height);
                 plotCtx.drawImage(img, 0, 0, plotCanvas.width, plotCanvas.height);
 
@@ -302,13 +378,14 @@
         });
 
         // Handle connection events
-        socket.on('connect', function() {
+        socket.on('connect', function () {
             console.log('Connected to server');
         });
 
-        socket.on('disconnect', function() {
+        socket.on('disconnect', function () {
             console.log('Disconnected from server');
         });
     </script>
 </body>
+
 </html>

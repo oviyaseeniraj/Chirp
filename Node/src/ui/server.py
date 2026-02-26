@@ -191,7 +191,8 @@ async def index_handler(request):
     content = template.render(
         show_range_angle_plot=SHOW_RANGE_ANGLE_PLOT,
         range_angle_plot_width=RANGE_ANGLE_PLOT_WIDTH,
-        range_angle_plot_height=RANGE_ANGLE_PLOT_HEIGHT
+        range_angle_plot_height=RANGE_ANGLE_PLOT_HEIGHT,
+        max_velocity=config.MAX_VELOCITY
     )
     return web.Response(text=content, content_type='text/html')
 

@@ -12,18 +12,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-
-# Set the measurement noise parameters for Mahalanobis distance
-# Based on Anirban's code - sigma values for [range, doppler, angle]
-pi = np.pi
-sigma_range = 0.035
-sigma_doppler = 0.2  # For 64 chirps per frame
-sigma_azimuth = pi / 4
-
-# Create 3x3 measurement noise covariance matrix
-measurement_noise = np.array(
-    [[sigma_range**2, 0, 0], [0, sigma_doppler**2, 0], [0, 0, sigma_azimuth**2]]
-)
+from .. import config
 
 
 class DBSCAN3D:
@@ -468,10 +457,10 @@ def dbscan_process(detection_coords, shape):
             min_samples=10,
             metric="mahalanobis",
             scale_coords=True,
-            x_weight=sigma_range,  # Range weight (512)
-            y_weight=sigma_doppler,  # Doppler weight (64 dimension)
-            z_weight=sigma_azimuth,  # Angle weight (64 smaller dimension)
-            measurement_noise_matrix=measurement_noise,
+            x_weight=config.SIGMA_RANGE,  # Range weight (512)
+            y_weight=config.SIGMA_DOPPLER,  # Doppler weight (64 dimension)
+            z_weight=config.SIGMA_AZIMUTH,  # Angle weight (64 smaller dimension)
+            measurement_noise_matrix=config.MEASUREMENT_NOISE,
             device="cpu",
         )
 

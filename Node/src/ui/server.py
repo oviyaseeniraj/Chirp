@@ -141,6 +141,15 @@ def process_frame(data):
             detections = extract_detections(cfar_array, angles_array, array_data)
         except Exception:
             pass
+    elif data.get("angles") is not None:
+        try:
+            angles_array = np.frombuffer(data["angles"], dtype=np.float32).reshape(64, 512)
+            # Robust fallback: create CFAR-like detection map from RDM data
+            threshold = np.mean(array_data) + 2 * np.std(array_data)
+            cfar_detections = (array_data > threshold).astype(np.uint8)
+            detections = extract_detections(cfar_detections, angles_array, array_data)
+        except Exception:
+            pass
 
     # 3. Handle image
     bgr_image = array_to_raw_image(array_data)

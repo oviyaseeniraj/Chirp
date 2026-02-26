@@ -4,9 +4,7 @@ import matplotlib.pyplot as plt
 import socketio
 import threading
 from collections import defaultdict
-# EKF from filterpy
-from filterpy.kalman import ExtendedKalmanFilter
-from filterpy.common import Q_discrete_white_noise
+
 
 # Real-time calibration manager
 class RealTimeCalibrationManager:
@@ -17,36 +15,12 @@ class RealTimeCalibrationManager:
         self.node_data = defaultdict(lambda: defaultdict(list))  # node_id -> frame_num -> centroids
         self.lock = threading.Lock()
         os.makedirs(output_dir, exist_ok=True)
-        # EKF per node
-        self.ekf_dict = defaultdict(self._create_ekf)
 
-    def _create_ekf(self):
-        # State: [range, angle, d_range, d_angle]
-        ekf = ExtendedKalmanFilter(dim_x=4, dim_z=2)
-        ekf.x = np.zeros(4)
-        ekf.P *= 10.
-        ekf.F = np.array([[1,0,1,0], [0,1,0,1], [0,0,1,0], [0,0,0,1]])
-        ekf.Q = Q_discrete_white_noise(dim=2, dt=1, var=0.01, block_size=2)
-        ekf.R = np.eye(2) * 0.5
-        ekf.H = np.array([[1,0,0,0], [0,1,0,0]])
-        return ekf
 
     def add_detection(self, node_id, frame_num, centroids):
         # centroids: np.ndarray of shape (n, 3) [range, doppler, angle]
         with self.lock:
-            if centroids is not None and len(centroids) > 0:
-                # Apply EKF to each centroid (range, angle)
-                ekf = self.ekf_dict[node_id]
-                filtered = []
-                for c in centroids:
-                    z = np.array([c[0], c[2]])  # [range, angle]
-                    ekf.predict()
-                    ekf.update(z)
-                    filtered.append([ekf.x[0], c[1], ekf.x[1]])  # keep doppler as is
-                filtered = np.array(filtered, dtype=np.float32)
-                self.node_data[node_id][frame_num].append(filtered)
-            else:
-                self.node_data[node_id][frame_num].append(centroids)
+            self.node_data[node_id][frame_num].append(centroids)
     def check_ready(self):
         with self.lock:
             frame_sets = [set(frames.keys()) for frames in self.node_data.values()]
@@ -141,6 +115,22 @@ def calibration_callback(manager, node_id, frame_num, centroids):
             node_ids = list(calibration_data.keys())
             visualize(trajectory, P_opt, theta_opt, node_ids, manager.output_dir)
             print("Calibration complete. Visualizations updated.")
+            # --- Emit a synthetic 64x512 array for fast_plotter ---
+            # We'll create a heatmap of the most recent centroids for all nodes
+            heatmap = np.zeros((64, 512), dtype=np.float32)
+            for node in calibration_data:
+                for dets in calibration_data[node]:
+                    if dets.size > 0:
+                        # dets: (n, 3) [range, doppler, angle]
+                        for d in dets:
+                            r = int(np.clip(round(d[0]), 0, 63))
+                            dpl = int(np.clip(round(d[1]), 0, 511))
+                            heatmap[r, dpl] += 1.0
+            # Normalize for visualization
+            if np.max(heatmap) > 0:
+                heatmap = heatmap / np.max(heatmap)
+            # Emit to fast_plotter using the same socket event
+            sio.emit('send_frame', { 'array': heatmap.astype(np.float32).tobytes() })
             manager.clear_calibration_frames(frames)
 
 # Socket.IO client for real-time data

@@ -4,11 +4,10 @@
 
 echo "\n--- Starting radar data collection on all nodes ---"
 
-# List of nodes (hostname:IP) - updated to tien1, tien2, tien4
+# List of nodes (hostname:IP) - Running nodes: tien4, tien1
 NODES=(
-  "tien1:169.231.200.9"
-  "tien3:169.231.86.85"
   "tien4:169.231.105.114"
+  "tien1:169.231.202.62"
 )
 
 SCRIPT_PATH="/Users/oseeniraj/Chirp-1/Node/test/shim/main-newp3d.py"
@@ -26,7 +25,7 @@ for NODE in "${NODES[@]}"; do
   IP="${NODE##*:}"
   echo -e "\n--- Connecting to $NODE_ID ($IP) ---"
   sshpass -p "$NODE_PASS" ssh -o PreferredAuthentications=password -o PubkeyAuthentication=no -o StrictHostKeyChecking=no -o ConnectTimeout=10 $NODE_USER@$IP \
-    "cd $GIT_REPO_PATH && git switch $GIT_BRANCH && git pull && export NODE_ID=$NODE_ID; cd Node/scripts && echo $NODE_PASS | sudo -S bash start_radar.sh && cd ../test/shim && nohup python3 $SCRIPT_PATH > ${NODE_ID}_log.txt 2>&1 &" &
+    "cd $GIT_REPO_PATH && git switch $GIT_BRANCH && git pull && export NODE_ID=$NODE_ID; cd Node/scripts && echo $NODE_PASS | sudo -S bash start_radar.sh && cd ../test/shim && nohup python3 hardware_trigger/trigger_test > ${NODE_ID}_trigger.txt 2>&1 & sleep 2 && nohup python3 $SCRIPT_PATH > ${NODE_ID}_log.txt 2>&1 &" &
 done
 
 # Wait for 100 frames from each node (poll for completion)

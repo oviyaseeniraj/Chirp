@@ -105,16 +105,30 @@ case $test_choice in
             # Launch without sudo since script is already root
             "$TRIGGER_EXE" > /dev/null 2>&1 &
             TRIGGER_PID=$!
-            # Trap signals to ensure the trigger is killed when the script ends
-            trap "echo 'Killing hardware trigger...'; kill $TRIGGER_PID; exit" SIGINT SIGTERM
         fi
 
         # 3. Run selected test
         echo ""
         
         if [ "$test_choice" -eq 1 ]; then
-            echo ">>> Starting Full Integration Test..."
+            echo ">>> Starting UI server (Node/src/ui/server.py) in background:"
+            $PYTHON_EXEC "$NODE_DIR/src/ui/server.py" > /dev/null 2>&1 &
+            SERVER_PID=$!
+            echo "Waiting for server on port 5001..."
+            for _ in $(seq 1 15); do
+                (echo >/dev/tcp/127.0.0.1/5001) 2>/dev/null && break
+                sleep 1
+            done
+            if ! (echo >/dev/tcp/127.0.0.1/5001) 2>/dev/null; then
+                echo "Warning: Server socket is not be ready yet. Proceeding with full integration test."
+            fi
+            
+            echo ">>> Starting Full Integration Test"
             $PYTHON_EXEC "$NODE_DIR/test/full_integration_test.py"
+
+            # Trap signals to ensure the hardware trigger and UI server (if any) are killed when the script ends
+            trap 'echo "Killing hardware trigger..."; kill $TRIGGER_PID 2>/dev/null; [ -n "$SERVER_PID" ] && echo "Stopping UI server (PID: $SERVER_PID)..." && kill $SERVER_PID 2>/dev/null; exit' SIGINT SIGTERM
+        
         else
             echo ">>> Starting Data Capture (Target: $DATA_DIR)..."
             read -p "Enter number of frames to capture [100]: " frames

@@ -194,5 +194,5 @@ loopCount=64;
 periodicity=13000000;
 triggerDelay=0;
 numAdcSamples=1024;
-triggerSelect=2;
+triggerSelect=2; # 2 for hardware trigger, 1 for software trigger
 #END

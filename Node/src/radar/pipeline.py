@@ -11,7 +11,7 @@ from . import config
 from .processing.angle import angle_fft
 from .processing.cfar import cfar_pytorch
 from .processing.rdm import RangeDoppler
-from .processing.clustering import dbscan_process, centroid_process
+from .processing.clustering_cpu import dbscan_process, centroid_process
 
 def reconnect_socketio(server_url):
     """Helper to reconnect to the Socket.IO server."""
@@ -49,11 +49,11 @@ def daq_process(raw_queue, daq_class, **daq_kwargs):
     Supports both live DataAcquisition and playback PlaybackDAQ.
     """
     try:
-        psutil.Process(os.getpid()).cpu_affinity([0])
+        psutil.Process(os.getpid()).cpu_affinity([1])
     except Exception as e:
         print(f"[DAQ] Affinity failed: {e}")
     
-    print(f"[DAQ] Started on core 0 using {daq_class.__name__}")
+    print(f"[DAQ] Started on core 1 using {daq_class.__name__}")
 
     with daq_class(**daq_kwargs) as daq:
         last_frame_time = None
@@ -98,11 +98,11 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
     Signal processing pipeline: RDM -> CFAR -> Angle -> 3D Mapping -> DBSCAN -> Centroids.
     """
     try:
-        psutil.Process(os.getpid()).cpu_affinity([1])
+        psutil.Process(os.getpid()).cpu_affinity([2])
     except Exception as e:
         print(f"[PROCESSING] Affinity failed: {e}")
         
-    print("[PROCESSING] Started on core 1")
+    print("[PROCESSING] Started on core 2")
 
     rdm = RangeDoppler(window="blackman", alpha=0.1)
     if device is None:
@@ -271,11 +271,11 @@ def socket_process(processed_queue, server_url, node_id):
     """
     # Pin to CPU core 2
     try:
-        psutil.Process(os.getpid()).cpu_affinity([2])
+        psutil.Process(os.getpid()).cpu_affinity([3])
     except Exception:
         pass
         
-    print(f"[SOCKET] Started on core 2, target: {server_url}")
+    print(f"[SOCKET] Started on core 3, target: {server_url}")
     sio = None
 
     while True:

@@ -4,6 +4,8 @@ Radar System Configuration
 
 import numpy as np
 
+USE_CUDA = False
+
 # Dimension Parameters
 FAST_TIME = 512
 SLOW_TIME = 64
@@ -13,14 +15,31 @@ IQ = 2  # I and Q channels
 IQ_BYTES = 2  # Bytes per IQ sample
 BUFFER_SIZE = 2048
 
-# Physical Parameters
-CARRIER_FREQ = 77e9
+# Physical Parameters (from MATLAB)
 SPEED_OF_LIGHT = 3e8
-CHIRP_DURATION = 100e-6
+C = SPEED_OF_LIGHT
+FS = 10e6              # Sampling rate
+BW = 4.2492e9          # Bandwidth
+CARRIER_FREQ = 76e9    # F_CARRIER: Matlab uses 76e9
+F_CARRIER = CARRIER_FREQ
+S = 83e12              # Chirp slope
+T_F = 150e-3           # Frame period
 
-# Computed Parameters
+# Derived Parameters
 LAMBDA = SPEED_OF_LIGHT / CARRIER_FREQ
-MAX_VELOCITY = LAMBDA / (4.0 * CHIRP_DURATION)
+T_CHIRP_RAMP = BW / S  # MATLAB: T_chirp_ramp
+CHIRP_DURATION = T_CHIRP_RAMP # Alias for compatibility
+NUM_CHIRPS_PER_FRAME = SLOW_TIME
+N_CHIRPS_PER_FRAME_TDM = NUM_CHIRPS_PER_FRAME * TX
+T_F_EFFECTIVE = T_CHIRP_RAMP * N_CHIRPS_PER_FRAME_TDM
+
+# Range + Doppler metrics
+RANGE_RES = SPEED_OF_LIGHT / (2.0 * BW)
+DOPPLER_RES = LAMBDA / (2.0 * T_F_EFFECTIVE)
+MAX_RANGE = FS * SPEED_OF_LIGHT / (2.0 * S)
+
+# Max unambiguous velocity
+MAX_VELOCITY = LAMBDA / (4.0 * T_CHIRP_RAMP * TX)
 VELOCITY_RES = 2.0 * MAX_VELOCITY / SLOW_TIME
 
 # Data Acquisition

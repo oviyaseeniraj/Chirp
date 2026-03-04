@@ -162,6 +162,7 @@ def process_frame(data):
         "detections": detections,
         "cluster_count": data.get("cluster_count", 0),
         "clusters": data.get("clusters", []),
+        "tracks": data.get("tracks", []),
         "mime": "image/jpeg"
     }
     return payload, proc_time
@@ -194,7 +195,12 @@ async def index_handler(request):
         show_range_angle_plot=SHOW_RANGE_ANGLE_PLOT,
         range_angle_plot_width=RANGE_ANGLE_PLOT_WIDTH,
         range_angle_plot_height=RANGE_ANGLE_PLOT_HEIGHT,
-        max_velocity=config.MAX_VELOCITY
+        max_velocity=config.MAX_VELOCITY,
+        max_range=config.MAX_RANGE,
+        range_res=config.RANGE_RES,
+        velocity_res=config.VELOCITY_RES,
+        slow_time=config.SLOW_TIME,
+        fast_time=config.FAST_TIME
     )
     return web.Response(text=content, content_type='text/html')
 

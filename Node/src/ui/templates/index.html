@@ -84,8 +84,31 @@
         <div style="margin-top: 8px;">Cluster Markers:</div>
         <div style="color: #00ffff; border: 1px solid #00ffff; display: inline-block; width: 10px; height: 10px;"></div>
         3D Cluster Mean
-        <div style="margin-top: 8px;">Range-Angle Plot:</div>
         <div style="color: #00ff00;">Size = Velocity</div>
+        <div style="margin-top: 8px;">EKF Tracks:</div>
+        <div
+            style="color: #ffaa00; border: 3px solid #ffaa00; border-radius: 50%; display: inline-block; width: 12px; height: 12px;">
+        </div>
+        EKF Track (ID)
+        <div style="margin-top: 10px; border-top: 1px solid #444; padding-top: 10px;">
+            <div style="font-weight: bold; color: #fff; margin-bottom: 5px;">LAYER CONTROL:</div>
+            <label style="cursor: pointer; display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+                <input type="checkbox" id="show-rdm" checked style="width: 16px; height: 16px;">
+                <span style="color: #fff;">Show RDM Background</span>
+            </label>
+            <label style="cursor: pointer; display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+                <input type="checkbox" id="show-detections" checked style="width: 16px; height: 16px;">
+                <span style="color: #ff0000;">Show Raw Detections</span>
+            </label>
+            <label style="cursor: pointer; display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+                <input type="checkbox" id="show-clusters" checked style="width: 16px; height: 16px;">
+                <span style="color: #00ffff;">Show 3D Clusters</span>
+            </label>
+            <label style="cursor: pointer; display: flex; align-items: center; gap: 8px;">
+                <input type="checkbox" id="show-tracks" checked style="width: 16px; height: 16px;">
+                <span style="color: #ffaa00;">Show EKF Tracks</span>
+            </label>
+        </div>
     </div>
 
     <div id="main-container">
@@ -94,14 +117,14 @@
             <!-- Y Axis (Range) -->
             <div id="rdm-y-axis"
                 style="position: absolute; left: -50px; top: 0; height: 512px; display: flex; flex-direction: column; justify-content: space-between; color: #888; font-size: 10px; text-align: right; width: 45px; padding-right: 5px; border-right: 1px solid #333;">
-                <span>512</span>
-                <span>448</span>
-                <span>384</span>
-                <span>320</span>
-                <span>256</span>
-                <span>192</span>
-                <span>128</span>
-                <span>64</span>
+                <span>{{ "%.1f"|format(max_range) }}</span>
+                <span>{{ "%.1f"|format(max_range * 7 / 8) }}</span>
+                <span>{{ "%.1f"|format(max_range * 6 / 8) }}</span>
+                <span>{{ "%.1f"|format(max_range * 5 / 8) }}</span>
+                <span>{{ "%.1f"|format(max_range * 4 / 8) }}</span>
+                <span>{{ "%.1f"|format(max_range * 3 / 8) }}</span>
+                <span>{{ "%.1f"|format(max_range * 2 / 8) }}</span>
+                <span>{{ "%.1f"|format(max_range * 1 / 8) }}</span>
                 <span>0</span>
             </div>
 
@@ -121,7 +144,7 @@
                 DOPPLER (m/s)</div>
             <div
                 style="position: absolute; left: -85px; top: 256px; transform: rotate(-90deg) translateX(50%); color: #aaa; font-size: 12px; letter-spacing: 2px; width: 200px; text-align: center;">
-                RANGE (bins)</div>
+                RANGE (m)</div>
 
             <div id="container">
                 <canvas id="plot-canvas" width="512" height="512"></canvas>
@@ -130,7 +153,8 @@
         </div>
 
         <div id="side-plots">
-            <div id="range-angle-container" style="display: {{ 'block' if show_range_angle_plot else 'none' }}">
+            <div id="range-angle-container" data-visible="{{ 'true' if show_range_angle_plot else 'false' }}"
+                style="display: none;">
                 <div style="color: #888; margin-bottom: 5px;">RANGE-ANGLE (Detections)</div>
                 <canvas id="range-angle-canvas" width="{{ range_angle_plot_width }}"
                     height="{{ range_angle_plot_height }}"></canvas>
@@ -138,7 +162,29 @@
         </div>
     </div>
 
+    <!-- Configuration Data for JS -->
+    <div id="radar-config" style="display: none;" data-max-velocity="{{ max_velocity | default(10.0) }}"
+        data-max-range="{{ max_range | default(20.0) }}" data-range-res="{{ range_res | default(0.04) }}"
+        data-velocity-res="{{ velocity_res | default(0.1) }}" data-slow-time="{{ slow_time | default(64) }}"
+        data-fast-time="{{ fast_time | default(512) }}">
+    </div>
+
     <script>
+        // Configuration from server
+        const configEl = document.getElementById('radar-config');
+        const MAX_VELOCITY = parseFloat(configEl.dataset.maxVelocity);
+        const MAX_RANGE = parseFloat(configEl.dataset.maxRange);
+        const RANGE_RES = parseFloat(configEl.dataset.rangeRes);
+        const VELOCITY_RES = parseFloat(configEl.dataset.velocityRes);
+        const SLOW_TIME = parseInt(configEl.dataset.slowTime);
+        const FAST_TIME = parseInt(configEl.dataset.fastTime);
+
+        // Handle visibility
+        const raContainer = document.getElementById('range-angle-container');
+        if (raContainer.dataset.visible === 'true') {
+            raContainer.style.display = 'block';
+        }
+
         const socket = io();
         let frameCount = 0;
         let lastTime = Date.now();
@@ -202,7 +248,7 @@
             ctx.save();
             ctx.translate(15, height / 2);
             ctx.rotate(-Math.PI / 2);
-            ctx.fillText('Range (bins)', 0, 0);
+            ctx.fillText('Range (m)', 0, 0);
             ctx.restore();
 
             // Draw grid
@@ -223,10 +269,9 @@
                 ctx.fillText(angle + '°', x, height - margin + 15);
             }
 
-            // Horizontal grid lines (range)
             for (let i = 0; i <= 5; i++) {
                 const y = margin + (i / 5) * plotHeight;
-                const rangeVal = Math.round((1 - i / 5) * 256);
+                const rangeVal = ((1 - i / 5) * MAX_RANGE).toFixed(1);
                 ctx.beginPath();
                 ctx.moveTo(margin, y);
                 ctx.lineTo(width - margin, y);
@@ -261,8 +306,8 @@
                 // Map angle to x coordinate (-90 to 90 -> 0 to plotWidth)
                 const x = margin + ((angle + 90) / 180) * plotWidth;
 
-                // Map range to y coordinate (0 to 256 -> height to 0)
-                const y = margin + (1 - range_idx / 256) * plotHeight;
+                // Map range to y coordinate (0 to FAST_TIME -> height to 0)
+                const y = margin + (1 - range_idx / FAST_TIME) * plotHeight;
 
                 // Size based on velocity magnitude
                 const velocityMag = Math.abs(velocity || 0);
@@ -316,6 +361,8 @@
         }
 
         function drawClusters(clusters) {
+            if (!document.getElementById('show-clusters').checked) return;
+
             if (!clusters || clusters.length === 0) return;
 
             // 1. Draw on RDM Overlay
@@ -372,7 +419,7 @@
                 ctx.save();
                 ctx.translate(15, height / 2);
                 ctx.rotate(-Math.PI / 2);
-                ctx.fillText('RANGE (bins)', 0, 0);
+                ctx.fillText('RANGE (m)', 0, 0);
                 ctx.restore();
 
                 // Ticks
@@ -381,7 +428,7 @@
                 });
 
                 ctx.textAlign = 'right';
-                ['512', '256', '0'].forEach((label, i) => {
+                [MAX_RANGE.toFixed(1), (MAX_RANGE / 2).toFixed(1), '0'].forEach((label, i) => {
                     ctx.fillText(label, margin - 5, margin + (i / 2) * plotHeight + 5);
                 });
 
@@ -389,7 +436,7 @@
 
                 clusters.forEach(cluster => {
                     const x = margin + ((cluster.angle_deg + 90) / 180) * plotWidth;
-                    const y = margin + (1 - cluster.range_idx / 512) * plotHeight;
+                    const y = margin + (1 - cluster.range_idx / FAST_TIME) * plotHeight;
                     const size = Math.min(10, 3 + (cluster.mass / 50));
 
                     ctx.fillStyle = '#00ffff';
@@ -404,9 +451,56 @@
             }
         }
 
+        function drawTracks(tracks) {
+            if (!document.getElementById('show-tracks').checked) return;
+
+            if (!tracks || tracks.length === 0) return;
+
+            tracks.forEach(track => {
+                // Track positions are in Cartesian (meters)
+                // Convert back to pixels for RDM overlay (approximate for visualization)
+                // x = (doppler_idx * 8), y = (511 - range_idx)
+                // Correct mapping:
+                // range_idx = range_m / RANGE_RES
+                // doppler_idx = (doppler_v / VELOCITY_RES) + (SLOW_TIME / 2)
+
+                const range_idx = Math.sqrt(track.x ** 2 + track.y ** 2) / RANGE_RES;
+                const doppler_v = (track.vx * track.x + track.vy * track.y) / (Math.sqrt(track.x ** 2 + track.y ** 2) + 1e-6);
+                const doppler_idx = (doppler_v / VELOCITY_RES) + (SLOW_TIME / 2);
+
+                const px = doppler_idx * 8;
+                const py = 511 - (range_idx * (512 / FAST_TIME));
+
+                // Draw Track Circle (Enhanced Visibility)
+                overlayCtx.strokeStyle = '#ffaa00';
+                overlayCtx.lineWidth = 4;
+                overlayCtx.beginPath();
+                overlayCtx.arc(px, py, 15, 0, 2 * Math.PI);
+                overlayCtx.stroke();
+
+                // Draw ID
+                overlayCtx.fillStyle = '#ffaa00';
+                overlayCtx.font = 'bold 16px Courier New';
+                overlayCtx.shadowBlur = 4;
+                overlayCtx.shadowColor = 'black';
+                overlayCtx.textAlign = 'center';
+                overlayCtx.fillText(`TRACK ${track.id}`, px, py - 22);
+                overlayCtx.shadowBlur = 0;
+
+                // Draw Velocity Vector
+                overlayCtx.lineWidth = 2;
+                overlayCtx.beginPath();
+                overlayCtx.moveTo(px, py);
+                overlayCtx.lineTo(px + track.vx * 15, py - track.vy * 15);
+                overlayCtx.stroke();
+            });
+        }
+
         function drawDetections(detections) {
             // Clear overlay
             overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+
+            if (!document.getElementById('show-detections').checked) return;
 
             // Draw grid first
             drawRDMGrid();
@@ -458,30 +552,49 @@
             latency = now - lastFrameTime;
             lastFrameTime = now;
 
-            // Draw background RDM image
-            const img = new Image();
-            img.onload = function () {
-                plotCtx.clearRect(0, 0, plotCanvas.width, plotCanvas.height);
-                plotCtx.drawImage(img, 0, 0, plotCanvas.width, plotCanvas.height);
+            // Clear the plot canvas for new frame
+            plotCtx.clearRect(0, 0, plotCanvas.width, plotCanvas.height);
 
-                // Draw detection overlays
+            // 1. Update RDM Image
+            if (data.image && document.getElementById('show-rdm').checked) {
+                const img = new Image();
+                img.onload = function () {
+                    plotCtx.drawImage(img, 0, 0, plotCanvas.width, plotCanvas.height);
+                    // Overlay data
+                    if (data.detections) {
+                        drawDetections(data.detections);
+                        drawRangeAnglePlot(data.detections);
+                    }
+                    if (data.clusters) {
+                        drawClusters(data.clusters);
+                    }
+                    if (data.tracks) {
+                        drawTracks(data.tracks);
+                    }
+                };
+                img.src = 'data:' + data.mime + ';base64,' + data.image;
+            } else {
+                // Background is hidden, but we still want to draw overlays on a black canvas
+                plotCtx.fillStyle = 'black';
+                plotCtx.fillRect(0, 0, plotCanvas.width, plotCanvas.height);
+
                 if (data.detections) {
                     drawDetections(data.detections);
                     drawRangeAnglePlot(data.detections);
                 }
-
                 if (data.clusters) {
                     drawClusters(data.clusters);
                 }
-
-                if (data.cluster_count !== undefined) {
-                    clusterCount = data.cluster_count;
+                if (data.tracks) {
+                    drawTracks(data.tracks);
                 }
+            }
 
-                frameCount++;
-            };
-            const mimeType = data.mime || 'image/bmp';
-            img.src = 'data:' + mimeType + ';base64,' + data.image;
+            if (data.cluster_count !== undefined) {
+                clusterCount = data.cluster_count;
+            }
+
+            frameCount++;
         });
 
         // Handle connection events

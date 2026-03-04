@@ -146,6 +146,17 @@ case $test_choice in
         ;;
 
     3)
+        echo ">>> Starting UI server (Node/src/ui/server.py) in background:"
+        $PYTHON_EXEC "$NODE_DIR/src/ui/server.py" > /dev/null 2>&1 &
+        SERVER_PID=$!
+        echo "Waiting for server on port 5001..."
+        for _ in $(seq 1 15); do
+            (echo >/dev/tcp/127.0.0.1/5001) 2>/dev/null && break
+            sleep 1
+        done
+        if ! (echo >/dev/tcp/127.0.0.1/5001) 2>/dev/null; then
+            echo "Warning: Server socket is not be ready yet. Proceeding with full integration test."
+        fi    
         echo ""
         echo ">>> Starting Playback Test from $DATA_DIR..."
         if [ -z "$(ls -A "$DATA_DIR/raw" 2>/dev/null)" ]; then
@@ -153,13 +164,7 @@ case $test_choice in
             exit 1
         fi
         
-        read -p "Visualize Clusters Only? (y/N): " clusters_only
-        CLUSTERS_FLAG=""
-        if [[ "$clusters_only" =~ ^[Yy]$ ]]; then
-            CLUSTERS_FLAG="--clusters-only"
-        fi
-
-        $PYTHON_EXEC "$NODE_DIR/test/playback_test.py" --input-dir "$DATA_DIR/raw" --loop $CLUSTERS_FLAG
+        $PYTHON_EXEC "$NODE_DIR/test/playback_test.py" --input-dir "$DATA_DIR/raw" --loop
         ;;
     4)
         echo ""

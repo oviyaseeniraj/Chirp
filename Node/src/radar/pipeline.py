@@ -8,10 +8,17 @@ import torch
 from queue import Empty, Full
 
 from . import config
-from .processing.angle import angle_fft
-from .processing.cfar import cfar_pytorch
 from .processing.rdm import RangeDoppler
-from .processing.clustering_cpu import dbscan_process, centroid_process
+
+# Hardware acceleration check: Choose between GPU (PyTorch) and optimized CPU (NumPy/OpenCV)
+if torch.cuda.is_available():
+    from .processing.cfar import cfar_pytorch as cfar_func
+    from .processing.angle import angle_fft as angle_func
+    from .processing.clustering import dbscan_process, centroid_process
+else:
+    from .processing.cfar_cpu import cfar_cpu as cfar_func
+    from .processing.angle_cpu import angle_cpu as angle_func
+    from .processing.clustering_cpu import dbscan_process, centroid_process
 
 def reconnect_socketio(server_url):
     """Helper to reconnect to the Socket.IO server."""
@@ -166,11 +173,11 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
             frame_num += 1
 
             # 2. CFAR Detection
-            cfar_data = cfar_pytorch(rdm_mag, device=device, **cfar_params)
+            cfar_data = cfar_func(rdm_mag, device=device, **cfar_params)
             t3 = time.perf_counter_ns()
 
             # 3. Angle Estimation
-            angle_data = angle_fft(
+            angle_data = angle_func(
                 cfar_detections=cfar_data,
                 clean_rdmap=clean_rdm,
                 zero_pad_cols=124,

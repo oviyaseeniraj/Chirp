@@ -23,3 +23,8 @@ We use the library in the following way:
 
 My current best guess is that each Radar Block iteration represents getting/processing a frame
  <!--TODO: include a block diagram of how they play into each other  -->
+
+## Testing & Data Capture
+For running the radar, capturing data, and performing offline analysis, see the [test/README.md](test/README.md).
+- **Test Runner**: Use `sudo ./test/run_tests.sh` for an interactive menu of live tests, capture, and data conversion.
+- **Conversion**: Option **4** in the test runner converts raw radar data to MATLAB `.mat` files with automated complex conversion.

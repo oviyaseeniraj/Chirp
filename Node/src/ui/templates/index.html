@@ -85,11 +85,6 @@
         <div style="color: #00ffff; border: 1px solid #00ffff; display: inline-block; width: 10px; height: 10px;"></div>
         3D Cluster Mean
         <div style="color: #00ff00;">Size = Velocity</div>
-        <div style="margin-top: 8px;">EKF Tracks:</div>
-        <div
-            style="color: #ffaa00; border: 3px solid #ffaa00; border-radius: 50%; display: inline-block; width: 12px; height: 12px;">
-        </div>
-        EKF Track (ID)
         <div style="margin-top: 10px; border-top: 1px solid #444; padding-top: 10px;">
             <div style="font-weight: bold; color: #fff; margin-bottom: 5px;">LAYER CONTROL:</div>
             <label style="cursor: pointer; display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
@@ -103,10 +98,6 @@
             <label style="cursor: pointer; display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
                 <input type="checkbox" id="show-clusters" checked style="width: 16px; height: 16px;">
                 <span style="color: #00ffff;">Show 3D Clusters</span>
-            </label>
-            <label style="cursor: pointer; display: flex; align-items: center; gap: 8px;">
-                <input type="checkbox" id="show-tracks" checked style="width: 16px; height: 16px;">
-                <span style="color: #ffaa00;">Show EKF Tracks</span>
             </label>
         </div>
     </div>
@@ -451,50 +442,6 @@
             }
         }
 
-        function drawTracks(tracks) {
-            if (!document.getElementById('show-tracks').checked) return;
-
-            if (!tracks || tracks.length === 0) return;
-
-            tracks.forEach(track => {
-                // Track positions are in Cartesian (meters)
-                // Convert back to pixels for RDM overlay (approximate for visualization)
-                // x = (doppler_idx * 8), y = (511 - range_idx)
-                // Correct mapping:
-                // range_idx = range_m / RANGE_RES
-                // doppler_idx = (doppler_v / VELOCITY_RES) + (SLOW_TIME / 2)
-
-                const range_idx = Math.sqrt(track.x ** 2 + track.y ** 2) / RANGE_RES;
-                const doppler_v = (track.vx * track.x + track.vy * track.y) / (Math.sqrt(track.x ** 2 + track.y ** 2) + 1e-6);
-                const doppler_idx = (doppler_v / VELOCITY_RES) + (SLOW_TIME / 2);
-
-                const px = doppler_idx * 8;
-                const py = 511 - (range_idx * (512 / FAST_TIME));
-
-                // Draw Track Circle (Enhanced Visibility)
-                overlayCtx.strokeStyle = '#ffaa00';
-                overlayCtx.lineWidth = 4;
-                overlayCtx.beginPath();
-                overlayCtx.arc(px, py, 15, 0, 2 * Math.PI);
-                overlayCtx.stroke();
-
-                // Draw ID
-                overlayCtx.fillStyle = '#ffaa00';
-                overlayCtx.font = 'bold 16px Courier New';
-                overlayCtx.shadowBlur = 4;
-                overlayCtx.shadowColor = 'black';
-                overlayCtx.textAlign = 'center';
-                overlayCtx.fillText(`TRACK ${track.id}`, px, py - 22);
-                overlayCtx.shadowBlur = 0;
-
-                // Draw Velocity Vector
-                overlayCtx.lineWidth = 2;
-                overlayCtx.beginPath();
-                overlayCtx.moveTo(px, py);
-                overlayCtx.lineTo(px + track.vx * 15, py - track.vy * 15);
-                overlayCtx.stroke();
-            });
-        }
 
         function drawDetections(detections) {
             // Clear overlay
@@ -568,9 +515,6 @@
                     if (data.clusters) {
                         drawClusters(data.clusters);
                     }
-                    if (data.tracks) {
-                        drawTracks(data.tracks);
-                    }
                 };
                 img.src = 'data:' + data.mime + ';base64,' + data.image;
             } else {
@@ -584,9 +528,6 @@
                 }
                 if (data.clusters) {
                     drawClusters(data.clusters);
-                }
-                if (data.tracks) {
-                    drawTracks(data.tracks);
                 }
             }
 

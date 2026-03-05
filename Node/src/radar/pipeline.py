@@ -9,7 +9,6 @@ from queue import Empty, Full
 
 from . import config
 from .processing.rdm import RangeDoppler
-from .processing.tracking import MultiTargetTracker
 
 # Hardware acceleration check: Choose between GPU (PyTorch) and optimized CPU (NumPy/OpenCV)
 # if torch.cuda.is_available():
@@ -146,9 +145,7 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
     }
     cfar_params.update(cfar_kwargs)
 
-    # Initialize Tracker
-    # dt is roughly 100ms for 10 FPS
-    tracker = MultiTargetTracker(dt=0.1, max_misses=5, min_hits=3, dist_threshold=2.0)
+    # EKF Tracker disabled
 
     while True:
         try:
@@ -205,27 +202,6 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
             centroids_map, centroids_angles = centroid_process(centroids, cfar_data.shape)
             t5 = time.perf_counter_ns()
             
-            # 7. EKF Tracking
-            tracked_objects = []
-            if centroids:
-                detections_for_tracker = []
-                for label, (centroid_vec, mass) in centroids.items():
-                    c = centroid_vec.cpu().numpy()
-                    r_idx, d_idx, a_rad = c[0], c[1], c[2]
-                    
-                    # Convert to Cartesian for tracking
-                    range_m = r_idx * config.RANGE_RES
-                    doppler_v = (d_idx - config.SLOW_TIME // 2) * config.VELOCITY_RES
-                    
-                    px = range_m * np.sin(a_rad)
-                    py = range_m * np.cos(a_rad)
-                    
-                    detections_for_tracker.append([px, py, doppler_v])
-                
-                tracked_objects = tracker.update(detections_for_tracker)
-            else:
-                tracked_objects = tracker.update([])
-
             t5_extra = time.perf_counter_ns()
 
             # Calibration Hook
@@ -270,7 +246,6 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
                 "cfar": final_cfar.astype(np.float32).tobytes() if final_cfar is not None else b"",
                 "cluster_count": len(centroids) if centroids else 0,
                 "clusters": clusters_meta,
-                "tracks": tracked_objects,
                 # Additional keys for internal tracking or alternative consumers
                 "rdm_centroids": centroids_map,
                 "dbscan_2d": dbscan_data_2d
@@ -292,10 +267,10 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
                     f"[PROCESSING] FPS: {fps:.2f} | Avg: {avg_interval * 1000:.1f}ms | "
                     f"Total: {(t6 - t0) // 1_000}us, RDM: {(t2 - t1) // 1_000}us, CFAR: {(t3 - t2) // 1_000}us, "
                     f"ANGLE: {(t4 - t3) // 1_000}us, 3D_MAP: {(t4b - t4) // 1_000}us, DBSCAN3D: {(t4c - t4b) // 1_000}us, "
-                    f"CENTROID: {(t5 - t4c) // 1_000}us, TRACK: {(t5_extra - t5) // 1_000}us, PACK: {(t6 - t5_extra) // 1_000}us"
+                    f"CENTROID: {(t5 - t4c) // 1_000}us"
                 )
                 print(
-                    f"CFAR Detections: {np.sum(cfar_data > 0)} | 3D Clusters: {len(centroids) if centroids else 0} | Tracks: {len(tracked_objects)}"
+                    f"CFAR Detections: {np.sum(cfar_data > 0)} | 3D Clusters: {len(centroids) if centroids else 0}"
                 )
 
         except Exception as e:
@@ -340,7 +315,6 @@ def socket_process(processed_queue, server_url, node_id):
                 "cfar": data.get("cfar", b""),
                 "cluster_count": data.get("cluster_count", 0),
                 "clusters": data.get("clusters", []),
-                "tracks": data.get("tracks", []),
             })
         except Exception as e:
             print(f"[SOCKET] Send error: {e}")

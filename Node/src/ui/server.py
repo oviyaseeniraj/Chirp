@@ -162,7 +162,6 @@ def process_frame(data):
         "detections": detections,
         "cluster_count": data.get("cluster_count", 0),
         "clusters": data.get("clusters", []),
-        "tracks": data.get("tracks", []),
         "mime": "image/jpeg"
     }
     return payload, proc_time

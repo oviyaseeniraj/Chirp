@@ -124,6 +124,14 @@ class CaptureSession:
             file_path = os.path.join(input_dir, filename)
             data = np.load(file_path)
             
+            if data_type == "raw":
+                # Raw data from the radar is interleaved IQ, usually uint16 in the buffer
+                # but physically represents signed values. View as int16.
+                data_int = data.view(np.int16)
+                # Convert to complex: I + jQ (interleaved)
+                # We use float32 for the complex components.
+                data = data_int[0::2].astype(np.float32) + 1j * data_int[1::2].astype(np.float32)
+            
             # TFG.py Re-shaping logic check:
             # TFG.py: 
             #   frame_data = daq.process_v6().copy()

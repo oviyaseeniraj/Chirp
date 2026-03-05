@@ -39,10 +39,11 @@ echo "Select a test to run:"
 echo "1) Full Integration Test (Live Radar + UI)"
 echo "2) Data Capture (Save to Node/data)"
 echo "3) Playback Test (Read from Node/data)"
-echo "4) Reset Radar"
-echo "5) Exit"
+echo "4) Convert Playback (option 3) Raw Data to .mat"
+echo "5) Reset Radar"
+echo "6) Exit"
 echo "------------------------------------------"
-read -p "Choice [1-5]: " test_choice
+read -p "Choice [1-6]: " test_choice
 
 # Determine python executable
 if [ -f "$NODE_DIR/.venv/bin/python3" ]; then
@@ -168,13 +169,24 @@ case $test_choice in
         ;;
     4)
         echo ""
+        echo ">>> Converting Raw Data to .mat..."
+        read -p "Enter input directory (default: $DATA_DIR/raw): " input_dir
+        input_dir=${input_dir:-$DATA_DIR/raw}
+        
+        read -p "Enter output filename (default: $DATA_DIR/raw_data.mat): " output_file
+        output_file=${output_file:-$DATA_DIR/raw_data.mat}
+        
+        $PYTHON_EXEC "$NODE_DIR/test/capture_data.py" --convert --input-dir "$input_dir" --output-file "$output_file" --type "raw"
+        ;;
+    5)
+        echo ""
         echo "resetting radar"
         sudo bash $NODE_DIR/scripts/reset_radar.sh
         # Clear lockfile so next run re-initializes
         rm -f "/tmp/chirp_radar_status"
         ;;
 
-    5)
+    6)
         echo "Exiting."
         exit 0
         ;;

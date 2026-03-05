@@ -304,8 +304,9 @@ def default_rda_EKF(initial_state=None,
 
 
 def main():
-    dt = 1.0
 
+
+    dt = 0.25
     measurements = np.array([
         [5.0, 4.5, 0.03],
         [9.5, 4.6, 0.03],

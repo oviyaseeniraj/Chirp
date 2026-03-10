@@ -42,16 +42,13 @@ class TrackerBase(ABC):
     """
 
     @abstractmethod
-    def update(self, pos: np.ndarray, vel: np.ndarray):
+    def update(self, detections: list):
         """
         Args:
-            pos: Raw Cartesian position [x, y] in metres.
-            vel: Raw Cartesian velocity [vx, vy] in m/s.
+            detections: List of detection dicts (e.g. from Node output).
 
         Returns:
-            s_pos (np.ndarray): Smoothed/filtered position [x, y].
-            s_vel (np.ndarray): Smoothed/filtered velocity [vx, vy].
-            is_outlier (bool): True if the raw point was flagged as an outlier.
+            tracks: List of track dicts, each with 'pos' [x, y] and 'vel' [vx, vy].
         """
         ...
 
@@ -60,11 +57,28 @@ class TrackerBase(ABC):
 # Example tracker: pass-through (no filtering)
 # ---------------------------------------------------------------------------
 
-class PassthroughTracker(TrackerBase):
-    """Returns raw detections unchanged. Useful as a baseline."""
+    def _polar_to_cartesian(self, range_idx, angle_rad):
+        r = range_idx * config.RANGE_RES
+        return r * np.sin(angle_rad), r * np.cos(angle_rad)
 
-    def update(self, pos, vel):
-        return pos.copy(), vel.copy(), False
+    def update(self, detections):
+        if not detections:
+            return []
+        
+        # Passthrough just picks the first one for backward compatibility or simplistic visualization
+        c = detections[0]
+        # Support both 'range_idx'/'angle_rad' (Node format) and [range, doppler, angle_deg] (JPDA format)
+        if isinstance(c, dict):
+            px, py = self._polar_to_cartesian(c.get('range_idx', 0), c.get('angle_rad', 0))
+            v_rad = (c.get('doppler_idx', 32) - 32) * 0.1 # simplified
+            vx = v_rad * np.sin(c.get('angle_rad', 0))
+            vy = v_rad * np.cos(c.get('angle_rad', 0))
+        else:
+            r, rr, angle = c[0], c[1], c[2]
+            px, py = r * np.sin(np.deg2rad(angle)), r * np.cos(np.deg2rad(angle))
+            vx, vy = rr * np.sin(np.deg2rad(angle)), rr * np.cos(np.deg2rad(angle))
+
+        return [{'pos': np.array([px, py]), 'vel': np.array([vx, vy]), 'is_outlier': False, 'id': 1}]
 
 
 # ---------------------------------------------------------------------------
@@ -128,54 +142,73 @@ class CentroidAnimator:
         scatter = ax.scatter([], [], c=[], s=80, edgecolors='black',
                             linewidths=0.5, cmap='bwr', vmin=0, vmax=1, zorder=5)
         trail_pts, = ax.plot([], [], 'o', color='lightblue', markersize=2, alpha=0.3, zorder=3)
+        # Status text
         frame_text = ax.text(0.02, 0.95, '', transform=ax.transAxes, fontsize=12,
                             fontweight='bold', bbox=dict(facecolor='white', alpha=0.5))
 
-        history_x, history_y = [], []
-        self._quiver = None  # current arrow artist
+        self._track_artists = {} # id -> {'scatter': ..., 'quiver': ..., 'trail': ...}
+        self._history = {} # id -> {'x': [], 'y': []}
 
         def update(frame_idx):
-            nonlocal history_x, history_y
-
-            # Remove previous arrow
-            if self._quiver is not None:
-                self._quiver.remove()
-                self._quiver = None
-
             if frame_idx >= len(self.frames):
                 return
 
             detections = self.frames[frame_idx].get('clusters', [])
+            
+            # Update tracks
+            tracks = tracker.update(detections)
+            
+            # Basic track cleanup (remove artists for tracks that disappeared)
+            active_ids = {t['id'] for t in tracks}
+            for tid in list(self._track_artists.keys()):
+                if tid not in active_ids:
+                    self._track_artists[tid]['scatter'].remove()
+                    self._track_artists[tid]['quiver'].remove()
+                    self._track_artists[tid]['trail'].remove()
+                    del self._track_artists[tid]
 
-            if not detections:
-                scatter.set_offsets(np.empty((0, 2)))
-                frame_text.set_text(f'Frame: {frame_idx}/{len(self.frames)} [EMPTY]')
-                return
+            for t in tracks:
+                tid = t['id']
+                pos = t['pos']
+                vel = t['vel']
+                is_outlier = t.get('is_outlier', False)
 
-            raw_pos, raw_vel = self._pick_detection(detections)
-            s_pos, s_vel, is_outlier = tracker.update(raw_pos, raw_vel)
-            self.last_xy = s_pos
+                if tid not in self._track_artists:
+                    # Create new artists for this track
+                    sc = ax.scatter([], [], s=80, edgecolors='black', linewidths=0.5, 
+                                   cmap='bwr', vmin=0, vmax=1, zorder=5)
+                    tr, = ax.plot([], [], 'o', markersize=2, alpha=0.3, zorder=3)
+                    # Quiver is tricky, we'll store its parameters and update
+                    self._track_artists[tid] = {
+                        'scatter': sc,
+                        'trail': tr,
+                        'quiver': None,
+                        'color': plt.cm.tab10(tid % 10)
+                    }
+                    self._history[tid] = {'x': [], 'y': []}
+                    tr.set_color(self._track_artists[tid]['color'])
 
-            scatter.set_offsets(s_pos.reshape(1, 2))
-            scatter.set_array(np.array([1.0 if is_outlier else 0.0]))
+                artists = self._track_artists[tid]
+                artists['scatter'].set_offsets(pos.reshape(1, 2))
+                artists['scatter'].set_array(np.array([1.0 if is_outlier else 0.0]))
+                
+                if artists['quiver'] is not None:
+                    artists['quiver'].remove()
+                
+                artists['quiver'] = ax.quiver(
+                    pos[0], pos[1], vel[0], vel[1],
+                    color=artists['color'], alpha=0.8, scale=0.5, scale_units='xy',
+                    width=0.01, headwidth=4, headlength=4, zorder=6
+                )
 
-            # Quiver must be recreated each frame — blit=False + remove() is the
-            # standard workaround for Matplotlib Quiver in animations.
-            self._quiver = ax.quiver(
-                s_pos[0], s_pos[1], s_vel[0], s_vel[1],
-                color='orange', alpha=0.95, scale=0.5, scale_units='xy',
-                width=0.012, headwidth=4, headlength=4, zorder=6
-            )
+                self._history[tid]['x'].append(pos[0])
+                self._history[tid]['y'].append(pos[1])
+                if len(self._history[tid]['x']) > 50:
+                    self._history[tid]['x'].pop(0)
+                    self._history[tid]['y'].pop(0)
+                artists['trail'].set_data(self._history[tid]['x'], self._history[tid]['y'])
 
-            history_x.append(s_pos[0])
-            history_y.append(s_pos[1])
-            if len(history_x) > 200:
-                history_x = history_x[-200:]
-                history_y = history_y[-200:]
-            trail_pts.set_data(history_x, history_y)
-
-            status = " [OUTLIER]" if is_outlier else ""
-            frame_text.set_text(f'Frame: {frame_idx}/{len(self.frames)}{status}')
+            frame_text.set_text(f'Frame: {frame_idx}/{len(self.frames)} - Tracks: {len(tracks)}')
 
         anim = FuncAnimation(fig, update, frames=len(self.frames), interval=100, blit=False)
         print(f"Saving to {output_file}...")

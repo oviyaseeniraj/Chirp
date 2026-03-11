@@ -7,5 +7,7 @@ python-socketio==5.16.0
 Jinja2==3.1.6
 psutil==7.2.2
 pyFFTW==0.15.0
-paho-mqtt
+paho-mqtt==2.1.0
+requests==2.32.5
+websocket-client==1.9.0
 scikit-learn==1.6.1

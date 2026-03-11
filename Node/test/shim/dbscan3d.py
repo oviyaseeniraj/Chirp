@@ -532,7 +532,7 @@ def dbscan_process(detection_coords, shape):
     return dbscan_data_2d, dbscan_angles, centroids
 
 #more efficient to compute centroids along with dbscan clustering
-def centroid_process(centroids, shape):
+def centroids_visualize(centroids, shape):
     #CENTROIDS ==============
 
     # Create centroids map for plotting

@@ -10,12 +10,14 @@ import numpy as np
 import psutil
 import socketio
 import torch
-from dbscan3d import dbscan_process, centroid_process
+from dbscan3d import dbscan_process, centroids_visualize
 
 # from new_pipe import daq_fast
 from new_pipe.angle import angle_fft
 from collections import defaultdict
 import threading
+
+from new_pipe.stone_soup_ekf import StoneSoupJPDATracker
 
 # -------- Calibration Manager --------
 class CalibrationManager:
@@ -299,75 +301,22 @@ def daq_process(raw_queue):
 
 
 def processing_process(raw_queue, processed_queue):
-    #input: centroid contains range, doppler, angle
-    #output contains: [x, y, vx, vy]
-        def create_ekf():
-            # State: [range, doppler, angle, vx, vy, omega]
-            ekf = ExtendedKalmanFilter(dim_x=6, dim_z=3)
-            ekf.x = np.zeros(6)
-            ekf.P *= 10.
-            # State transition: constant velocity + angular velocity
-            ekf.F = np.array([
-                [1,0,0,1,0,0],  # range += vx
-                [0,1,0,0,1,0],  # doppler += vy
-                [0,0,1,0,0,1],  # angle += omega
-                [0,0,0,1,0,0],  # vx
-                [0,0,0,0,1,0],  # vy
-                [0,0,0,0,0,1],  # omega
-            ])
-            ekf.Q = np.eye(6) * 0.01
-            # Measurement noise from dbscan tuning
-            sigma_range = 0.035
-            sigma_doppler = 0.2  # For 64 chirps per frame
-            sigma_azimuth = np.pi / 4
-            measurement_noise = np.array(
-                [[sigma_range**2, 0, 0], [0, sigma_doppler**2, 0], [0, 0, sigma_azimuth**2]]
-            )
-            ekf.R = measurement_noise
-            ekf.H = np.array([
-                [1,0,0,0,0,0],  # range
-                [0,1,0,0,0,0],  # doppler
-                [0,0,1,0,0,0],  # angle
-            ])
-            return ekf
-
-        ekf_dict = defaultdict(lambda: create_ekf())
-
-        def apply_ekf_to_centroids(centroids, node_id='default'):
-            # centroids: list/array of (range, doppler, angle)
-            # Output: [x, y, vx, vy] in Cartesian coordinates
-            if centroids is None or len(centroids) == 0:
-                return np.array([]).reshape(0, 4)
-            ekf = ekf_dict[node_id]
-            filtered = []
-            for c in centroids:
-                z = np.array([c[0], c[1], c[2]])  # [range, doppler, angle]
-                ekf.predict()
-                ekf.update(z)
-                # Extract state: [range, doppler, angle, vx_polar, vy_polar, omega]
-                range_val = ekf.x[0]
-                angle_val = ekf.x[2]
-                vx_polar = ekf.x[3]
-                vy_polar = ekf.x[4]
-                
-                # Convert to Cartesian coordinates
-                x = range_val * np.cos(angle_val)
-                y = range_val * np.sin(angle_val)
-                # Velocity in Cartesian frame (approximate radial velocity in polar to vx, vy)
-                vx = vx_polar * np.cos(angle_val) - vy_polar * np.sin(angle_val)
-                vy = vx_polar * np.sin(angle_val) + vy_polar * np.cos(angle_val)
-                
-                # Output: [x, y, vx, vy]
-                filtered.append([x, y, vx, vy])
-            return np.array(filtered, dtype=np.float32)
-
-        
     """Process raw data through RDM, CFAR, angle estimation, and 3D DBSCAN"""
     # Pin to CPU core 1
     psutil.Process(os.getpid()).cpu_affinity([1])
     print("[PROCESSING] Running on core 1")
 
     rdm = RangeDoppler(window="blackman", alpha=0.1)
+
+    jpda =  StoneSoupJPDATracker( 
+                 dt = 0.1,
+                 detection_probability = 0.9,
+                 clutter_density = 0.01,
+                 gate_probability = 0.99,
+                 sigma_a = 0.1,
+                 sigma_range = 0.035,
+                 sigma_doppler = 0.0767,
+                 sigma_angle = np.pi / 4.0)
 
     # FPS tracking
     last_frame_time = None
@@ -379,12 +328,6 @@ def processing_process(raw_queue, processed_queue):
     m_angle_data = np.zeros((RANGE_BINS, DOPPLER_BINS), dtype=np.float32)
     m_cluster_data = np.zeros((RANGE_BINS, DOPPLER_BINS), dtype=np.float32)
 
-    import pickle
-    node_id = os.getenv('NODE_ID', 'node1')
-    calibration_save_file = f"calibration_data_{node_id}.pkl"
-    calibration_data_dict = {}
-    save_interval = 10  # Save every N frames
-    frame_num = 0
     import pickle
     node_id = os.getenv('NODE_ID', 'node1')
     calibration_save_file = f"calibration_data_{node_id}.pkl"
@@ -467,18 +410,16 @@ def processing_process(raw_queue, processed_queue):
 
         # Apply EKF to centroids immediately after extraction
         # centroids_ekf output: [x, y, vx, vy] in Cartesian coordinates
-        centroids_ekf = apply_ekf_to_centroids(centroids, node_id=node_id)
+        #centroids_ekf = apply_ekf_to_centroids(centroids, node_id=node_id)
         
         # For visualization, continue using original centroids mapped to 2D
-        centroids_map, centroids_angles = centroid_process(centroids, cfar_data.shape)
+        centroids_map, centroids_angles = centroids_visualize(centroids, cfar_data.shape)
 
-        # --- Calibration Data Hook (save EKF-filtered centroids in Cartesian) ---
-        # Store [x, y, vx, vy] for real-time calibration
-        if centroids_ekf is not None and len(centroids_ekf) > 0:
-            calibration_data_dict[frame_num] = np.array(centroids_ekf)
-        if frame_num % save_interval == 0 and len(calibration_data_dict) > 0:
-            with open(calibration_save_file, 'wb') as f:
-                pickle.dump(calibration_data_dict, f)
+        t4c = time.perf_counter_ns() 
+
+        confirmed_tracks, tentative_tracks = jpda.process_frame(centroids,current_time)
+
+        print(confirmed_tracks)
 
         #print(dbscan_data_2d)
         t5 = time.perf_counter_ns()
@@ -514,7 +455,7 @@ def processing_process(raw_queue, processed_queue):
             "angles": centroids_angles,
             "dbscan_data_2d": dbscan_data_2d,
             "detection_coords": detection_coords_3d if len(detection_coords_3d) > 0 else np.array([]),
-            "centroids_ekf": centroids_ekf if centroids_ekf is not None and len(centroids_ekf) > 0 else np.array([]),
+            "centroids_ekf": confirmed_tracks if confirmed_tracks is not None and len(confirmed_tracks) > 0 else np.array([]),
             "node_id": node_id,
             "frame_num": frame_num,
         }

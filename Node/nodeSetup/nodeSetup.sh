@@ -58,7 +58,7 @@ rm -rf JETGPIO
 popd
 
 #python
-sudo apt install python3.10-venv
+sudo apt install python3.10-venv -y
 
 # network setup
 INTERFACE=$(nmcli device status | grep ethernet | awk '{print $1}' | head -n 1)

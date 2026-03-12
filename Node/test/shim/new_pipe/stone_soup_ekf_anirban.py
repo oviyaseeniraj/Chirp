@@ -61,45 +61,50 @@ class RDANonLinearMeasurementModel(NonLinearGaussianMeasurement):
 
 
 class StoneSoupJPDATracker:
-    """
-    Multi-target JPDA tracker using Stone Soup framework.
-    
-    Uses PDAHypothesiser and JPDA data associator for proper JPDA implementation.
-    """
-    
-    def __init__(self, 
-                 dt: float = 0.1,
-                 detection_probability: float = 0.9,
-                 clutter_density: float = 0.01,
-                 gate_probability: float = 0.99,
-                 sigma_a: float = 0.1,
-                 sigma_range: float = 0.035,
-                 sigma_doppler: float = 0.0767,
-                 sigma_angle: float = np.pi / 4.0):
-        """
-        Initialize JPDA tracker.
+    def _setup_components(self, kwargs):
+        """Initializes transition models and noise parameters."""
+        # Noise parameters (defaults matched to your MATLAB/Python config)
+        sigma_a = kwargs.get('sigma_a', 0.1)
+        sigma_range = kwargs.get('sigma_range', 0.1)
+        sigma_doppler = kwargs.get('sigma_doppler', 0.1)
+        sigma_angle = kwargs.get('sigma_angle', np.pi / 4.0)
+
+        # Transition model: Combined Constant Velocity in 2D
+        # State vector: [x, vx, y, vy]
+        self.transition_model = CombinedLinearGaussianTransitionModel([
+            ConstantVelocity(sigma_a**2),
+            ConstantVelocity(sigma_a**2)
+        ])
+
+        # Initialize Stone Soup measurement model
+        self.measurement_model = RDANonLinearMeasurementModel(
+            ndim_state=4,
+            mapping=(0, 1, 2, 3),
+            noise_covar=CovarianceMatrix(np.diag([
+                sigma_range**2,
+                sigma_doppler**2,
+                sigma_angle**2
+            ]))
+        )
         
-        Args:
-            dt: Expected time step between frames (seconds)
-            detection_probability: P(detection | target exists)
-            clutter_density: False alarm density (per unit volume)
-            gate_probability: Gating probability (e.g., 0.99 for chi-squared gating)
-            sigma_a: Process noise (acceleration std dev, m/s²)
-            sigma_range: Range measurement noise (meters)
-            sigma_doppler: Doppler measurement noise (m/s)
-            sigma_angle: Angle measurement noise (radians)
-        """
+    def __init__(self, dt=0.1, detection_probability=0.9, clutter_density=0.01, gate_probability=0.99, **kwargs):
+        sigma_a = kwargs.get('sigma_a', 0.1)
+        sigma_range = kwargs.get('sigma_range', 0.1)
+        sigma_doppler = kwargs.get('sigma_doppler', 0.1)
+        sigma_angle = kwargs.get('sigma_angle', np.pi / 4.0)
+
         self.dt = dt
-        self.detection_probability = detection_probability
+        self.prob_detect = detection_probability
         self.clutter_density = clutter_density
         self.gate_probability = gate_probability
         
-        # Initialize Stone Soup transition model using built-in ConstantVelocity
-        # Create independent CV models for x and y dimensions
-        cv_x = ConstantVelocity(noise_diff_coeff=sigma_a**2)
-        cv_y = ConstantVelocity(noise_diff_coeff=sigma_a**2)
-        self.transition_model = CombinedLinearGaussianTransitionModel([cv_x, cv_y])
+        # Standard Stone Soup setup
+        self._setup_components(kwargs)
         
+        self.next_track_id = 1
+        self.tracks: Dict[int, Track] = {}
+        self.track_metadata: Dict[int, Dict] = {}
+
         # Initialize Stone Soup measurement model
         self.measurement_model = RDANonLinearMeasurementModel(
             ndim_state=4,
@@ -181,42 +186,57 @@ class StoneSoupJPDATracker:
                 tentative.append(track_dict)
         return confirmed, tentative
 
-    def initialise_track(self, detection: Detection, track_id: int) -> Track:
+    # ...existing code...
+    def initialise_new_tracks(self, detections: List[Detection], associations: Dict) -> None:
         """
-        Create a new tentative track from a detection.
-        
-        Args:
-            detection: Detection object
-            track_id: Unique track identifier
-        
-        Returns:
-            New Track object
+        Create new tracks from detections that are not strongly claimed by existing tracks.
+        Matches MATLAB claim < threshold_init logic.
         """
-        # Convert measurement to state estimate
+        # threshold_init = 0.05 from MATLAB code
+        threshold_init = 0.05
+
+        for detection in detections:
+            # Calculate 'Claim': Max probability any track identifies with this detection
+            claim = 0.0
+            if associations:
+                for multi_hypothesis in associations.values():
+                    for hypothesis in multi_hypothesis:
+                        if hypothesis.measurement == detection:
+                            prob = float(getattr(hypothesis, 'probability', 0.0))
+                            if prob > claim:
+                                claim = prob
+
+            # If no existing track strongly claims this detection, spawn a new one
+            if claim < threshold_init:
+                track_id = self.next_track_id
+                self.next_track_id += 1
+                
+                # Create the initial track object
+                new_track = self._create_new_track_object(detection, track_id)
+                self.tracks[track_id] = new_track
+                
+                # Initialize metadata with 8-bit history matching MATLAB
+                self.track_metadata[track_id] = {
+                    'status': 'Tentative',
+                    'hits': 1,
+                    'consecutive_misses': 0,
+                    'bit_vector': [0, 0, 0, 0, 0, 0, 0, 1], # 8-bit history window
+                    'prob_history': [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+                    'frame_count': 1
+                }
+
+    def _create_new_track_object(self, detection: Detection, track_id: int) -> Track:
+        """Helper to convert detection to initial state and Track object."""
         z = np.asarray(detection.state_vector).flatten()
         x_init = self._measurement_to_state(z)
         
-        # Create initial state
         initial_state = GaussianState(
             StateVector(x_init),
             CovarianceMatrix(self.initial_covar),
             timestamp=detection.timestamp
         )
         
-        # Create track
-        track = Track([initial_state], id=str(track_id))
-        
-        # Store metadata
-        self.track_metadata[track_id] = {
-            'status': 'Tentative',
-            'frame_count': 1,
-            'hits': 1,
-            'consecutive_misses': 0,
-            'hit_history': [1],
-        }
-        
-        return track
-
+        return Track([initial_state], id=str(track_id))
     
     def compute_pairwise_mahalanobis_distances(self, tracks_list: List[Dict], position_only: bool = False) -> Dict[Tuple[int, int], float]:
         """
@@ -337,178 +357,93 @@ class StoneSoupJPDATracker:
             track.append(prediction)
     
     def update(self, detections: List[Detection], timestamp: datetime, associations: Dict = None) -> None:
-        """
-        Update tracks with detections using JPDA.
-        
-        Args:
-            detections: List of Detection objects
-            timestamp: Current timestamp
-        """
+        """Matched to MATLAB: Soft JPDA Weighted Update (correctjpda equivalent)."""
         if not self.tracks or not detections:
-            # No tracks or detections to update
-            if self.tracks:
-                # Mark all tracks as missed
-                for track_id in self.tracks.keys():
-                    self.track_metadata[track_id]['consecutive_misses'] += 1
-                    self.track_metadata[track_id]['hit_history'].append(0)
-                    self.track_metadata[track_id]['frame_count'] += 1
+            for tid in self.tracks:
+                self._register_miss(tid)
             return
-        
-        # Perform JPDA data association
-        # Returns a mapping from tracks to MultipleHypothesis objects
+
         if associations is None:
-            # Fallback for manual calls to update
-            associations = self.data_associator.associate(
-                tracks=set(self.tracks.values()),
-                detections=set(detections),
-                timestamp=timestamp
-            )
-        
-        # Update tracks based on JPDA associations
+            associations = self.data_associator.associate(set(self.tracks.values()), set(detections), timestamp)
+
         for track_id, track in self.tracks.items():
-            # Find association for this track
             multi_hypothesis = associations.get(track)
+            if not multi_hypothesis:
+                self._register_miss(track_id)
+                continue
+
+            # Calculate Effective Hit Probability (Sum of detection hypotheses)
+            prob_hit = sum(float(h.probability) for h in multi_hypothesis if h.measurement is not None)
             
-            if len(multi_hypothesis) > 1:
-                print("Track Hit:",track_id)
+            # MATLAB threshold_hit_miss = 0.3
+            if prob_hit < 0.3:
+                self._register_miss(track_id)
+                continue
+
+            # Soft Update: Moment Matching (True JPDA)
+            try:
+                # Weighted mean state
+                posteriors = []
+                weights = []
                 for h in multi_hypothesis:
-                    print(h.probability, h.measurement.state_vector)
-                    
+                    p = float(h.probability)
+                    if p > 0:
+                        weights.append(p)
+                        # If measurement is None, use prediction as posterior branch
+                        posteriors.append(self.updater.update(h) if h.measurement else h.prediction)
 
-            #print(multi_hypothesis)
-            if multi_hypothesis and len(multi_hypothesis) > 0:
-                # JPDA returns multiple hypotheses with probabilities
-                def _prob(h):
-                    p = getattr(h, "probability", 0.0)
-                    return float(p) if p is not None else 0.0
+                # Fuse using Mixture of Gaussians (Moment Matching)
+                x_fused = sum(w * p.state_vector for w, p in zip(weights, posteriors))
+                # Covariance includes spreading term
+                P_fused = sum(w * (p.covar + (p.state_vector - x_fused) @ (p.state_vector - x_fused).T) 
+                              for w, p in zip(weights, posteriors))
 
-                def _valid_meas_hypothesis(h):
-                    m = getattr(h, "measurement", None)
-                    if m is None:
-                        return False
-                    z = getattr(m, "state_vector", None)
-                    if z is None:
-                        return False
-                    arr = np.asarray(z, dtype=object).reshape(-1)
-                    if arr.size == 0 or any(v is None for v in arr):
-                        return False
-                    try:
-                        arr_f = arr.astype(float)
-                    except Exception:
-                        return False
-                    return np.all(np.isfinite(arr_f))
+                track.append(GaussianState(x_fused, P_fused, timestamp=timestamp))
+                self._register_hit(track_id, prob_hit)
+            except Exception:
+                self._register_miss(track_id)
 
-                ranked = sorted(multi_hypothesis, key=_prob, reverse=True)
-                top_hypotheses = [h for h in ranked if _valid_meas_hypothesis(h)][:3]
+    def _register_hit(self, track_id, prob):
+        meta = self.track_metadata[track_id]
+        meta['hits'] += 1
+        meta['consecutive_misses'] = 0
+        # Update Bit Vector (MATLAB: update_association_bit_vector)
+        meta['bit_vector'] = (meta['bit_vector'][1:] + [1])
+        meta['prob_history'] = (meta['prob_history'][1:] + [prob])
 
-                if top_hypotheses:
-                    posteriors = []
-                    weights = []
+    def _register_miss(self, track_id):
+        meta = self.track_metadata[track_id]
+        meta['consecutive_misses'] += 1
+        meta['bit_vector'] = (meta['bit_vector'][1:] + [0])
+        meta['prob_history'] = (meta['prob_history'][1:] + [0.0])
 
-                    for h in top_hypotheses:
-                        try:
-                            p = max(_prob(h), 0.0)
-                            post = self.updater.update(h)
-                            posteriors.append(post)
-                            weights.append(p)
-                        except Exception as e:
-                            print(f"Skipping invalid hypothesis for track {track_id}: {e}")
 
-                    if posteriors:
-                        w_sum = sum(weights)
-                        if w_sum <= 0:
-                            weights = [1.0 / len(posteriors)] * len(posteriors)
-                        else:
-                            weights = [w / w_sum for w in weights]
-
-                        x = np.zeros_like(np.asarray(posteriors[0].state_vector, dtype=float))
-                        P = np.zeros_like(np.asarray(posteriors[0].covar, dtype=float))
-                        for w, p in zip(weights, posteriors):
-                            x += w * np.asarray(p.state_vector, dtype=float)
-                            P += w * np.asarray(p.covar, dtype=float)
-
-                        fused_posterior = GaussianState(
-                            StateVector(x),
-                            CovarianceMatrix(P),
-                            timestamp=timestamp
-                        )
-                        track.append(fused_posterior)
-
-                        #print('hit')
-
-                        self.track_metadata[track_id]['hits'] += 1
-                        self.track_metadata[track_id]['consecutive_misses'] = 0
-                        self.track_metadata[track_id]['hit_history'].append(1)
-                    else:
-                        self.track_metadata[track_id]['consecutive_misses'] += 1
-                        self.track_metadata[track_id]['hit_history'].append(0)
-                else:
-                    # Only null/missed-detection or invalid hypotheses
-                    self.track_metadata[track_id]['consecutive_misses'] += 1
-                    self.track_metadata[track_id]['hit_history'].append(0)
-# ...existing code...
-            self.track_metadata[track_id]['frame_count'] += 1
-
+    def initialise_track(self, detection: Detection, track_id: int) -> Track:
+        # ... existing conversion ...
+        self.track_metadata[track_id] = {
+            'status': 'Tentative',
+            'hits': 1,
+            'consecutive_misses': 0,
+            'bit_vector': [0, 0, 0, 0, 0, 0, 0, 1], # 8-bit history
+            'prob_history': [0, 0, 0, 0, 0, 0, 0, 1.0]
+        }
+        return track
     
-    def initialise_new_tracks(self, 
-                             detections: List[Detection],
-                             associations: Dict) -> None:
-        """
-        Create new tracks from unassociated detections.
-        
-        Args:
-            detections: All detections this frame
-            associations: Association results from JPDA
-        """
-        # Find detections not associated with any track
-        associated_detections = set()
-        for multi_hypothesis in associations.values():
-            for hypothesis in multi_hypothesis:
-                if hypothesis.measurement:
-                    associated_detections.add(hypothesis.measurement)
-        
-        # Create tracks from unassociated detections
-        unassociated = [d for d in detections if d not in associated_detections]
-        
-        for detection in unassociated:
-            track_id = self.next_track_id
-            self.next_track_id += 1
-            
-            track = self.initialise_track(detection, track_id)
-            self.tracks[track_id] = track
-    
-    def manage_tracks(self,
-                     min_detections: int = 5,
-                     max_consecutive_misses: int = 10,
-                     max_consecutive_misses_tentative: int = 5) -> None:
-        """
-        Confirm tentative tracks and delete stale tracks.
-        
-        Args:
-            min_detections: Minimum hits to confirm
-            max_consecutive_misses: Max misses before deletion
-        """
-        track_ids_to_delete = []
-        
-        for track_id, metadata in self.track_metadata.items():
-            # Confirmation
-            if metadata['status'] == 'Tentative' and metadata['hits'] >= min_detections:
-                metadata['status'] = 'Confirmed'
-                print(f"Track {track_id} confirmed with {metadata['hits']} hits")
-            
-            # Deletion
-            if metadata['status'] == 'Tentative' and metadata['consecutive_misses'] >= max_consecutive_misses_tentative:
-                track_ids_to_delete.append(track_id)
+    def manage_tracks(self):
+        """Matched to MATLAB: Bit-vector density confirmation."""
+        to_delete = []
+        for tid, meta in self.track_metadata.items():
+            # Confirmation: 5 hits in last 8 frames (nnz of bit vector)
+            if meta['status'] == 'Tentative' and sum(meta['bit_vector']) >= 5:
+                meta['status'] = 'Confirmed'
 
-            if metadata['status'] == 'Confirmed' and metadata['consecutive_misses'] >= max_consecutive_misses:
-                track_ids_to_delete.append(track_id)
-                if metadata['status'] == 'Confirmed':
-                    print(f"Track {track_id} deleted: {metadata['consecutive_misses']} consecutive misses")
-        
-        # Remove flagged tracks
-        for track_id in track_ids_to_delete:
-            del self.tracks[track_id]
-            del self.track_metadata[track_id]
+            # Deletion: 5 consecutive misses
+            if meta['consecutive_misses'] >= 5:
+                to_delete.append(tid)
+
+        for tid in to_delete:
+            del self.tracks[tid]
+            del self.track_metadata[tid]
     
     def process_frame(self,
                      detection_centroids: np.ndarray,
@@ -542,54 +477,49 @@ class StoneSoupJPDATracker:
             self.initialise_new_tracks(detections, associations)
 
         # New Step: Merge similar tracks BEFORE management
-        self.merge_tracks(threshold=30.0)
+        self.remove_duplicates(threshold=30.0)
         
         # Step 4: Manage tracks
-        self.manage_tracks(2,10,5)
+        self.manage_tracks()
         
         # Extract results
         return self._extract_track_results()
-    def merge_tracks(self, threshold: float = 30.0):
-        """
-        Merge tracks that are close in Mahalanobis distance.
-        Keeps the track with more 'Hits'.
-        """
-        all_track_dicts = []
-        # Create temporary dicts for the distance calculator
-        for tid, track in self.tracks.items():
-            meta = self.track_metadata[tid]
-            all_track_dicts.append({
-                'TrackID': tid,
-                'State': track[-1].state_vector.flatten(),
-                'StateCovariance': track[-1].covar
-            })
-
-        distances = self.compute_pairwise_mahalanobis_distances(all_track_dicts, position_only=False)
-        
+    def remove_duplicates(self, threshold=7.0):
+        """Matched to MATLAB: remove_duplicates using strength."""
+        track_ids = list(self.tracks.keys())
         to_delete = set()
-        for (id_a, id_b), dist in distances.items():
-            if dist < threshold:
-                # Decide which one to keep (prefer Confirmed, then more Hits)
-                meta_a = self.track_metadata[id_a]
-                meta_b = self.track_metadata[id_b]
+
+        # Strength = 0.5 * avg_prob + 0.5 * is_confirmed
+        strengths = {}
+        for tid in track_ids:
+            meta = self.track_metadata[tid]
+            avg_p = np.mean(meta['prob_history'])
+            conf = 1.0 if meta['status'] == 'Confirmed' else 0.0
+            strengths[tid] = 0.5 * avg_p + 0.5 * conf
+
+        for i, id1 in enumerate(track_ids):
+            if id1 in to_delete: continue
+            for id2 in track_ids[i+1:]:
+                if id2 in to_delete: continue
                 
-                # Simple logic: Keep A if it has more hits, otherwise keep B
-                if meta_a['hits'] >= meta_b['hits']:
-                    to_delete.add(id_b)
-                else:
-                    to_delete.add(id_a)
+                dist = self._maha_dist(self.tracks[id1][-1], self.tracks[id2][-1])
+                if dist < threshold:
+                    # Delete the weaker one
+                    if strengths[id1] > strengths[id2]:
+                        to_delete.add(id2)
+                    else:
+                        to_delete.add(id1)
+                        break
 
         for tid in to_delete:
-            if tid in self.tracks:
-                del self.tracks[tid]
-                del self.track_metadata[tid]
-        
-        if len(to_delete) > 0:
-            print(f"Merged {len(to_delete)} duplicate tracks.")
+            del self.tracks[tid]
+            del self.track_metadata[tid]
+    def _maha_dist(self, state1, state2):
+        """MATLAB: maha2_avg logic."""
+        dx = state1.state_vector - state2.state_vector
+        P_avg = 0.5 * (state1.covar + state2.covar)
+        return np.sqrt(dx.T @ np.linalg.pinv(P_avg) @ dx)
 
-      
-        
-    
     def _extract_track_results(self) -> Tuple[List, List]:
         """Extract confirmed and tentative tracks."""
         confirmed = []

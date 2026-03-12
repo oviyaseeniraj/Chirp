@@ -18,7 +18,7 @@ from new_pipe.angle import angle_fft
 from collections import defaultdict
 import threading
 
-from new_pipe.stone_soup_ekf import StoneSoupJPDATracker
+from new_pipe.stone_soup_ekf_anirban import StoneSoupJPDATracker
 
 # -------- Calibration Manager --------
 class CalibrationManager:
@@ -309,15 +309,16 @@ def processing_process(raw_queue, processed_queue):
     rdm = RangeDoppler(window="blackman", alpha=0.1)
 
     #assume sampling at 15 HZ
-    jpda =  StoneSoupJPDATracker( 
-                 dt = 1/15,
-                 detection_probability = 0.9,
-                 clutter_density = 0.01,
-                 gate_probability = 0.99,
-                 sigma_a = 0.1,
-                 sigma_range = 0.035*2,
-                 sigma_doppler = 0.0767*2,
-                 sigma_angle = np.pi / 3.0)
+    jpda = StoneSoupJPDATracker(
+    dt=0.1,                          # 10Hz sampling
+    detection_probability=0.9,       # MATLAB Pd
+    clutter_density=0.01,            # Clutter model
+    gate_probability=0.99,           # Gating
+    sigma_a=0.1,                     # Process noise
+    sigma_range=0.1,                 # Range noise
+    sigma_doppler=0.1,               # Velocity noise
+    sigma_angle=np.pi/4.0            # Angle noise
+    )
 
     # FPS tracking
     last_frame_time = None
@@ -417,11 +418,25 @@ def processing_process(raw_queue, processed_queue):
 
         t4d = time.perf_counter_ns() 
 
-        confirmed_tracks, tentative_tracks = jpda.process_frame(centroids,datetime.now())
+        current_timestamp = datetime.now()
+        confirmed_tracks, tentative_tracks = jpda.process_frame(centroids, current_timestamp)
 
-        print("dist",jpda.average_tentative_mahalanobis_distance())
+        #tentative_tracks = []
+        #confirmed_tracks = []
+        print("tentative dist",jpda.average_tentative_mahalanobis_distance())
 
-        print("cent:",len(centroids))
+        print(len(centroids))
+        #print(confirmed_tracks)
+        #print("confirmed dist", jpda.compute_pairwise_mahalanobis_distances(confirmed_tracks,True))
+
+        print(f"Confirmed: {len(confirmed_tracks)} | Tentative: {len(tentative_tracks)}")
+
+        for track in confirmed_tracks:
+            tid = track['TrackID']
+            state = track['State'] # [x, y, vx, vy]
+            print(f"Track {tid} at x={state[0]:.2f}, y={state[1]:.2f}")
+
+        #print("cent:",len(centroids), np.sum(centroids_map))
         #confirmed_tracks = []
         print(len(tentative_tracks))
         #print([t['State'] for t in tentative_tracks])
@@ -456,7 +471,7 @@ def processing_process(raw_queue, processed_queue):
         # print(angle_data.dtype)
 
         output_data = {
-            "rdm": centroids_map,
+            "rdm": frame,
             "cfar": centroids_map,
             "angles": centroids_angles,
             "dbscan_data_2d": dbscan_data_2d,

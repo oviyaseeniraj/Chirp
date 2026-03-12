@@ -142,7 +142,7 @@ FS = 10e6                 # Sampling frequency (Hz)
 SLOPE = 70e12             # Frequency slope (Hz/s)
 C = 3e8                   # Speed of light (m/s)
 FC = 60.25e9              # Center frequency (Hz)
-IDLE_TIME = 100e-6        # Idle time (s)
+IDLE_TIME = 7e-6        # Idle time (s)
 RAMP_END_TIME = 60e-6     # Ramp end time (s)
 NUM_ADC_SAMPLES = 512      # Range bins
 NUM_CHIRPS = 64          # Doppler bins
@@ -154,7 +154,7 @@ RANGE_RES = 0.035
 # Velocity resolution: lambda / (2 * Total_Frame_Time)
 #LAMBDA = C / FC
 #VEL_RES = LAMBDA / (2 * NUM_CHIRPS * T_CHIRP)
-VEL_RES = 0.2
+VEL_RES = 0.1637*60/64
 # =========================================
 ...
 
@@ -334,7 +334,7 @@ def processing_process(raw_queue, processed_queue):
     jpda = StoneSoupJPDATracker(
     dt=0.1,                          # 10Hz sampling
     detection_probability=0.9,       # MATLAB Pd
-    clutter_density=0.05,            # Raised for multi-target (reduces over-claiming)
+    clutter_density=0.005,            # Raised for multi-target (reduces over-claiming)
     gate_probability=0.99,           # Gating
     sigma_a=0.1,                     # Process noise
     sigma_range=RANGE_RES,                 # Range noise
@@ -546,9 +546,9 @@ def processing_process(raw_queue, processed_queue):
         # print(angle_data.dtype)
 
         output_data = {
-            "rdm": frame,
+            "rdm": centroids_map,
             "cfar": cfar_data,
-            "angles": angle_data,
+            "angles": centroids_angles,
             "dbscan_data_2d": dbscan_data_2d,
             "detection_coords": detection_coords_3d if len(detection_coords_3d) > 0 else np.array([]),
             "centroids_ekf": confirmed_tracks if confirmed_tracks is not None and len(confirmed_tracks) > 0 else np.array([]),

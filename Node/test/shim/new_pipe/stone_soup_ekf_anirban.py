@@ -89,7 +89,7 @@ class StoneSoupJPDATracker:
             ]))
         )
         
-    def __init__(self, dt=0.1, detection_probability=0.9, clutter_density=0.01, gate_probability=0.99, **kwargs):
+    def __init__(self, dt=0.1, detection_probability=0.9, clutter_density=0.005, gate_probability=0.99, **kwargs):
         sigma_a = kwargs.get('sigma_a', 0.1)
         sigma_range = kwargs.get('sigma_range', 0.1)
         sigma_doppler = kwargs.get('sigma_doppler', 0.1)
@@ -133,6 +133,8 @@ class StoneSoupJPDATracker:
         
         # JPDA data associator
         self.data_associator = JPDA(hypothesiser=self.hypothesiser)
+
+
         
         # Track management
         self.next_track_id = 1
@@ -207,6 +209,9 @@ class StoneSoupJPDATracker:
                             prob = float(getattr(hypothesis, 'probability', 0.0))
                             if prob > claim:
                                 claim = prob
+
+            if claim != 0:
+                print("claimed")
 
             # If no existing track strongly claims this detection, spawn a new one
             if claim < threshold_init:
@@ -507,7 +512,7 @@ class StoneSoupJPDATracker:
             self.initialise_new_tracks(detections, associations)
 
         # New Step: Merge similar tracks BEFORE management
-        self.remove_duplicates(threshold=30.0)
+        #self.remove_duplicates(threshold=30.0)
         
         # Step 4: Manage tracks
         self.manage_tracks()

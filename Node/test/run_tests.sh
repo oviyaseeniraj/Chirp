@@ -52,6 +52,35 @@ else
     PYTHON_EXEC="python3"
 fi
 
+# Ensure setup_radar build directory and executable exist
+ensure_setup_radar_built() {
+    local setup_radar_dir="$NODE_DIR/setup_radar"
+    local build_dir="$setup_radar_dir/build"
+    local setup_radar_bin="$build_dir/setup_radar"
+
+    if [ ! -d "$setup_radar_dir" ]; then
+        echo "Error: setup_radar directory not found at $setup_radar_dir"
+        return 1
+    fi
+
+    echo ""
+    echo ">>> Ensuring setup_radar is built..."
+    if ! cmake -S "$setup_radar_dir" -B "$build_dir"; then
+        echo "Error: CMake configure failed for setup_radar."
+        return 1
+    fi
+
+    if ! cmake --build "$build_dir" --target setup_radar; then
+        echo "Error: CMake build failed for setup_radar."
+        return 1
+    fi
+
+    if [ ! -x "$setup_radar_bin" ]; then
+        echo "Error: setup_radar executable not found after build at $setup_radar_bin"
+        return 1
+    fi
+}
+
 case $test_choice in
     1|2)
         # 1. Check/Start Radar Hardware/FPGA
@@ -63,6 +92,7 @@ case $test_choice in
         else
             echo ""
             echo ">>> Initializing Radar (requires sudo)..."
+            ensure_setup_radar_built || exit 1
             sudo bash "$NODE_DIR/scripts/start_radar.sh"
             if [ $? -ne 0 ]; then
                 echo "Failed to start radar. Exiting."

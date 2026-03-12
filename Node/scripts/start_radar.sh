@@ -15,6 +15,13 @@ fi
 sudo sysctl -w net.core.rmem_max=16777216
 sudo sysctl -w net.core.wmem_max=16777216
 
+# make sure that system can find libRF_API.so by caching it in ldconfig
+pushd ../DCA1000/SourceCode/Release/
+LD_LIBRARY_PATH=$(pwd)
+export LD_LIBRARY_PATH
+sudo ldconfig $(pwd)
+popd
+
 pushd ../setup_radar/build/ > /dev/null 2>&1 || { echo "Failed to cd to ../setup_radar/build/"; exit 1; }
 # Background process, output redirected also
 ./setup_radar < /dev/null

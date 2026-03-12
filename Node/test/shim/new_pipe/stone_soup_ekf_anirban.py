@@ -8,6 +8,8 @@ from stonesoup.predictor.kalman import ExtendedKalmanPredictor
 from stonesoup.updater.kalman import ExtendedKalmanUpdater
 from stonesoup.hypothesiser.probability import PDAHypothesiser
 from stonesoup.dataassociator.probability import JPDA
+from stonesoup.types.detection import Detection, MissedDetection
+
 from stonesoup.types.state import (
     State, GaussianState, StateVector, CovarianceMatrix
 )
@@ -358,26 +360,42 @@ class StoneSoupJPDATracker:
     
     def update(self, detections: List[Detection], timestamp: datetime, associations: Dict = None) -> None:
         """Matched to MATLAB: Soft JPDA Weighted Update (correctjpda equivalent)."""
-        if not self.tracks or not detections:
+        print(len(detections))
+        """if not detections:
             for tid in self.tracks:
+                exp_z = self.measurement_model.function(self.tracks[tid][-1])
+                self.track_metadata[tid]['last_weighted_meas'] = exp_z.flatten()
                 self._register_miss(tid)
-            return
+            return"""
 
+        #print(associations)
         if associations is None:
             associations = self.data_associator.associate(set(self.tracks.values()), set(detections), timestamp)
 
         for track_id, track in self.tracks.items():
+            print("============================")
+            print(f"Associated Track {track_id}")
             multi_hypothesis = associations.get(track)
-            if not multi_hypothesis:
-                self._register_miss(track_id)
-                continue
+            
+            for h in multi_hypothesis:
+                #if isinstance(h.measurement, MissedDetection) and h.probability > 0.8:
+                    #self._register_miss(track_id)
+                    #print("missed")
+                    #print("===============")
+                """print("--------")
+                print(h.measurement)
+                print(h.measurement.state_vector)
+                print(f"prob: {h.probability}")
+                print("===============")"""
+                
 
             # Calculate Effective Hit Probability (Sum of detection hypotheses)
-            prob_hit = sum(float(h.probability) for h in multi_hypothesis if h.measurement is not None)
+            prob_hit = sum(float(h.probability) for h in multi_hypothesis if not isinstance(h.measurement, MissedDetection))
             
             # MATLAB threshold_hit_miss = 0.3
             if prob_hit < 0.3:
                 self._register_miss(track_id)
+                track.append(multi_hypothesis[0].prediction) 
                 continue
 
             # Soft Update: Moment Matching (True JPDA)
@@ -385,12 +403,24 @@ class StoneSoupJPDATracker:
                 # Weighted mean state
                 posteriors = []
                 weights = []
+
+                weighted_meas = np.zeros((3, 1))
+
                 for h in multi_hypothesis:
                     p = float(h.probability)
                     if p > 0:
                         weights.append(p)
-                        # If measurement is None, use prediction as posterior branch
-                        posteriors.append(self.updater.update(h) if h.measurement else h.prediction)
+                        # If it is a real detection, update. If MissedDetection, use prediction.
+                        if not isinstance(h.measurement, MissedDetection):
+                            posteriors.append(self.updater.update(h))
+                            weighted_meas += p * h.measurement.state_vector
+                        else:
+                            posteriors.append(h.prediction)
+                            exp_z = self.measurement_model.function(h.prediction)
+                            weighted_meas += p * exp_z
+
+                self.track_metadata[track_id]['last_weighted_meas'] = weighted_meas.flatten()
+
 
                 # Fuse using Mixture of Gaussians (Moment Matching)
                 x_fused = sum(w * p.state_vector for w, p in zip(weights, posteriors))
@@ -463,7 +493,7 @@ class StoneSoupJPDATracker:
         
         # Step 2: Global Association (Perform ONLY ONCE)
         associations = {}
-        if self.tracks and detections:
+        if self.tracks:
             associations = self.data_associator.associate(
                 tracks=set(self.tracks.values()),
                 detections=set(detections),
@@ -484,6 +514,7 @@ class StoneSoupJPDATracker:
         
         # Extract results
         return self._extract_track_results()
+
     def remove_duplicates(self, threshold=7.0):
         """Matched to MATLAB: remove_duplicates using strength."""
         track_ids = list(self.tracks.keys())
@@ -539,7 +570,8 @@ class StoneSoupJPDATracker:
                 'Age': len(track),
                 'Status': metadata['status'],
                 'Hits': metadata['hits'],
-                'ConsecutiveMisses': metadata['consecutive_misses']
+                'ConsecutiveMisses': metadata['consecutive_misses'],
+                'Detection':  metadata.get('last_weighted_meas', np.array([0, 0, 0])) #weighted average of all associated detections
             }
             
             if metadata['status'] == 'Confirmed':

@@ -114,7 +114,6 @@ def closed_form_calibration(calibration_data):
     return P_opt, theta_opt
 
 
-
 from new_pipe.cfar import cfar_pytorch
 from new_pipe.daqv3 import DataAcquisition
 from new_pipe.rdm import RangeDoppler
@@ -128,13 +127,36 @@ FRAME_AVG = 100
 FRAME_RPL = 20
 
 # 3D Detection map dimensions
-RANGE_BINS = 64  # Range dimension (from cfar_data rows)
-DOPPLER_BINS = 512  # Doppler dimension (from cfar_data columns)
+RANGE_BINS = 512  # Range dimension (from cfar_data rows)
+DOPPLER_BINS = 64  # Doppler dimension (from cfar_data columns)
 ANGLE_BINS = 16  # Angle dimension (discretized angle estimates)
 
 MIN_CLUSTER_SIZE = 5
 LOW_PASS_FILTER_DECAY = 0.8
 # =========================================
+
+# ================= CONFIG =================
+
+# Radar Physical Constants (Adjust these to match your hardware config)
+FS = 10e6                 # Sampling frequency (Hz)
+SLOPE = 70e12             # Frequency slope (Hz/s)
+C = 3e8                   # Speed of light (m/s)
+FC = 60.25e9              # Center frequency (Hz)
+IDLE_TIME = 100e-6        # Idle time (s)
+RAMP_END_TIME = 60e-6     # Ramp end time (s)
+NUM_ADC_SAMPLES = 512      # Range bins
+NUM_CHIRPS = 64          # Doppler bins
+T_CHIRP = IDLE_TIME + RAMP_END_TIME
+
+# Derived Resolutions
+#RANGE_RES = (C * FS) / (2 * SLOPE * NUM_ADC_SAMPLES)
+RANGE_RES = 0.035
+# Velocity resolution: lambda / (2 * Total_Frame_Time)
+#LAMBDA = C / FC
+#VEL_RES = LAMBDA / (2 * NUM_CHIRPS * T_CHIRP)
+VEL_RES = 0.2
+# =========================================
+...
 
 
 # -------- Socket.IO --------
@@ -315,8 +337,8 @@ def processing_process(raw_queue, processed_queue):
     clutter_density=0.01,            # Clutter model
     gate_probability=0.99,           # Gating
     sigma_a=0.1,                     # Process noise
-    sigma_range=0.1,                 # Range noise
-    sigma_doppler=0.1,               # Velocity noise
+    sigma_range=RANGE_RES,                 # Range noise
+    sigma_doppler=VEL_RES,               # Velocity noise
     sigma_angle=np.pi/4.0            # Angle noise
     )
 
@@ -412,35 +434,64 @@ def processing_process(raw_queue, processed_queue):
         #centroids_ekf = apply_ekf_to_centroids(centroids, node_id=node_id)
         t4c = time.perf_counter_ns()
 
-
         # For visualization, continue using original centroids mapped to 2D
         centroids_map, centroids_angles = centroids_visualize(centroids, cfar_data.shape)
 
         t4d = time.perf_counter_ns() 
 
+        #convert to estimate of actual velocities and ranges, rather than bins
+        #zero bin removal for centroids
+        eps = 1
+        rda_centroids = {}
+        for label,data in centroids.items():
+            state = data[0]
+            vel_bin, range_bin = state[0], state[1]
+
+            #get rid of reflections
+            #if (range_bin > 256):
+            #    continue
+
+            angle = state[2]
+            num_points = data[1]
+
+            vel_val = (vel_bin - 32) * VEL_RES
+            range_val = range_bin * RANGE_RES
+
+            if abs(vel_bin - 32) > eps: #keep moving targets
+                rda_centroids[label] = (torch.tensor([range_val, vel_val, angle]), num_points)
+            else:
+                pass
+                #print("filtrum")
+
+        #if len(rda_centroids) > 0:
+        #    items = rda_centroids.items()
+        #    print(items)
+        #print(len(rda_centroids))
+
         current_timestamp = datetime.now()
-        confirmed_tracks, tentative_tracks = jpda.process_frame(centroids, current_timestamp)
+        confirmed_tracks, tentative_tracks = jpda.process_frame(rda_centroids, current_timestamp)
 
         #tentative_tracks = []
         #confirmed_tracks = []
-        print("tentative dist",jpda.average_tentative_mahalanobis_distance())
+        #print("tentative dist",jpda.average_tentative_mahalanobis_distance())
 
-        print(len(centroids))
+        #print(len(centroids))
         #print(confirmed_tracks)
         #print("confirmed dist", jpda.compute_pairwise_mahalanobis_distances(confirmed_tracks,True))
 
         print(f"Confirmed: {len(confirmed_tracks)} | Tentative: {len(tentative_tracks)}")
-
         for track in confirmed_tracks:
             tid = track['TrackID']
             state = track['State'] # [x, y, vx, vy]
-            print(f"Track {tid} at x={state[0]:.2f}, y={state[1]:.2f}")
+            misses = track['ConsecutiveMisses']
+            detection = track['Detection']
+            print(f"Track {tid} at x={state[0]:.2f}, y={state[1]:.2f}, misses={misses}, avg det={detection}")
 
         #print("cent:",len(centroids), np.sum(centroids_map))
         #confirmed_tracks = []
-        print(len(tentative_tracks))
+        #print(len(tentative_tracks))
         #print([t['State'] for t in tentative_tracks])
-        print(len(confirmed_tracks))
+        #print(len(confirmed_tracks))
 
         #print(dbscan_data_2d)
         t5 = time.perf_counter_ns()
@@ -536,7 +587,7 @@ def socket_process(processed_queue):
                     "cfar": frame["cfar"][:, :512].tobytes(),
                     "dbscan_data_2d": frame["dbscan_data_2d"][:, :512].tobytes(),
                     # Send EKF-filtered centroids to spatial_calibration
-                    "centroids_ekf": frame["centroids_ekf"].tobytes() if frame["centroids_ekf"].size > 0 else b'',
+                    #"centroids_ekf": frame["centroids_ekf"].tobytes() if frame["centroids_ekf"].size > 0 else b'',
                     "node_id": frame["node_id"],
                     "frame_num": frame["frame_num"],
                 },

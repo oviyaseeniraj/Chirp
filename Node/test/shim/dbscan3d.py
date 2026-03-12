@@ -502,6 +502,8 @@ def dbscan_process(detection_coords, shape):
             device="cpu",
         )
 
+        
+
         #print(centroids)
 
         # print(n_clusters)

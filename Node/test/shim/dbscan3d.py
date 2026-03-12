@@ -485,14 +485,14 @@ def dbscan_cluster_3d(
     )
     return clusterer.fit_predict(detection_coords), clusterer.n_clusters_, clusterer.cluster_centroids_
 
-def dbscan_process(detection_coords, shape):
+def dbscan_process(detection_coords, shape,min_samples):
     # ========== 3D DBSCAN and CENTROIDS CLUSTERING ==========
     if len(detection_coords) > 0:
         # Perform 3D DBSCAN clustering with Mahalanobis distance
         cluster_labels_3d, n_clusters, centroids = dbscan_cluster_3d(
             detection_coords,
             eps=3.0,  # Tune based on your 3D space
-            min_samples=10,
+            min_samples=min_samples,
             metric="mahalanobis",
             scale_coords=True,
             x_weight=sigma_range,  # Range weight (512)

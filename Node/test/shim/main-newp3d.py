@@ -427,7 +427,7 @@ def processing_process(raw_queue, processed_queue):
 
         t4b = time.perf_counter_ns()
 
-        dbscan_data_2d, dbscan_angles, centroids = dbscan_process(detection_coords_3d, cfar_data.shape)
+        dbscan_data_2d, dbscan_angles, centroids = dbscan_process(detection_coords_3d, cfar_data.shape, min_samples=10)
 
         # Apply EKF to centroids immediately after extraction
         # centroids_ekf output: [x, y, vx, vy] in Cartesian coordinates
@@ -450,7 +450,6 @@ def processing_process(raw_queue, processed_queue):
             #get rid of reflections
             #if (range_bin > 256):
             #    continue
-
             angle = state[2]
             num_points = data[1]
 
@@ -462,6 +461,9 @@ def processing_process(raw_queue, processed_queue):
             else:
                 pass
                 #print("filtrum")
+
+        print("Centroids: ",len(centroids))
+        print("Filtered Centroids: ",len(rda_centroids))
 
         #if len(rda_centroids) > 0:
         #    items = rda_centroids.items()
@@ -547,9 +549,9 @@ def processing_process(raw_queue, processed_queue):
         # print(angle_data.dtype)
 
         output_data = {
-            "rdm": confirmed_tracks_map,
+            "rdm": centroids_map,
             "cfar": confirmed_tracks_map,
-            "angles": confirmed_tracks_angles,
+            "angles": centroids_angles,
             "dbscan_data_2d": dbscan_data_2d,
             "detection_coords": detection_coords_3d if len(detection_coords_3d) > 0 else np.array([]),
             "centroids_ekf": confirmed_tracks if confirmed_tracks is not None and len(confirmed_tracks) > 0 else np.array([]),

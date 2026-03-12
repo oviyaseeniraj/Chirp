@@ -441,7 +441,7 @@ def processing_process(raw_queue, processed_queue):
 
         #convert to estimate of actual velocities and ranges, rather than bins
         #zero bin removal for centroids
-        eps = 1
+        eps = 0.2
         rda_centroids = {}
         for label,data in centroids.items():
             state = data[0]
@@ -471,6 +471,38 @@ def processing_process(raw_queue, processed_queue):
         current_timestamp = datetime.now()
         confirmed_tracks, tentative_tracks = jpda.process_frame(rda_centroids, current_timestamp)
 
+        # Create visualization maps for confirmed tracks
+        confirmed_tracks_map = np.zeros_like(frame, dtype=np.float32)
+        confirmed_tracks_angles = np.zeros_like(frame, dtype=np.float32)
+
+        print(f"Confirmed: {len(confirmed_tracks)} | Tentative: {len(tentative_tracks)}")
+        for track in confirmed_tracks:
+            tid = track['TrackID']
+            state = track['State'] # [x, y, vx, vy]
+            misses = track['ConsecutiveMisses']
+            detection = track['Detection'] # [range (m), velocity (m/s), angle (rad)]
+            
+            # --- Convert physical units back to RDM bins ---
+            range_val, vel_val, angle_rad = detection
+            
+            # 1. Convert range (m) to range bin
+            range_bin = int(round(range_val / RANGE_RES))
+            range_bin = np.clip(range_bin, 0, RANGE_BINS-1)
+            
+            # 2. Convert velocity (m/s) to Doppler bin
+            # The zero-velocity bin is at DOPPLER_BINS / 2 = 32
+            doppler_bin = int(round((vel_val / VEL_RES) + (DOPPLER_BINS / 2)))
+            doppler_bin = np.clip(doppler_bin, 0, DOPPLER_BINS-1)
+
+            # 3. Populate the visualization maps
+            if 0 <= range_bin < RANGE_BINS and 0 <= doppler_bin < DOPPLER_BINS:
+                confirmed_tracks_map[doppler_bin, range_bin] = 1.0  # Mark the spot
+                confirmed_tracks_angles[doppler_bin, range_bin] = np.rad2deg(angle_rad)
+
+            print(f"Track {tid} at x={state[0]:.2f}, y={state[1]:.2f}, misses={misses}, avg det={detection}")
+
+        # You can now send these maps to the socket process
+        
         #tentative_tracks = []
         #confirmed_tracks = []
         #print("tentative dist",jpda.average_tentative_mahalanobis_distance())
@@ -479,14 +511,7 @@ def processing_process(raw_queue, processed_queue):
         #print(confirmed_tracks)
         #print("confirmed dist", jpda.compute_pairwise_mahalanobis_distances(confirmed_tracks,True))
 
-        print(f"Confirmed: {len(confirmed_tracks)} | Tentative: {len(tentative_tracks)}")
-        for track in confirmed_tracks:
-            tid = track['TrackID']
-            state = track['State'] # [x, y, vx, vy]
-            misses = track['ConsecutiveMisses']
-            detection = track['Detection']
-            print(f"Track {tid} at x={state[0]:.2f}, y={state[1]:.2f}, misses={misses}, avg det={detection}")
-
+        #confirmed_centroids = {track['TrackID']: for i in }
         #print("cent:",len(centroids), np.sum(centroids_map))
         #confirmed_tracks = []
         #print(len(tentative_tracks))
@@ -522,9 +547,9 @@ def processing_process(raw_queue, processed_queue):
         # print(angle_data.dtype)
 
         output_data = {
-            "rdm": frame,
-            "cfar": centroids_map,
-            "angles": centroids_angles,
+            "rdm": confirmed_tracks_map,
+            "cfar": confirmed_tracks_map,
+            "angles": confirmed_tracks_angles,
             "dbscan_data_2d": dbscan_data_2d,
             "detection_coords": detection_coords_3d if len(detection_coords_3d) > 0 else np.array([]),
             "centroids_ekf": confirmed_tracks if confirmed_tracks is not None and len(confirmed_tracks) > 0 else np.array([]),

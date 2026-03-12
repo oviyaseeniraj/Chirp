@@ -194,8 +194,8 @@ class StoneSoupJPDATracker:
         Create new tracks from detections that are not strongly claimed by existing tracks.
         Matches MATLAB claim < threshold_init logic.
         """
-        # threshold_init = 0.05 from MATLAB code
-        threshold_init = 0.05
+        # Raised from 0.05 to allow new tracks near existing ones (multi-target)
+        threshold_init = 0.3
 
         for detection in detections:
             # Calculate 'Claim': Max probability any track identifies with this detection
@@ -392,8 +392,8 @@ class StoneSoupJPDATracker:
             # Calculate Effective Hit Probability (Sum of detection hypotheses)
             prob_hit = sum(float(h.probability) for h in multi_hypothesis if not isinstance(h.measurement, MissedDetection))
             
-            # MATLAB threshold_hit_miss = 0.3
-            if prob_hit < 0.3:
+            # Lowered from 0.3 to 0.15 so JPDA doesn't starve tracks in multi-target scenes
+            if prob_hit < 0.15:
                 self._register_miss(track_id)
                 track.append(multi_hypothesis[0].prediction) 
                 continue

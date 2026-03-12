@@ -334,7 +334,7 @@ def processing_process(raw_queue, processed_queue):
     jpda = StoneSoupJPDATracker(
     dt=0.1,                          # 10Hz sampling
     detection_probability=0.9,       # MATLAB Pd
-    clutter_density=0.01,            # Clutter model
+    clutter_density=0.05,            # Raised for multi-target (reduces over-claiming)
     gate_probability=0.99,           # Gating
     sigma_a=0.1,                     # Process noise
     sigma_range=RANGE_RES,                 # Range noise

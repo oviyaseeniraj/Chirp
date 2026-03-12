@@ -169,6 +169,8 @@
         const VELOCITY_RES = parseFloat(configEl.dataset.velocityRes);
         const SLOW_TIME = parseInt(configEl.dataset.slowTime);
         const FAST_TIME = parseInt(configEl.dataset.fastTime);
+        const ZERO_DOPPLER_BIN = Math.floor(SLOW_TIME / 2);
+        const ZERO_DOPPLER_VELOCITY_EPS = Math.max(VELOCITY_RES * 0.5, 1e-6);
 
         // Handle visibility
         const raContainer = document.getElementById('range-angle-container');
@@ -452,9 +454,17 @@
             // Draw grid first
             drawRDMGrid();
 
-            detectionCount = detections.length;
+            const filteredDetections = detections.filter((detection) => {
+                // UI-side clutter suppression: drop zero/near-zero Doppler detections.
+                if (detection.doppler_idx === ZERO_DOPPLER_BIN) return false;
+                const v = Number(detection.velocity);
+                if (Number.isFinite(v) && Math.abs(v) <= ZERO_DOPPLER_VELOCITY_EPS) return false;
+                return true;
+            });
 
-            detections.forEach(detection => {
+            detectionCount = filteredDetections.length;
+
+            filteredDetections.forEach(detection => {
                 const { x, y, angle } = detection;
 
                 // Draw detection marker (red circle)

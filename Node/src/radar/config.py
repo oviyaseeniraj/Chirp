@@ -4,7 +4,7 @@ Radar System Configuration
 
 import numpy as np
 
-USE_CUDA = False
+USE_CUDA = True
 
 # Dimension Parameters
 FAST_TIME = 512

@@ -3,60 +3,86 @@ import time
 import cv2
 import numpy as np
 import pyfftw
-from .. import config
+from new_pipe.cfar import cfar_pytorch
+
+FAST_TIME = 512
+SLOW_TIME = 64
+RX = 4
+TX = 3
+IQ = 2
+
+SIZE_W_IQ = TX * RX * SLOW_TIME * FAST_TIME * IQ
+SIZE = TX * RX * SLOW_TIME * FAST_TIME
+
+
+def getIndices(index_1D):
+    i0 = index_1D // (RX * IQ * FAST_TIME * TX)
+    i1 = index_1D % (RX * IQ * FAST_TIME * TX)
+    i2 = i1 % (RX * IQ * FAST_TIME)
+    i3 = i2 % (RX * IQ)
+    i4 = i3 % RX
+
+    slow = i0
+    tx = i1 // (RX * IQ * FAST_TIME)
+    fast = i2 // (RX * IQ)
+    iq = i3 // RX
+    rx = i4
+
+    return tx, rx, slow, fast, iq
+
 
 class RangeDoppler:
-    SIZE = config.BYTES_IN_FRAME // config.IQ_BYTES  # total number of samples
+    SIZE = SIZE_W_IQ  # total number of samples
 
     # Create index array
     idx = np.arange(SIZE)
 
     # replicate getIndices logic
-    i0 = idx // (config.RX * config.IQ * config.FAST_TIME * config.TX)
-    i1 = idx % (config.RX * config.IQ * config.FAST_TIME * config.TX)
-    i2 = i1 % (config.RX * config.IQ * config.FAST_TIME)
-    i3 = i2 % (config.RX * config.IQ)
-    i4 = i3 % config.RX
+    i0 = idx // (RX * IQ * FAST_TIME * TX)
+    i1 = idx % (RX * IQ * FAST_TIME * TX)
+    i2 = i1 % (RX * IQ * FAST_TIME)
+    i3 = i2 % (RX * IQ)
+    i4 = i3 % RX
 
     slow = i0
-    tx = i1 // (config.RX * config.IQ * config.FAST_TIME)
-    fast = i2 // (config.RX * config.IQ)
-    iq = i3 // config.RX
+    tx = i1 // (RX * IQ * FAST_TIME)
+    fast = i2 // (RX * IQ)
+    iq = i3 // RX
     rx = i4
 
     # Compute flat indices for self.mid exactly like your loop
-    tx_o = tx * config.RX * config.SLOW_TIME * config.FAST_TIME * config.IQ
-    rx_o = rx * config.SLOW_TIME * config.FAST_TIME * config.IQ
-    slow_o = slow * config.FAST_TIME * config.IQ
-    fast_o = fast * config.IQ
+    tx_o = tx * RX * SLOW_TIME * FAST_TIME * IQ
+    rx_o = rx * SLOW_TIME * FAST_TIME * IQ
+    slow_o = slow * FAST_TIME * IQ
+    fast_o = fast * IQ
 
     mid_idx = tx_o + rx_o + slow_o + fast_o + iq
 
     def __init__(self, window="blackman", alpha=0.5):
         self.window_type = window.lower()
 
-        self.adc_data_flat = np.zeros(self.SIZE, dtype=np.float32)
-        self.mid = np.zeros(self.SIZE, dtype=np.float32)
-        self.adc_complex = np.zeros(self.SIZE // 2, dtype=np.complex64)
-        self.norm = np.zeros(self.SIZE, dtype=np.float32)
-        self.avg = np.zeros(self.SIZE, dtype=np.float32)
-        self.background = np.zeros((config.TX * config.RX, config.SLOW_TIME, config.FAST_TIME), dtype=np.complex64)
+        self.adc_data_flat = np.zeros(SIZE_W_IQ, dtype=np.float32)
+        self.mid = np.zeros(SIZE_W_IQ, dtype=np.float32)
+        self.adc_complex = np.zeros(SIZE, dtype=np.complex64)
+        self.norm = np.zeros(SIZE_W_IQ, dtype=np.float32)
+        self.avg = np.zeros(SIZE_W_IQ, dtype=np.float32)
+        self.background = np.zeros((TX * RX, SLOW_TIME, FAST_TIME), dtype=np.complex64)
 
         self.alpha = alpha
 
         if self.window_type == "blackman":
-            self.window = np.blackman(config.FAST_TIME).astype(np.float32)
+            self.window = np.blackman(FAST_TIME).astype(np.float32)
         elif self.window_type == "hann":
-            self.window = np.hanning(config.FAST_TIME).astype(np.float32)
+            self.window = np.hanning(FAST_TIME).astype(np.float32)
         else:
-            self.window = np.ones(config.FAST_TIME, dtype=np.float32)
+            self.window = np.ones(FAST_TIME, dtype=np.float32)
 
         # FFTW setup
         self.fftw_in = pyfftw.empty_aligned(
-            (config.TX * config.RX, config.SLOW_TIME, config.FAST_TIME), dtype=np.complex64
+            (TX * RX, SLOW_TIME, FAST_TIME), dtype=np.complex64
         )
         self.fftw_out = pyfftw.empty_aligned(
-            (config.TX * config.RX, config.SLOW_TIME, config.FAST_TIME), dtype=np.complex64
+            (TX * RX, SLOW_TIME, FAST_TIME), dtype=np.complex64
         )
         self.plan = pyfftw.FFTW(
             self.fftw_in,
@@ -68,8 +94,8 @@ class RangeDoppler:
 
     def set_buffer(self, buf):
         arr = np.asarray(buf, dtype=np.float32)
-        if arr.size != self.SIZE:
-            raise ValueError(f"Invalid input buffer size: {arr.size} != {self.SIZE}")
+        if arr.size != SIZE_W_IQ:
+            raise ValueError("Invalid input buffer size")
         self.adc_data_flat[:] = arr
 
     def set_cube(self, cube):
@@ -85,7 +111,7 @@ class RangeDoppler:
         self.adc_complex.real = self.mid[0::2]
         self.adc_complex.imag = self.mid[1::2]
 
-        return self.adc_complex.reshape((config.TX * config.RX, config.SLOW_TIME, config.FAST_TIME))
+        return self.adc_complex.reshape((TX * RX, SLOW_TIME, FAST_TIME))
 
     def iir_filter(self, rdm_complex):
         self.background = self.alpha * rdm_complex + (1 - self.alpha) * self.background
@@ -105,7 +131,7 @@ class RangeDoppler:
 
         t2 = time.perf_counter()
 
-        # Apply IIR filter on complex data
+        # Apply IIR filter on complex data (like MATLAB: subtract mean, then take abs)
         rdm = self.iir_filter(rdm)
 
         # Now compute magnitude squared
@@ -114,14 +140,31 @@ class RangeDoppler:
 
         t3 = time.perf_counter()
 
-        avg = self.norm.reshape(config.RX * config.TX, config.SLOW_TIME * config.FAST_TIME).mean(axis=0)
+        # avg = self.avg_rdm()
+        avg = self.norm.reshape(RX * TX, SLOW_TIME * FAST_TIME).mean(axis=0)
+        # print(np.mean(avg))
+        # avg *= 255.0 / avg.max()
         avg = (avg - avg.min()) / (avg.max() - avg.min()) * 255.0
+        # avg = avg.astype(np.uint8)
 
         t4 = time.perf_counter()
 
-        avg = avg.reshape((config.SLOW_TIME, config.FAST_TIME))
+        avg = avg.reshape((SLOW_TIME, FAST_TIME))
         avg = np.fft.fftshift(avg, axes=(0))
         t5 = time.perf_counter()
+
+        dt = (time.perf_counter() - t0) * 1e6
+        dt2 = (t1 - t0) * 1e6
+        dt3 = (t2 - t1) * 1e6
+        dt4 = (t3 - t2) * 1e6
+        dt5 = (t4 - t3) * 1e6
+        dt6 = (t5 - t4) * 1e6
+        # print(f"RDM frame processed in {dt:.0f} us")
+        # print(f"Cube frame processed in {dt2:.0f} us")
+        # print(f"FFT frame processed in {dt3:.0f} us")
+        # print(f"Norm frame processed in {dt4:.0f} us")
+        # print(f"Average frame processed in {dt5:.0f} us")
+        # print(f"Shift frame processed in {dt6:.0f} us")
 
         return avg.ravel()
 
@@ -129,7 +172,7 @@ class RangeDoppler:
         rdm_complex = self.fftw_out.copy()  # Shape: (TX * RX, SLOW_TIME, FAST_TIME)
 
         # Reshape from (TX * RX, SLOW_TIME, FAST_TIME) to (TX, RX, SLOW_TIME, FAST_TIME)
-        rdm_reshaped = rdm_complex.reshape((config.TX, config.RX, config.SLOW_TIME, config.FAST_TIME))
+        rdm_reshaped = rdm_complex.reshape((TX, RX, SLOW_TIME, FAST_TIME))
 
         # Transpose to (SLOW_TIME, RX, TX, FAST_TIME) to match angle.py expectations
         rdm_final = rdm_reshaped.transpose(2, 1, 0, 3)
@@ -140,7 +183,7 @@ class RangeDoppler:
 
     def rdm_process_cube(self):
         np.copyto(
-            self.fftw_in, self.adc_complex.reshape((config.TX * config.RX, config.SLOW_TIME, config.FAST_TIME))
+            self.fftw_in, self.adc_complex.reshape((TX * RX, SLOW_TIME, FAST_TIME))
         )
         self.plan()
         rdm = self.fftw_out
@@ -149,7 +192,7 @@ class RangeDoppler:
         mag2 = rdm.real * rdm.real + rdm.imag * rdm.imag
         mag = np.log2(mag2) * 0.5
 
-        avg = mag.reshape((config.TX * config.RX, config.SLOW_TIME * config.FAST_TIME)).mean(axis=0)
+        avg = mag.reshape((TX * RX, SLOW_TIME * FAST_TIME)).mean(axis=0)
 
         mn = avg.min()
         mx = avg.max()
@@ -158,15 +201,15 @@ class RangeDoppler:
         else:
             avg[:] = 0.0
 
-        avg = avg.reshape((config.SLOW_TIME, config.FAST_TIME))
+        avg = avg.reshape((SLOW_TIME, FAST_TIME))
         avg = np.fft.fftshift(avg, axes=(0, 1))
-        # print(avg.dtype)
+        print(avg.dtype)
         return avg.ravel()
 
 
 if __name__ == "__main__":
     rd = RangeDoppler()
-    # test = np.linspace(0, 1, SIZE_W_IQ, dtype=np.float32)
-    # rd.set_buffer(test)
-    # out = rd.process()
-    # print(out[:8])
+    test = np.linspace(0, 1, SIZE_W_IQ, dtype=np.float32)
+    rd.set_buffer(test)
+    out = rd.process()
+    print(out[:8])

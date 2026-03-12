@@ -388,7 +388,6 @@ def processing_process(raw_queue, processed_queue):
         clean_rdm = rdm.get_clean_rdm()
         t2 = time.perf_counter_ns()
         frame_num += 1
-        frame_num += 1
 
         # Apply CFAR
         cfar_data = cfar_pytorch(
@@ -547,9 +546,9 @@ def processing_process(raw_queue, processed_queue):
         # print(angle_data.dtype)
 
         output_data = {
-            "rdm": confirmed_tracks_map,
-            "cfar": confirmed_tracks_map,
-            "angles": confirmed_tracks_angles,
+            "rdm": frame,
+            "cfar": cfar_data,
+            "angles": angle_data,
             "dbscan_data_2d": dbscan_data_2d,
             "detection_coords": detection_coords_3d if len(detection_coords_3d) > 0 else np.array([]),
             "centroids_ekf": confirmed_tracks if confirmed_tracks is not None and len(confirmed_tracks) > 0 else np.array([]),

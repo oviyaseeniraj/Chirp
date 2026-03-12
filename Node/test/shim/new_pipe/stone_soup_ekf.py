@@ -216,7 +216,50 @@ class StoneSoupJPDATracker:
         }
         
         return track
-    
+
+    def average_tentative_mahalanobis_distance(self, position_only: bool = False) -> float:
+        """
+        Compute average pairwise Mahalanobis distance between tentative tracks.
+
+        Args:
+            position_only: If True, use [x, y] only; otherwise use full state [x, vx, y, vy].
+
+        Returns:
+            Average distance across unique track pairs.
+            Returns 0.0 if fewer than 2 tentative tracks exist.
+        """
+        tentative_ids = [
+            tid for tid, meta in self.track_metadata.items()
+            if meta.get('status') == 'Tentative' and tid in self.tracks and len(self.tracks[tid]) > 0
+        ]
+
+        if len(tentative_ids) < 2:
+            return 0.0
+
+        # Indices for state selection
+        idx = [0, 2] if position_only else [0, 1, 2, 3]
+
+        distances = []
+        for i in range(len(tentative_ids)):
+            for j in range(i + 1, len(tentative_ids)):
+                ti = self.tracks[tentative_ids[i]][-1]
+                tj = self.tracks[tentative_ids[j]][-1]
+
+                xi = np.asarray(ti.state_vector, dtype=float).reshape(-1)
+                xj = np.asarray(tj.state_vector, dtype=float).reshape(-1)
+                Pi = np.asarray(ti.covar, dtype=float)
+                Pj = np.asarray(tj.covar, dtype=float)
+
+                d = xi[idx] - xj[idx]
+                S = Pi[np.ix_(idx, idx)] + Pj[np.ix_(idx, idx)] + 1e-9 * np.eye(len(idx))
+                S_inv = np.linalg.pinv(S)
+
+                dist = float(np.sqrt(d.T @ S_inv @ d))
+                if np.isfinite(dist):
+                    distances.append(dist)
+
+        return float(np.mean(distances)) if distances else 0.0
+
     def predict(self, timestamp: datetime) -> None:
         """
         Predict all tracks to the given timestamp.
@@ -230,7 +273,7 @@ class StoneSoupJPDATracker:
             
             # Calculate time step
             time_interval = timestamp - track[-1].timestamp
-            
+            #print(time_interval)
             # Predict using transition model
             prediction = self.predictor.predict(
                 prior=track[-1],
@@ -270,41 +313,85 @@ class StoneSoupJPDATracker:
             # Find association for this track
             multi_hypothesis = associations.get(track)
             
+            if len(multi_hypothesis) > 1:
+                print("Track Hit:",track_id)
+                for h in multi_hypothesis:
+                    print(h.probability)
+
+            #print(multi_hypothesis)
             if multi_hypothesis and len(multi_hypothesis) > 0:
                 # JPDA returns multiple hypotheses with probabilities
-                # Get the best hypothesis (or perform weighted update)
-                
-                # For simplicity, use the hypothesis with highest probability
-                best_hypothesis = max(
-                    multi_hypothesis,
-                    key=lambda h: h.probability if hasattr(h, 'probability') else 0.0
-                )
-                
-                if best_hypothesis.measurement:
-                    # Update with measurement
+                def _prob(h):
+                    p = getattr(h, "probability", 0.0)
+                    return float(p) if p is not None else 0.0
+
+                def _valid_meas_hypothesis(h):
+                    m = getattr(h, "measurement", None)
+                    if m is None:
+                        return False
+                    z = getattr(m, "state_vector", None)
+                    if z is None:
+                        return False
+                    arr = np.asarray(z, dtype=object).reshape(-1)
+                    if arr.size == 0 or any(v is None for v in arr):
+                        return False
                     try:
-                        posterior = self.updater.update(best_hypothesis)
-                        track.append(posterior)
-                        
-                        # Update metadata
+                        arr_f = arr.astype(float)
+                    except Exception:
+                        return False
+                    return np.all(np.isfinite(arr_f))
+
+                ranked = sorted(multi_hypothesis, key=_prob, reverse=True)
+                top_hypotheses = [h for h in ranked if _valid_meas_hypothesis(h)][:3]
+
+                if top_hypotheses:
+                    posteriors = []
+                    weights = []
+
+                    for h in top_hypotheses:
+                        try:
+                            p = max(_prob(h), 0.0)
+                            post = self.updater.update(h)
+                            posteriors.append(post)
+                            weights.append(p)
+                        except Exception as e:
+                            print(f"Skipping invalid hypothesis for track {track_id}: {e}")
+
+                    if posteriors:
+                        w_sum = sum(weights)
+                        if w_sum <= 0:
+                            weights = [1.0 / len(posteriors)] * len(posteriors)
+                        else:
+                            weights = [w / w_sum for w in weights]
+
+                        x = np.zeros_like(np.asarray(posteriors[0].state_vector, dtype=float))
+                        P = np.zeros_like(np.asarray(posteriors[0].covar, dtype=float))
+                        for w, p in zip(weights, posteriors):
+                            x += w * np.asarray(p.state_vector, dtype=float)
+                            P += w * np.asarray(p.covar, dtype=float)
+
+                        fused_posterior = GaussianState(
+                            StateVector(x),
+                            CovarianceMatrix(P),
+                            timestamp=timestamp
+                        )
+                        track.append(fused_posterior)
+
+                        #print('hit')
+
                         self.track_metadata[track_id]['hits'] += 1
                         self.track_metadata[track_id]['consecutive_misses'] = 0
                         self.track_metadata[track_id]['hit_history'].append(1)
-                    except Exception as e:
-                        print(f"Update failed for track {track_id}: {e}")
-                        # Treat as missed detection
+                    else:
                         self.track_metadata[track_id]['consecutive_misses'] += 1
                         self.track_metadata[track_id]['hit_history'].append(0)
                 else:
-                    # Missed detection (null hypothesis)
+                    # Only null/missed-detection or invalid hypotheses
                     self.track_metadata[track_id]['consecutive_misses'] += 1
                     self.track_metadata[track_id]['hit_history'].append(0)
-            else:
-                # No association found
-                self.track_metadata[track_id]['consecutive_misses'] += 1
-                self.track_metadata[track_id]['hit_history'].append(0)
-            
+# ...existing code...
             self.track_metadata[track_id]['frame_count'] += 1
+
     
     def initialise_new_tracks(self, 
                              detections: List[Detection],
@@ -354,7 +441,7 @@ class StoneSoupJPDATracker:
             # Deletion
             if metadata['consecutive_misses'] >= max_consecutive_misses:
                 track_ids_to_delete.append(track_id)
-                print(f"Track {track_id} deleted: {metadata['consecutive_misses']} consecutive misses")
+                #print(f"Track {track_id} deleted: {metadata['consecutive_misses']} consecutive misses")
         
         # Remove flagged tracks
         for track_id in track_ids_to_delete:
@@ -374,13 +461,14 @@ class StoneSoupJPDATracker:
         Returns:
             (confirmed_tracks, tentative_tracks)
         """
+        #print(detection_centroids)
         # Convert to Stone Soup Detection objects
         detections = [
             Detection(
-                StateVector(det_cent.reshape(-1, 1)),
+                StateVector(centroid.reshape(-1, 1)),
                 timestamp=timestamp
             )
-            for det_cent in detection_centroids
+            for label,(centroid,num_point) in detection_centroids.items()
         ]
         
         # Step 1: Predict all existing tracks

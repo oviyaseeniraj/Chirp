@@ -6,6 +6,7 @@ import time
 from multiprocessing import Process, Queue
 from queue import Empty, Full
 
+from datetime import datetime, timedelta
 import numpy as np
 import psutil
 import socketio
@@ -119,8 +120,7 @@ from new_pipe.daqv3 import DataAcquisition
 from new_pipe.rdm import RangeDoppler
 
 # ================= CONFIG =================
-SERVER_URL = "http://169.231.42.35:5001"
-SERVER_URL = "http://169.231.42.35:5001"
+SERVER_URL = "http://169.231.93.105:5001"
 RAW_QUEUE_SIZE = 5  # queue between DAQ and processing (smaller = lower latency)
 PROCESSED_QUEUE_SIZE = 2  # queue between processing and socket (real-time)
 TARGET_FPS = 10  # limit processing loop speed
@@ -308,15 +308,16 @@ def processing_process(raw_queue, processed_queue):
 
     rdm = RangeDoppler(window="blackman", alpha=0.1)
 
+    #assume sampling at 15 HZ
     jpda =  StoneSoupJPDATracker( 
-                 dt = 0.1,
+                 dt = 1/15,
                  detection_probability = 0.9,
                  clutter_density = 0.01,
                  gate_probability = 0.99,
                  sigma_a = 0.1,
-                 sigma_range = 0.035,
-                 sigma_doppler = 0.0767,
-                 sigma_angle = np.pi / 4.0)
+                 sigma_range = 0.035*2,
+                 sigma_doppler = 0.0767*2,
+                 sigma_angle = np.pi / 3.0)
 
     # FPS tracking
     last_frame_time = None
@@ -391,9 +392,6 @@ def processing_process(raw_queue, processed_queue):
             zero_pad_cols=124,
             device="cpu",
         )
-
-        # print(angle_data.shape)
-
         # phase_data = pi * np.sin(angle_data)
 
         t4 = time.perf_counter_ns()
@@ -411,15 +409,23 @@ def processing_process(raw_queue, processed_queue):
         # Apply EKF to centroids immediately after extraction
         # centroids_ekf output: [x, y, vx, vy] in Cartesian coordinates
         #centroids_ekf = apply_ekf_to_centroids(centroids, node_id=node_id)
-        
+        t4c = time.perf_counter_ns()
+
+
         # For visualization, continue using original centroids mapped to 2D
         centroids_map, centroids_angles = centroids_visualize(centroids, cfar_data.shape)
 
-        t4c = time.perf_counter_ns() 
+        t4d = time.perf_counter_ns() 
 
-        confirmed_tracks, tentative_tracks = jpda.process_frame(centroids,current_time)
+        confirmed_tracks, tentative_tracks = jpda.process_frame(centroids,datetime.now())
 
-        print(confirmed_tracks)
+        print("dist",jpda.average_tentative_mahalanobis_distance())
+
+        print("cent:",len(centroids))
+        #confirmed_tracks = []
+        print(len(tentative_tracks))
+        #print([t['State'] for t in tentative_tracks])
+        print(len(confirmed_tracks))
 
         #print(dbscan_data_2d)
         t5 = time.perf_counter_ns()
@@ -476,7 +482,7 @@ def processing_process(raw_queue, processed_queue):
             print(
                 f"[PROCESSING] FPS: {fps:.2f} | Avg interval: {avg_interval * 1000:.1f}ms | "
                 f"Total: {(t5 - t0) // 1_000}us, RDM: {(t2 - t1) // 1_000}us, CFAR: {(t3 - t2) // 1_000}us, "
-                f"ANGLE: {(t4 - t3) // 1_000}us, 3D_MAP: {(t4b - t4) // 1_000}us, DBSCAN3D: {(t4c - t4b) // 1_000}us, CENTROID: {(t5 - t4c) // 1_000}us"
+                f"ANGLE: {(t4 - t3) // 1_000}us, 3D_MAP: {(t4b - t4) // 1_000}us, DBSCAN3D: {(t4c - t4b) // 1_000}us, CENTROID: {(t4d - t4c) // 1_000}us, JPDA/EKF: {(t5 - t4d) // 1_000}us"
             )
             print(
                 f"CFAR Detections: {np.sum(cfar_data > 0)} | 3D Clusters: {np.max(dbscan_data_2d)}"

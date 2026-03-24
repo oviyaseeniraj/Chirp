@@ -81,6 +81,38 @@ ensure_setup_radar_built() {
     fi
 }
 
+# Ensure selected hardware trigger executable exists (build on demand)
+ensure_hardware_trigger_built() {
+    local trigger_exe="$1"
+    local trigger_dir="$NODE_DIR/src/hardware_trigger"
+
+    if [ -z "$trigger_exe" ]; then
+        echo "Error: No trigger executable path provided."
+        return 1
+    fi
+
+    if [ -x "$trigger_exe" ]; then
+        return 0
+    fi
+
+    if [ ! -d "$trigger_dir" ]; then
+        echo "Error: Hardware trigger directory not found at: $trigger_dir"
+        return 1
+    fi
+
+    echo "Hardware trigger executable not found at: $trigger_exe"
+    echo "Attempting to build hardware triggers with Makefile..."
+    if ! make -C "$trigger_dir"; then
+        echo "Error: Failed to build hardware triggers in $trigger_dir"
+        return 1
+    fi
+
+    if [ ! -x "$trigger_exe" ]; then
+        echo "Error: Hardware trigger executable still missing after build: $trigger_exe"
+        return 1
+    fi
+}
+
 case $test_choice in
     1|2)
         # 1. Check/Start Radar Hardware/FPGA
@@ -126,11 +158,7 @@ case $test_choice in
 
         # Start hardware trigger in background if selected
         if [ ! -z "$TRIGGER_EXE" ]; then
-            if [ ! -f "$TRIGGER_EXE" ]; then
-                echo "Error: Hardware trigger executable not found at: $TRIGGER_EXE"
-                echo "Please compile it first: (cd $NODE_DIR/src/hardware_trigger && make)"
-                exit 1
-            fi
+            ensure_hardware_trigger_built "$TRIGGER_EXE" || exit 1
 
             echo "Starting hardware trigger in background..."
             # Launch without sudo since script is already root

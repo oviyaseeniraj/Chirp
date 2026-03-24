@@ -85,10 +85,18 @@ def extract_detections(cfar_array, angles_array, rdm_array=None):
     if len(doppler_indices) == 0:
         return []
 
-    angles = angles_array[doppler_indices, range_indices]
+    # angles = angles_array[doppler_indices, range_indices]
     
     SLOW_TIME = config.SLOW_TIME
     VELOCITY_RES = config.VELOCITY_RES
+
+    # Remove detections on the zero-Doppler bin (static clutter line)
+    zero_bin = SLOW_TIME // 2
+    nonzero_mask = doppler_indices != zero_bin
+    doppler_indices = doppler_indices[nonzero_mask]
+    range_indices = range_indices[nonzero_mask]
+
+    angles = angles_array[doppler_indices, range_indices]
     
     doppler_offsets = doppler_indices - SLOW_TIME // 2
     velocities = doppler_offsets * VELOCITY_RES

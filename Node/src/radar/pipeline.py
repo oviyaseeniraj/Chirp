@@ -194,7 +194,7 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
             )
             t4b = time.perf_counter_ns()
 
-            # 5. 3D DBSCAN
+            # 5. 3D DBSCAN - produce centroids with (range, doppler, angle) information
             dbscan_data_2d, dbscan_angles, centroids = dbscan_process(detection_coords_3d, cfar_data.shape)
             t4c = time.perf_counter_ns()
 

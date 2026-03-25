@@ -341,7 +341,7 @@ def socket_process(processed_queue, server_url, node_id):
             # Emit data payload combining base requirements and shim enhancements
             sio.emit("send_frame", {
                 "node_id": node_id,
-                "frame_num": data.get("timestamp", int(time.time() * 1000)),
+                "timestamp_ms": data.get("timestamp", int(time.time() * 1000)),
                 "array": data.get("array", b""),
                 "angles": data.get("angles", b""),
                 "cfar": data.get("cfar", b""),
@@ -356,7 +356,7 @@ def socket_process(processed_queue, server_url, node_id):
             try:
                 db_row = {
                     "node_id": node_id,
-                    "frame_num": data.get("timestamp", int(time.time() * 1000)),
+                    "timestamp_ms": data.get("timestamp", int(time.time() * 1000)),
                     "cluster_count": data.get("cluster_count", 0),
                     "clusters": data.get("clusters", []),
                 }

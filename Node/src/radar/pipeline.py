@@ -259,12 +259,26 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
             if centroids:
                 for label, (centroid_vec, mass) in centroids.items():
                     c = centroid_vec.cpu().numpy()
+
+                    range_idx = float(c[0])
+                    doppler_idx = float(c[1])
+                    angle_rad = float(c[2])
+
+                    # multiply by range/velocity resolution, because each idx/bin of the RDM corresponds to a physical value
+                    range_meters = range_idx * config.RANGE_RES
+                    # subtract SLOW_TIME / 2 to remove the zero-centering from doppler_idx
+                    doppler_meters_per_sec = (doppler_idx - (config.SLOW_TIME / 2.0)) * config.VELOCITY_RES 
+
                     clusters_meta.append({
                         "id": int(label),
-                        "range_idx": float(c[0]),
-                        "doppler_idx": float(c[1]),
-                        "angle_rad": float(c[2]),
-                        "angle_deg": float(np.rad2deg(c[2])),
+                        "range_idx": range_idx,
+                        "doppler_idx": doppler_idx,
+
+                        "range_m": float(range_meters),
+                        "doppler_mps": float(doppler_meters_per_sec),
+
+                        "angle_rad": angle_rad,
+                        "angle_deg": float(np.rad2deg(angle_rad)),
                         "mass": int(mass)
                     })
 

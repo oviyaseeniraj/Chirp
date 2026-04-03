@@ -7,8 +7,12 @@ import socketio
 import torch
 from queue import Empty, Full
 
+ 
+
 from . import config
 from .processing.rdm import RangeDoppler
+
+from .processing.anirban_jpda import StoneSoupJPDATracker
 
 # Hardware acceleration check: Choose between GPU (PyTorch) and optimized CPU (NumPy/OpenCV)
 # if torch.cuda.is_available():
@@ -116,6 +120,18 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
     if device is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"[PROCESSING] Using device: {device}")
+
+    #assume sampling at 15 HZ
+    jpda = StoneSoupJPDATracker(
+    dt=0.1,                          # 10Hz sampling
+    detection_probability=0.9,       # MATLAB Pd
+    clutter_density=0.01,            # Clutter model
+    gate_probability=0.99,           # Gating
+    sigma_a=0.1,                     # Process noise
+    sigma_range=RANGE_RES,                 # Range noise
+    sigma_doppler=VEL_RES,               # Velocity noise
+    sigma_angle=np.pi/4.0            # Angle noise
+    )
 
     last_frame_time = None
     frame_times = []

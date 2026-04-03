@@ -142,7 +142,7 @@ class StoneSoupJPDATracker:
         # Store initial state covariance for new tracks
         self.initial_covar = self._compute_initial_covariance()
     
-    def _compute_initial_covariance(self) -> np.ndarray:
+    desf _compute_initial_covariance(self) -> np.ndarray:
         sigma_x = 0.5
         sigma_vx = 1.0
         sigma_y = 0.5

@@ -8,6 +8,7 @@ import torch
 from queue import Empty, Full
 
  
+import datetime
 
 from . import config
 from .processing.rdm import RangeDoppler
@@ -252,13 +253,14 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
             #    print(items)
             #print(len(rda_centroids))
 
-            #8. JPDA Multi-Target Tracking
+"""
+            #8. JPDA Multi-Target Tracking ===========================================
             current_timestamp = datetime.now()
             confirmed_tracks, tentative_tracks = jpda.process_frame(rda_centroids, current_timestamp)
 
             # Create visualization maps for confirmed tracks
-            confirmed_tracks_map = np.zeros_like(frame, dtype=np.float32)
-            confirmed_tracks_angles = np.zeros_like(frame, dtype=np.float32)
+            confirmed_tracks_map = np.zeros_like(rdm_mag, dtype=np.float32)
+            confirmed_tracks_angles = np.zeros_like(rdm_mag, dtype=np.float32)
 
             print(f"Confirmed: {len(confirmed_tracks)} | Tentative: {len(tentative_tracks)}")
             for track in confirmed_tracks:
@@ -276,7 +278,7 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
                 
                 # 2. Convert velocity (m/s) to Doppler bin
                 # The zero-velocity bin is at DOPPLER_BINS / 2 = 32
-                doppler_bin = int(round((vel_val / VEL_RES) + (DOPPLER_BINS / 2)))
+                doppler_bin = int(round((vel_val / VELOCITY_RES) + (DOPPLER_BINS / 2)))
                 doppler_bin = np.clip(doppler_bin, 0, DOPPLER_BINS-1)
 
                 # 3. Populate the visualization maps
@@ -285,7 +287,7 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
                     confirmed_tracks_angles[doppler_bin, range_bin] = np.rad2deg(angle_rad)
 
                 print(f"Track {tid} at x={state[0]:.2f}, y={state[1]:.2f}, misses={misses}, avg det={detection}")
-
+"""
             # Calibration Hook
             # if save_calibration and centroids and len(centroids) > 0:
             #     centroid_values = [v[0].cpu().numpy() for v in centroids.values()]

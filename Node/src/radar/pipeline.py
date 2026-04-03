@@ -204,6 +204,72 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
             
             t5_extra = time.perf_counter_ns()
 
+
+            #convert to estimate of actual velocities and ranges, rather than bins
+            #7. Zero bin removal for centroids
+            eps = 0.2
+            rda_centroids = {}
+            for label,data in centroids.items():
+                state = data[0]
+                vel_bin, range_bin = state[0], state[1]
+
+                #get rid of reflections
+                #if (range_bin > 256):
+                #    continue
+                angle = state[2]
+                num_points = data[1]
+
+                vel_val = (vel_bin - 32) * VEL_RES
+                range_val = range_bin * RANGE_RES
+
+                if abs(vel_bin - 32) > eps: #keep moving targets
+                    rda_centroids[label] = (torch.tensor([range_val, vel_val, angle]), num_points)
+                else:
+                    pass
+                    #print("filtrum")
+
+            print("Centroids: ",len(centroids))
+            print("Filtered Centroids: ",len(rda_centroids))
+
+            #if len(rda_centroids) > 0:
+            #    items = rda_centroids.items()
+            #    print(items)
+            #print(len(rda_centroids))
+
+            #8. JPDA Multi-Target Tracking
+            current_timestamp = datetime.now()
+            confirmed_tracks, tentative_tracks = jpda.process_frame(rda_centroids, current_timestamp)
+
+            # Create visualization maps for confirmed tracks
+            confirmed_tracks_map = np.zeros_like(frame, dtype=np.float32)
+            confirmed_tracks_angles = np.zeros_like(frame, dtype=np.float32)
+
+            print(f"Confirmed: {len(confirmed_tracks)} | Tentative: {len(tentative_tracks)}")
+            for track in confirmed_tracks:
+                tid = track['TrackID']
+                state = track['State'] # [x, y, vx, vy]
+                misses = track['ConsecutiveMisses']
+                detection = track['Detection'] # [range (m), velocity (m/s), angle (rad)]
+                
+                # --- Convert physical units back to RDM bins ---
+                range_val, vel_val, angle_rad = detection
+                
+                # 1. Convert range (m) to range bin
+                range_bin = int(round(range_val / RANGE_RES))
+                range_bin = np.clip(range_bin, 0, RANGE_BINS-1)
+                
+                # 2. Convert velocity (m/s) to Doppler bin
+                # The zero-velocity bin is at DOPPLER_BINS / 2 = 32
+                doppler_bin = int(round((vel_val / VEL_RES) + (DOPPLER_BINS / 2)))
+                doppler_bin = np.clip(doppler_bin, 0, DOPPLER_BINS-1)
+
+                # 3. Populate the visualization maps
+                if 0 <= range_bin < RANGE_BINS and 0 <= doppler_bin < DOPPLER_BINS:
+                    confirmed_tracks_map[doppler_bin, range_bin] = 1.0  # Mark the spot
+                    confirmed_tracks_angles[doppler_bin, range_bin] = np.rad2deg(angle_rad)
+
+                print(f"Track {tid} at x={state[0]:.2f}, y={state[1]:.2f}, misses={misses}, avg det={detection}")
+
             # Calibration Hook
             # if save_calibration and centroids and len(centroids) > 0:
             #     centroid_values = [v[0].cpu().numpy() for v in centroids.values()]

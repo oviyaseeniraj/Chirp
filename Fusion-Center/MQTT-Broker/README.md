@@ -11,6 +11,7 @@ This directory contains part 1 of the MQTT trigger rollout: broker deployment an
 - `bootstrap_passwords.sh`: creates `passwords` file from `.env`.
 - `start_broker.sh`: starts broker with Docker Compose.
 - `clear_retained.sh`: clears retained presence/state topics for one node.
+- `server_controller.py`: step 2 Xavier control service (start scheduler + ack collector).
 
 ## Quick start on Xavier
 
@@ -80,3 +81,41 @@ Server client should also set a will:
   - `server-xavier`
   - `laptop-control`
   - `radar-<serial-or-nodeId>`
+
+## Step 2: Server control service (Xavier)
+
+Run the server-side coordinator after the broker is up:
+
+1. Ensure Python dependency is installed:
+   - `python3 -m pip install paho-mqtt`
+2. Export server credentials/environment:
+   - `export MQTT_HOST=127.0.0.1`
+   - `export MQTT_PORT=1883`
+   - `export MQTT_SERVER_USER=server-xavier`
+   - `export MQTT_SERVER_PASS=<your-server-password>`
+3. Start controller:
+   - `python3 server_controller.py`
+   - or `chmod +x start_server_controller.sh && ./start_server_controller.sh`
+
+### Controller behavior
+
+- Subscribes:
+  - `chirp/v1/server/start/request`
+  - `chirp/v1/presence/+`
+  - `chirp/v1/group/+/capture/state/+`
+  - `chirp/v1/group/+/capture/ack/+`
+- On start request:
+  - Validates schema and group.
+  - Selects active nodes from recent online presence (and filters out nodes in `error`/`offline` state).
+  - Chooses `startEpochMs` from `requestedDelayMs` or default lead time.
+  - Publishes `chirp/v1/group/<groupId>/capture/start` (QoS 1, non-retained).
+  - Waits up to ack timeout and publishes summary to `chirp/v1/server/start/result`.
+
+### Optional tuning env vars
+
+- `CHIRP_LEAD_TIME_MS` (default `3000`)
+- `CHIRP_MIN_START_DELAY_MS` (default `1000`)
+- `CHIRP_MAX_START_DELAY_MS` (default `10000`)
+- `CHIRP_ACK_TIMEOUT_MS` (default `5000`)
+- `CHIRP_PRESENCE_STALE_MS` (default `6000`)
+- `CHIRP_STATE_STALE_MS` (default `10000`)

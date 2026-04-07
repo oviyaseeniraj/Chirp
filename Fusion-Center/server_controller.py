@@ -22,9 +22,9 @@ TOPIC_PREFIX = "chirp/v1"
 START_REQUEST_TOPIC = f"{TOPIC_PREFIX}/server/start/request"    # subscribed topic
 START_RESULT_TOPIC = f"{TOPIC_PREFIX}/server/start/result"      # published topic
 SERVER_STATUS_TOPIC = f"{TOPIC_PREFIX}/server/status"           # published topic
-PRESENCE_TOPIC_FILTER = f"{TOPIC_PREFIX}/presence/+"
-STATE_TOPIC_FILTER = f"{TOPIC_PREFIX}/group/+/capture/state/+"
-ACK_TOPIC_FILTER = f"{TOPIC_PREFIX}/group/+/capture/ack/+"
+PRESENCE_TOPIC_FILTER = f"{TOPIC_PREFIX}/presence/+"            # subscribed topic
+STATE_TOPIC_FILTER = f"{TOPIC_PREFIX}/group/+/capture/state/+"  # subscribed topic
+ACK_TOPIC_FILTER = f"{TOPIC_PREFIX}/group/+/capture/ack/+"      # subscribed topic
 
 # Helper functions
 def _env_int(name: str, default: int) -> int:
@@ -378,6 +378,7 @@ class ServerController:
         active_nodes: Set[str] = set()
 
         with self.presence_lock:
+            
             presence_snapshot = dict(self.presence)
         with self.state_lock:
             state_snapshot = dict(self.state)

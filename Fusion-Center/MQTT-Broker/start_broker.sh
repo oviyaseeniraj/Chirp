@@ -24,6 +24,10 @@ mkdir -p "${SCRIPT_DIR}/data" "${SCRIPT_DIR}/log"
 
 if command -v docker >/dev/null 2>&1 && command -v docker compose >/dev/null 2>&1; then
   docker compose -f "${SCRIPT_DIR}/docker-compose.yaml" up -d # "up" starts the services defined in the docker-compose file, and "-d" means detached mode (run in background)
+  
+    # Ensure log files are readable by owner, group, and individuals
+  chmod 644 "${SCRIPT_DIR}/log/"*.log 2>/dev/null || true
+
   echo "Mosquitto started (docker compose)."
   exit 0
 fi

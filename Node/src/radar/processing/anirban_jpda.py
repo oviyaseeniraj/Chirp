@@ -63,6 +63,16 @@ class RDANonLinearMeasurementModel(NonLinearGaussianMeasurement):
             [-y / r2,  0.0, x / r2,   0.0]
         ])
         return H
+    
+    def _measurement_to_state(self, z: np.ndarray) -> np.ndarray:
+        # z = [range, doppler, angle]
+        range_val, doppler, angle = z
+        x = range_val * np.cos(angle)
+        y = range_val * np.sin(angle)
+        vx = doppler * np.cos(angle)
+        vy = doppler * np.sin(angle)
+        # return in [x, vx, y, vy] order
+        return np.array([x, vx, y, vy])
 
 
 class JPDATracker:
@@ -71,15 +81,36 @@ class JPDATracker:
         probabilities_tracks_detections = None
         probabilities_detections_non_clutter = None 
         probabilities_effective_track_hit = None 
-
-    def _setup_components(self, kwargs):
-        """Initializes transition models and noise parameters."""
-        # Noise parameters (defaults matched to your MATLAB/Python config)
+        
+    def __init__(self, dt, detection_probability, clutter_density, gating_threshold, measurement_noise_covariance, sigma_a, **kwargs):
         sigma_a = kwargs.get('sigma_a', 0.1)
         sigma_range = kwargs.get('sigma_range', 0.1)
         sigma_doppler = kwargs.get('sigma_doppler', 0.1)
         sigma_angle = kwargs.get('sigma_angle', np.pi / 4.0)
 
+        self.dt = dt #unused
+        self.prob_detect = detection_probability
+        self.clutter_density = clutter_density
+        self.gating_threshold = gating_threshold
+
+        #other parameters
+        threshold_init = kwargs.get('threshold_init', 0.05)
+        threshold_hit_miss = kwargs.get('threshold_hit_miss', 0.3)
+        threshold_merge = kwargs.get('threshold_merge', 7)
+
+        self.distance_matrix_before_threshold = None
+
+        self.threshold_init = threshold_init
+        self.threshold_hit_miss = threshold_hit_miss
+        self.threshold_merge = threshold_merge
+
+
+        self.next_track_id = 1
+        self.tracks: Dict[int, Track] = {}
+        self.track_metadata: Dict[int, Dict] = {}
+
+
+        #Stone Soup initialization
         # Transition model: Combined Constant Velocity in 2D
         # State vector: [x, vx, y, vy]
         self.transition_model = CombinedLinearGaussianTransitionModel([
@@ -91,40 +122,7 @@ class JPDATracker:
         self.measurement_model = RDANonLinearMeasurementModel(
             ndim_state=4,
             mapping=(0, 1, 2, 3),
-            noise_covar=CovarianceMatrix(np.diag([
-                sigma_range**2,
-                sigma_doppler**2,
-                sigma_angle**2
-            ]))
-        )
-        
-    def __init__(self, dt=0.1, detection_probability=0.9, clutter_density=0.01, gating_threshold=0.5, **kwargs):
-        sigma_a = kwargs.get('sigma_a', 0.1)
-        sigma_range = kwargs.get('sigma_range', 0.1)
-        sigma_doppler = kwargs.get('sigma_doppler', 0.1)
-        sigma_angle = kwargs.get('sigma_angle', np.pi / 4.0)
-
-        self.dt = dt
-        self.prob_detect = detection_probability
-        self.clutter_density = clutter_density
-        self.gating_threshold = gating_threshold
-        
-        # Standard Stone Soup setup
-        self._setup_components(kwargs)
-        
-        self.next_track_id = 1
-        self.tracks: Dict[int, Track] = {}
-        self.track_metadata: Dict[int, Dict] = {}
-
-        # Initialize Stone Soup measurement model
-        self.measurement_model = RDANonLinearMeasurementModel(
-            ndim_state=4,
-            mapping=(0, 1, 2, 3),
-            noise_covar=CovarianceMatrix(np.diag([
-                sigma_range**2,
-                sigma_doppler**2,
-                sigma_angle**2
-            ]))
+            noise_covar=CovarianceMatrix(measurement_noise_covariance)
         )
         
         # Predictor and updater (use Extended Kalman for nonlinear measurement)
@@ -146,16 +144,6 @@ class JPDATracker:
         sigma_vy = 1.0
         # order [x, vx, y, vy]
         return np.diag([sigma_x**2, sigma_vx**2, sigma_y**2, sigma_vy**2])
-
-    def _measurement_to_state(self, z: np.ndarray) -> np.ndarray:
-        # z = [range, doppler, angle]
-        range_val, doppler, angle = z
-        x = range_val * np.cos(angle)
-        y = range_val * np.sin(angle)
-        vx = doppler * np.cos(angle)
-        vy = doppler * np.sin(angle)
-        # return in [x, vx, y, vy] order
-        return np.array([x, vx, y, vy])
 
     """
     def _extract_track_results(self) -> Tuple[List, List]:
@@ -187,7 +175,7 @@ class JPDATracker:
         return confirmed, tentative
     """
 
-    def process_frame(self,
+    def process(self,
                      detection_centroids: np.ndarray,
                      timestamp: datetime) -> Tuple[List, List]:
         # ...existing code converting centroids to detections...
@@ -218,18 +206,18 @@ class JPDATracker:
                                                                     self.tracks,
                                                                     self.prob_detect,
                                                                     self.clutter_density,
-                                                                    self.gating_threshold,
+                                                                    self.gating_threshold
                                                                     )
             
             self.update(detections, timestamp, associations=associations)
         
-        print(associations)
+        #print(associations)
         # Step 3: Initialize new tracks from same associations
         if detections:
             self.initialise_new_tracks(detections, associations)
 
         # New Step: Merge similar tracks BEFORE management
-        self.remove_duplicates(threshold=30.0)
+        self.remove_duplicates(dist_threshold_merge=self.threshold_merge)
         
         # Step 4: Manage tracks
         self.manage_tracks()
@@ -269,8 +257,8 @@ class JPDATracker:
         num_tracks = 0
         
         if detection_centroids is not None and len(detection_centroids) > 0:
-            print("Detections (range, doppler, angle):")
-            print(detection_centroids)
+            #print("Detections (range, doppler, angle):")
+            #print(detection_centroids)
             num_detections = len(detection_centroids)
         
         if track_dict:
@@ -487,12 +475,14 @@ class JPDATracker:
         n_trk = len(track_ids_list)
         
         distance_matrix = np.zeros((n_trk, n_det))
+
+        self.distance_matrix_before_threshold = distance_matrix
+
         
         for trk_idx, track_id in enumerate(track_ids_list):
             track_info = track_dict[track_id]
             
             # Get predicted state from EKF
-            # State: [x, y, vx, vy]
             state = track_info[-1]  # GaussianState
             state_vec = state.state_vector.flatten()  # [x, vx, y, vy]
             
@@ -526,13 +516,21 @@ class JPDATracker:
                 except np.linalg.LinAlgError:
                     squared_distance = innovation.T @ np.linalg.pinv(S) @ innovation
                 
+                #penalize state uncertainty
+                normalized_maha_distance = squared_distance + np.log(np.linalg.det(S)) 
+
                 if squared_distance > gating_threshold:
                     distance_matrix[trk_idx,det_idx] = np.inf
                 else:
-                    distance_matrix[trk_idx,det_idx] = squared_distance
+                    distance_matrix[trk_idx,det_idx] = normalized_maha_distance
         
+
+                #use for selecting threshold
+                self.distance_matrix_before_threshold[trk_idx,det_idx] = normalized_maha_distance
+
+
         print("Distance Matrix:")
-        print(distance_matrix)
+        print(self.distance_matrix_before_threshold)
         
         return distance_matrix
 
@@ -676,7 +674,7 @@ class JPDATracker:
         #Matches MATLAB claim < threshold_init logic.
         
         # threshold_init = 0.05 from MATLAB code
-        threshold_init = 0.05
+        threshold_init = self.threshold_init
         
         for det_idx, detection in enumerate(detections):
             # Calculate 'Claim': Max probability any track identifies with this detection
@@ -707,7 +705,7 @@ class JPDATracker:
     def _create_new_track_object(self, detection: Detection, track_id: int) -> Track:
         """Helper to convert detection to initial state and Track object."""
         z = np.asarray(detection.state_vector).flatten()
-        x_init = self._measurement_to_state(z)
+        x_init = self.measurement_model._measurement_to_state(z)
         
         initial_state = GaussianState(
             StateVector(x_init),
@@ -885,7 +883,7 @@ class JPDATracker:
     def update(self, detections: List[Detection], timestamp: datetime, 
            associations: 'JPDATracker.AssociationData' = None) -> None:
         """Matched to MATLAB: Soft JPDA Weighted Update (correctjpda equivalent)."""
-        print(len(detections))
+        print(f"update: # detections = {len(detections)}")
         
         if associations is None:
             print("Error, failed to associate")
@@ -897,8 +895,8 @@ class JPDATracker:
         n_det = len(detections)
         
         for track_id, track in self.tracks.items():
-            print("============================")
-            print(f"Associated Track {track_id}")
+            #print("============================")
+            #print(f"Associated Track {track_id}")
             
             track_idx = track_id_to_idx[track_id]
             
@@ -907,7 +905,7 @@ class JPDATracker:
             prob_hit = associations.probabilities_effective_track_hit[track_idx]
             
             # MATLAB threshold_hit_miss = 0.3
-            if prob_hit < 0.3:
+            if prob_hit < self.threshold_hit_miss:
                 self._register_miss(track_id)
                 # Keep the predicted state (already appended by predict())
                 continue
@@ -944,8 +942,8 @@ class JPDATracker:
                 if miss_prob > 0:
                     weights.append(miss_prob)
                     posteriors.append(predicted_state)
-                    exp_z = self.measurement_model.function(predicted_state)
-                    weighted_meas += miss_prob * exp_z
+                    expected_z = self.measurement_model.function(predicted_state)
+                    weighted_meas += miss_prob * expected_z
                 
                 self.track_metadata[track_id]['last_weighted_meas'] = weighted_meas.flatten()
                 
@@ -1014,7 +1012,7 @@ class JPDATracker:
             del self.tracks[tid]
             del self.track_metadata[tid]
     
-    def remove_duplicates(self, threshold=7.0):
+    def remove_duplicates(self, dist_threshold_merge):
         """Matched to MATLAB: remove_duplicates using strength."""
         track_ids = list(self.tracks.keys())
         to_delete = set()
@@ -1033,7 +1031,7 @@ class JPDATracker:
                 if id2 in to_delete: continue
                 
                 dist = self._maha_dist(self.tracks[id1][-1], self.tracks[id2][-1])
-                if dist < threshold:
+                if dist < dist_threshold_merge:
                     # Delete the weaker one
                     if strengths[id1] > strengths[id2]:
                         to_delete.add(id2)
@@ -1091,7 +1089,7 @@ def test_stone_soup_jpda():
     tracker = JPDATracker(
         dt=0.1,
         detection_probability=0.9,
-        clutter_density=0.01,
+        clutter_density=config.CLUTTER_DENSITY,
         gating_threshold=0.8
     )
     
@@ -1111,10 +1109,10 @@ def test_stone_soup_jpda():
         print(f"Confirmed: {len(confirmed)}, Tentative: {len(tentative)}")
         
         for track in confirmed + tentative:
-            print(f"  Track {track['TrackID']} ({track['Status']}): "
-                  f"State={track['State'][:2]}, Hits={track['Hits']}, "
-                  f"Misses={track['ConsecutiveMisses']}")
-
+            #print(f"  Track {track['TrackID']} ({track['Status']}): "
+            #      f"State={track['State'][:2]}, Hits={track['Hits']}, "
+            #      f"Misses={track['ConsecutiveMisses']}")
+            pass
 
 if __name__ == '__main__':
     test_stone_soup_jpda()

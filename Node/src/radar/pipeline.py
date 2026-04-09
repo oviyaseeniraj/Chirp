@@ -106,6 +106,26 @@ def daq_process(raw_queue, daq_class, **daq_kwargs):
                 print(f"[DAQ] Error: {e}")
                 time.sleep(0.1)
 
+
+def rd_val_to_bin(range_val,vel_val):
+    # 1. Convert range (m) to range bin
+    range_bin = int(round(range_val / config.RANGE_RES))
+    #range_bin = np.clip(range_bin, 0, config.RANGE_BINS-1)
+    
+    # 2. Convert velocity (m/s) to Doppler bin
+    # The zero-velocity bin is at DOPPLER_BINS / 2 = 32
+    doppler_bin = int(round((vel_val / config.VELOCITY_RES) + (config.DOPPLER_BINS / 2)))
+    #doppler_bin = np.clip(doppler_bin, 0, config.DOPPLER_BINS-1)
+
+    return range_bin, doppler_bin
+
+def rd_bin_to_val(range_bin,vel_bin):
+    vel_val = (vel_bin - config.DOPPLER_BINS/2) * config.VELOCITY_RES
+    range_val = range_bin * config.RANGE_RES
+
+    return range_val, vel_val
+
+
 def processing_process(raw_queue, processed_queue, node_id, device=None, save_calibration=True, visualize_clusters_only=False, **cfar_kwargs):
     """
     Signal processing pipeline: RDM -> CFAR -> Angle -> 3D Mapping -> DBSCAN -> Centroids.
@@ -124,14 +144,17 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
 
     #assume sampling at 15 HZ
     jpda = JPDATracker(
-    dt=0.1,                          # 10Hz sampling
-    detection_probability=0.9,       # MATLAB Pd
-    clutter_density=0.01,            # Clutter model
-    gate_probability=0.99,           # Gating
-    sigma_a=0.1,                     # Process noise
-    sigma_range=config.RANGE_RES,                 # Range noise
-    sigma_doppler=config.VELOCITY_RES,               # Velocity noise
-    sigma_angle=np.pi/4.0            # Angle noise
+    dt=0.1,                          # 10Hz sampling #unused
+    detection_probability=config.DETECTION_PROBABILITY,       # MATLAB Pd
+    clutter_density=config.CLUTTER_DENSITY,            # Clutter model
+    gating_threshold=config.GATING_THRESHOLD,           # Gating
+    measurement_noise_covariance=config.MEASUREMENT_NOISE, #measurement noise covariance matrix (range, doppler, angle noise)
+    sigma_a=0.1,                     # Process noise #variance of human acceleration
+    
+    #multi-track parameters
+    threshold_init = config.THRESHOLD_INIT,
+    threshold_hit_miss = config.THRESHOLD_HIT_MISS,
+    threshold_merge = config.THRESHOLD_MERGE
     )
 
     last_frame_time = None
@@ -184,19 +207,21 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
 
             last_frame_time = current_time
 
-            # 1. Range-Doppler Processing
+            # 1. ============================== Range-Doppler Processing ========================
             t1 = time.perf_counter_ns()
+            
             rdm.set_buffer(np.array(frame_data, dtype=np.float32))
             rdm_mag = rdm.process().reshape(config.SLOW_TIME, config.FAST_TIME)
             clean_rdm = rdm.get_clean_rdm()
-            t2 = time.perf_counter_ns()
             frame_num += 1
 
-            # 2. CFAR Detection
+            t2 = time.perf_counter_ns()
+
+            # 2. =============================== CFAR Detection ===============================
             cfar_data = cfar_func(rdm_mag, device=device, **cfar_params)
             t3 = time.perf_counter_ns()
 
-            # 3. Angle Estimation
+            # 3. =============================== Angle Estimation ===============================
             angle_data = angle_func(
                 cfar_detections=cfar_data,
                 clean_rdmap=clean_rdm,
@@ -205,45 +230,49 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
             )
             t4 = time.perf_counter_ns()
 
-            # 4. 3D Detection Mapping
+            # 4. ================================== 3D DBSCAN ===============================
             detection_coords_3d, _ = create_3d_detection_map_spatial(
                 cfar_data, angle_data, rdm_mag
             )
-            t4b = time.perf_counter_ns()
 
-            # 5. 3D DBSCAN
             dbscan_data_2d, dbscan_angles, centroids = dbscan_process(detection_coords_3d, cfar_data.shape)
-            t4c = time.perf_counter_ns()
-
-            # 6. Centroid Processing
-            centroids_map, centroids_angles = centroid_process(centroids, cfar_data.shape)
             t5 = time.perf_counter_ns()
+
+            # 5. =============================== Centroid Processing ===============================
+            centroids_map, centroids_angles = centroid_process(centroids, cfar_data.shape)
             
-            t5_extra = time.perf_counter_ns()
-
-
-            #convert to estimate of actual velocities and ranges, rather than bins
-            #7. Zero bin removal for centroids
+            #Zero bin removal for centroids
             eps = 0.2
             rda_centroids = {}
             for label,data in centroids.items():
-                state = data[0]
-                vel_bin, range_bin = state[0], state[1]
+                meas = data[0]
+                vel_bin, range_bin = meas[0], meas[1]
 
                 #get rid of reflections
                 #if (range_bin > 256):
                 #    continue
-                angle = state[2]
+                angle = meas[2]
                 num_points = data[1]
 
-                vel_val = (vel_bin - 32) * config.VELOCITY_RES
-                range_val = range_bin * config.RANGE_RES
+                range_val, vel_val = rd_bin_to_val(range_bin, vel_bin)
 
                 if abs(vel_bin - 32) > eps: #keep moving targets
                     rda_centroids[label] = (torch.tensor([range_val, vel_val, angle]), num_points)
                 else:
                     pass
                     #print("filtrum")
+
+            filtered_centroids = np.zeros(np.size(centroids_map))
+            for range_val,vel_val,angle in rda_centroids.values():
+                range_bin, doppler_bin = rd_val_to_bin(range_val, vel_val)
+
+                # 3. Populate the visualization maps
+                if 0 <= range_bin < config.RANGE_BINS and 0 <= doppler_bin < config.DOPPLER_BINS:
+                    confirmed_tracks_map[doppler_bin, range_bin] = 1.0  # Mark the spot
+                    confirmed_tracks_angles[doppler_bin, range_bin] = np.rad2deg(angle_rad)
+
+            def rda_to_
+
 
             #print("Centroids: ",len(centroids))
             #print("Filtered Centroids: ",len(rda_centroids))
@@ -253,10 +282,14 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
             #    print(items)
             #print(len(rda_centroids))
 
-            
-            #8. JPDA Multi-Target Tracking ===========================================
+            t6 = time.perf_counter_ns()
+
+            #6. =============================== JPDA Multi-Target Tracking ===========================================
             current_timestamp = datetime.now()
-            confirmed_tracks, tentative_tracks = jpda.process_frame(rda_centroids, current_timestamp)
+            print(f"# of prefiltered detections: {len(rda_centroids)}")
+            confirmed_tracks, tentative_tracks = jpda.process(rda_centroids, current_timestamp)
+
+            t7 = time.perf_counter_ns()
 
             # Create visualization maps for confirmed tracks
             confirmed_tracks_map = np.zeros_like(rdm_mag, dtype=np.float32)
@@ -265,28 +298,21 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
             print(f"Confirmed: {len(confirmed_tracks)} | Tentative: {len(tentative_tracks)}")
             for track in confirmed_tracks:
                 tid = track['TrackID']
-                state = track['State'] # [x, y, vx, vy]
+                state = track['State'] # [x, vx, y, vy]
                 misses = track['ConsecutiveMisses']
                 detection = track['Detection'] # [range (m), velocity (m/s), angle (rad)]
                 
                 # --- Convert physical units back to RDM bins ---
                 range_val, vel_val, angle_rad = detection
                 
-                # 1. Convert range (m) to range bin
-                range_bin = int(round(range_val / config.RANGE_RES))
-                range_bin = np.clip(range_bin, 0, config.RANGE_BINS-1)
-                
-                # 2. Convert velocity (m/s) to Doppler bin
-                # The zero-velocity bin is at DOPPLER_BINS / 2 = 32
-                doppler_bin = int(round((vel_val / config.VELOCITY_RES) + (config.DOPPLER_BINS / 2)))
-                doppler_bin = np.clip(doppler_bin, 0, config.DOPPLER_BINS-1)
+                range_bin, doppler_bin = rd_val_to_bin(range_val, vel_val)
 
                 # 3. Populate the visualization maps
                 if 0 <= range_bin < config.RANGE_BINS and 0 <= doppler_bin < config.DOPPLER_BINS:
                     confirmed_tracks_map[doppler_bin, range_bin] = 1.0  # Mark the spot
                     confirmed_tracks_angles[doppler_bin, range_bin] = np.rad2deg(angle_rad)
 
-                print(f"Track {tid} at x={state[0]:.2f}, y={state[1]:.2f}, misses={misses}, avg det={detection}")
+                #print(f"Track {tid} at x={state[0]:.2f}, y={state[3]:.2f}, misses={misses}, avg det={detection}")
 
 
             # Calibration Hook
@@ -320,6 +346,13 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
                         "angle_rad": float(c[2]),
                         "angle_deg": float(np.rad2deg(c[2])),
                         "mass": int(mass)
+
+                        #TODO: add track data to output
+                        #
+                        #x,y,vx,vy 
+                        #
+                        #is_track_or_no
+
                     })
 
             output_data = {
@@ -341,8 +374,6 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
             except Full:
                 pass
 
-            t6 = time.perf_counter_ns()
-
             # Print timing every 10 frames with FPS
             frame_count += 1
             if frame_count % frame_rpl == 0 and len(frame_times) > 0:
@@ -350,9 +381,13 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
                 fps = 1.0 / avg_interval if avg_interval > 0 else 0
                 print(
                     f"[PROCESSING] FPS: {fps:.2f} | Avg: {avg_interval * 1000:.1f}ms | "
-                    f"Total: {(t6 - t0) // 1_000}us, RDM: {(t2 - t1) // 1_000}us, CFAR: {(t3 - t2) // 1_000}us, "
-                    f"ANGLE: {(t4 - t3) // 1_000}us, 3D_MAP: {(t4b - t4) // 1_000}us, DBSCAN3D: {(t4c - t4b) // 1_000}us, "
-                    f"CENTROID: {(t5 - t4c) // 1_000}us"
+                    f"Total: {(t7 - t0) // 1_000}us, RDM: {(t2 - t1) // 1_000}us," 
+                    f"CFAR: {(t3 - t2) // 1_000}us, "
+                    f"ANGLE: {(t4 - t3) // 1_000}us, "
+                    f"3D DBSCAN: {(t5 - t4) // 1_000}us, "
+                    f"CENTROID: {(t6 - t5) // 1_000}us, "
+                    f"JPDA: {(t7 - t6) // 1_000}us"
+
                 )
                 print(
                     f"CFAR Detections: {np.sum(cfar_data > 0)} | 3D Clusters: {len(centroids) if centroids else 0}"

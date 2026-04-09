@@ -157,6 +157,7 @@ class JPDATracker:
         # return in [x, vx, y, vy] order
         return np.array([x, vx, y, vy])
 
+    """
     def _extract_track_results(self) -> Tuple[List, List]:
         confirmed, tentative = [], []
         for track_id, track in self.tracks.items():
@@ -184,7 +185,7 @@ class JPDATracker:
             else:
                 tentative.append(track_dict)
         return confirmed, tentative
-
+    """
 
     def process_frame(self,
                      detection_centroids: np.ndarray,

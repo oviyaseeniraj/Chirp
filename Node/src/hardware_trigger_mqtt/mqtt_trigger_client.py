@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Phase 2 MQTT control client for Orin trigger worker."""
+"""Phase 2/3 MQTT control client for Orin trigger worker."""
 
 from __future__ import annotations
 
@@ -16,6 +16,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import paho.mqtt.client as mqtt
+
+from command_cache import CommandCache
 
 
 def _env_int(name: str, default: int) -> int:
@@ -57,6 +59,14 @@ class NodeTriggerClient:
         self.keepalive_sec = _env_int("MQTT_KEEPALIVE_SEC", 30)
         self.presence_heartbeat_ms = _env_int("PRESENCE_HEARTBEAT_MS", 2000)
 
+        self.command_cache_ttl_ms = _env_int("COMMAND_CACHE_TTL_MS", 5 * 60 * 1000)         # stores how long a commandId lives in the CommandCache 
+        self.command_replay_max_age_ms = _env_int("COMMAND_REPLAY_MAX_AGE_MS", 30 * 1000)   # checks payload timestampMs and rejects message if it is too old
+        self.command_start_late_grace_ms = _env_int("COMMAND_START_LATE_GRACE_MS", 250)     # allow slight lateness from network jitter when receiving start/capture message
+        self.command_start_future_max_skew_ms = _env_int(                                   # rejects startEpochMs that is unrealistic / too far into the future
+            "COMMAND_START_FUTURE_MAX_SKEW_MS",
+            10 * 60 * 1000,
+        )
+
         self.start_topic = f"{self.topic_prefix}/group/{self.group_id}/capture/start"                   # subscribed topic
         self.presence_topic = f"{self.topic_prefix}/presence/{self.node_id}"                            # published topic
         self.state_topic = f"{self.topic_prefix}/group/{self.group_id}/capture/state/{self.node_id}"    # published topic
@@ -78,6 +88,7 @@ class NodeTriggerClient:
         self.worker_process: Optional[subprocess.Popen[str]] = None
         self.last_command_id: Optional[str] = None
         self.current_state = "idle"
+        self.command_cache = CommandCache(ttl_ms=self.command_cache_ttl_ms)
 
         self.client = mqtt.Client(
             mqtt.CallbackAPIVersion.VERSION2,
@@ -236,9 +247,22 @@ class NodeTriggerClient:
         t0 = _now_ms()
         command_id = str(payload.get("commandId", "")).strip()
         group_id = str(payload.get("groupId", "")).strip()
-        schema_version = int(payload.get("schemaVersion", self.schema_version))
+        schema_version_raw = payload.get("schemaVersion", self.schema_version)
         start_epoch_ms = payload.get("startEpochMs")
         target_node_ids = payload.get("targetNodeIds")
+        timestamp_ms_raw = payload.get("timestampMs")
+
+        try:
+            schema_version = int(schema_version_raw)
+        except (TypeError, ValueError):
+            self._publish_ack(
+                command_id=command_id or "missing-command-id",
+                ready=False,
+                start_epoch_ms=None,
+                latency_ms=_now_ms() - t0,
+                reason="invalid_schema_version",
+            )
+            return
 
         if not command_id:
             logging.warning("Ignoring start without commandId")
@@ -258,6 +282,18 @@ class NodeTriggerClient:
             )
             return
 
+        if self.command_cache.contains(command_id):
+            # QoS1 redelivery can replay the same command payload; ignore execution.
+            self._publish_ack(
+                command_id=command_id,
+                ready=True,
+                start_epoch_ms=None,
+                latency_ms=_now_ms() - t0,
+                reason="duplicate_command_ignored",
+            )
+            logging.info("Duplicate command ignored commandId=%s", command_id)
+            return
+
         if target_node_ids and self.node_id not in [str(v) for v in target_node_ids]:
             logging.info("Ignoring commandId=%s not targeted to nodeId=%s", command_id, self.node_id)
             return
@@ -274,6 +310,60 @@ class NodeTriggerClient:
             )
             self._publish_state("error", command_id=command_id, error="invalid_start_epoch_ms")
             return
+
+        now_ms = _now_ms()
+        if start_epoch_ms_int < now_ms - self.command_start_late_grace_ms:
+            self._publish_ack(
+                command_id=command_id,
+                ready=False,
+                start_epoch_ms=start_epoch_ms_int,
+                latency_ms=_now_ms() - t0,
+                reason="stale_start_epoch_ms",
+            )
+            logging.warning(
+                "Rejected stale command commandId=%s startEpochMs=%d nowMs=%d",
+                command_id,
+                start_epoch_ms_int,
+                now_ms,
+            )
+            return
+
+        if start_epoch_ms_int > now_ms + self.command_start_future_max_skew_ms:
+            self._publish_ack(
+                command_id=command_id,
+                ready=False,
+                start_epoch_ms=start_epoch_ms_int,
+                latency_ms=_now_ms() - t0,
+                reason="start_epoch_too_far_in_future",
+            )
+            logging.warning(
+                "Rejected far-future command commandId=%s startEpochMs=%d nowMs=%d",
+                command_id,
+                start_epoch_ms_int,
+                now_ms,
+            )
+            return
+
+        if timestamp_ms_raw is not None:
+            try:
+                timestamp_ms = int(timestamp_ms_raw)
+            except (TypeError, ValueError):
+                timestamp_ms = None
+            if timestamp_ms is not None and timestamp_ms + self.command_replay_max_age_ms < now_ms:
+                self._publish_ack(
+                    command_id=command_id,
+                    ready=False,
+                    start_epoch_ms=start_epoch_ms_int,
+                    latency_ms=_now_ms() - t0,
+                    reason="stale_command_timestamp",
+                )
+                logging.warning(
+                    "Rejected replayed command commandId=%s timestampMs=%d nowMs=%d",
+                    command_id,
+                    timestamp_ms,
+                    now_ms,
+                )
+                return
 
         with self.worker_lock:
             if self.worker_process and self.worker_process.poll() is None: # process is still running
@@ -311,6 +401,7 @@ class NodeTriggerClient:
                 return
 
             self.last_command_id = command_id
+            self.command_cache.remember(command_id)
             self._publish_state(
                 "arming",
                 command_id=command_id,

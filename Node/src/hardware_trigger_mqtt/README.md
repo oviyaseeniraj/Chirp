@@ -1,9 +1,10 @@
-# hardware_trigger_mqtt (Phase 1 + Phase 2)
+# hardware_trigger_mqtt (Phase 1 + Phase 2 + Phase 3)
 
 This directory contains the isolated Step 3 rollout artifacts:
 
 - Phase 1: absolute-time hardware trigger worker (`trigger_worker`)
 - Phase 2: MQTT control client (`mqtt_trigger_client.py`)
+- Phase 3: command dedup + replay protection (`command_cache.py`)
 
 ## Scope
 
@@ -64,6 +65,15 @@ Environment (defaults shown):
 - `CHIRP_SCHEMA_VERSION=1`
 - `TRIGGER_WORKER_PATH=./trigger_worker` (auto-resolved to this directory by default)
 - `PRESENCE_HEARTBEAT_MS=2000`
+- `COMMAND_CACHE_TTL_MS=300000`
+- `COMMAND_REPLAY_MAX_AGE_MS=30000`
+- `COMMAND_START_LATE_GRACE_MS=250`
+- `COMMAND_START_FUTURE_MAX_SKEW_MS=600000`
+
+Phase 3 behavior:
+- Duplicate `commandId` values within cache TTL are ignored (no second worker launch).
+- Stale start commands (`startEpochMs` too far in the past) are rejected.
+- Replayed payloads with stale `timestampMs` are rejected.
 
 If you get an error about the socket connection timing out, the env variable for MQTT_HOST might be off. 
 Do `sudo vim ~/.bashrc` and see if the following lines are pasted in at the very bottom of the file:

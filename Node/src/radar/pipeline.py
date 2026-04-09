@@ -8,12 +8,12 @@ import torch
 from queue import Empty, Full
 
  
-import datetime
+from datetime import datetime
 
 from . import config
 from .processing.rdm import RangeDoppler
 
-from .processing.anirban_jpda import StoneSoupJPDATracker
+from .processing.anirban_jpda import JPDATracker
 
 # Hardware acceleration check: Choose between GPU (PyTorch) and optimized CPU (NumPy/OpenCV)
 # if torch.cuda.is_available():
@@ -123,14 +123,14 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
     print(f"[PROCESSING] Using device: {device}")
 
     #assume sampling at 15 HZ
-    jpda = StoneSoupJPDATracker(
+    jpda = JPDATracker(
     dt=0.1,                          # 10Hz sampling
     detection_probability=0.9,       # MATLAB Pd
     clutter_density=0.01,            # Clutter model
     gate_probability=0.99,           # Gating
     sigma_a=0.1,                     # Process noise
-    sigma_range=RANGE_RES,                 # Range noise
-    sigma_doppler=VEL_RES,               # Velocity noise
+    sigma_range=config.RANGE_RES,                 # Range noise
+    sigma_doppler=config.VELOCITY_RES,               # Velocity noise
     sigma_angle=np.pi/4.0            # Angle noise
     )
 
@@ -236,8 +236,8 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
                 angle = state[2]
                 num_points = data[1]
 
-                vel_val = (vel_bin - 32) * VEL_RES
-                range_val = range_bin * RANGE_RES
+                vel_val = (vel_bin - 32) * config.VELOCITY_RES
+                range_val = range_bin * config.RANGE_RES
 
                 if abs(vel_bin - 32) > eps: #keep moving targets
                     rda_centroids[label] = (torch.tensor([range_val, vel_val, angle]), num_points)
@@ -245,15 +245,15 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
                     pass
                     #print("filtrum")
 
-            print("Centroids: ",len(centroids))
-            print("Filtered Centroids: ",len(rda_centroids))
+            #print("Centroids: ",len(centroids))
+            #print("Filtered Centroids: ",len(rda_centroids))
 
             #if len(rda_centroids) > 0:
             #    items = rda_centroids.items()
             #    print(items)
             #print(len(rda_centroids))
 
-"""
+            
             #8. JPDA Multi-Target Tracking ===========================================
             current_timestamp = datetime.now()
             confirmed_tracks, tentative_tracks = jpda.process_frame(rda_centroids, current_timestamp)
@@ -273,21 +273,22 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
                 range_val, vel_val, angle_rad = detection
                 
                 # 1. Convert range (m) to range bin
-                range_bin = int(round(range_val / RANGE_RES))
-                range_bin = np.clip(range_bin, 0, RANGE_BINS-1)
+                range_bin = int(round(range_val / config.RANGE_RES))
+                range_bin = np.clip(range_bin, 0, config.RANGE_BINS-1)
                 
                 # 2. Convert velocity (m/s) to Doppler bin
                 # The zero-velocity bin is at DOPPLER_BINS / 2 = 32
-                doppler_bin = int(round((vel_val / VELOCITY_RES) + (DOPPLER_BINS / 2)))
-                doppler_bin = np.clip(doppler_bin, 0, DOPPLER_BINS-1)
+                doppler_bin = int(round((vel_val / config.VELOCITY_RES) + (config.DOPPLER_BINS / 2)))
+                doppler_bin = np.clip(doppler_bin, 0, config.DOPPLER_BINS-1)
 
                 # 3. Populate the visualization maps
-                if 0 <= range_bin < RANGE_BINS and 0 <= doppler_bin < DOPPLER_BINS:
+                if 0 <= range_bin < config.RANGE_BINS and 0 <= doppler_bin < config.DOPPLER_BINS:
                     confirmed_tracks_map[doppler_bin, range_bin] = 1.0  # Mark the spot
                     confirmed_tracks_angles[doppler_bin, range_bin] = np.rad2deg(angle_rad)
 
                 print(f"Track {tid} at x={state[0]:.2f}, y={state[1]:.2f}, misses={misses}, avg det={detection}")
-"""
+
+
             # Calibration Hook
             # if save_calibration and centroids and len(centroids) > 0:
             #     centroid_values = [v[0].cpu().numpy() for v in centroids.values()]
@@ -362,10 +363,11 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
             import traceback
             traceback.print_exc()
 
+            
 def socket_process(processed_queue, server_url, node_id):
-    """
-    Process that sends processed data to the visualization server.
-    """
+    
+    #Process that sends processed data to the visualization server.
+    
     # Pin to CPU core 2
     try:
         psutil.Process(os.getpid()).cpu_affinity([3])

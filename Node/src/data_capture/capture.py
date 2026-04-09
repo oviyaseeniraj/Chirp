@@ -34,7 +34,7 @@ class CaptureSession:
             timeout: Timeout in seconds for each frame. None means wait forever.
         """
         self.logger.info(f"Starting capture of {num_frames} frames...")
-        
+        i = 0
         while i < num_frames:
             try:
                 # 1. Capture Raw Data

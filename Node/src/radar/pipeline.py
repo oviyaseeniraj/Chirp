@@ -150,7 +150,7 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
     gating_threshold=config.GATING_THRESHOLD,           # Gating
     measurement_noise_covariance=config.MEASUREMENT_NOISE, #measurement noise covariance matrix (range, doppler, angle noise)
     sigma_a=0.1,                     # Process noise #variance of human acceleration
-    
+    max_feasible_events=config.MAX_NUM_FEASIBLE_JOINT_EVENTS,
     #multi-track parameters
     threshold_init = config.THRESHOLD_INIT,
     threshold_hit_miss = config.THRESHOLD_HIT_MISS,
@@ -261,18 +261,19 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
                 else:
                     pass
                     #print("filtrum")
-
-            filtered_centroids = np.zeros(np.size(centroids_map))
-            for range_val,vel_val,angle in rda_centroids.values():
+            filtered_centroids_map = np.zeros_like(centroids_map)
+            filtered_centroids_angles = np.zeros_like(centroids_angles)
+            for label, (tensor,num_points) in rda_centroids.items():
+                range_val, vel_val, angle_rad = tensor.cpu().numpy()
                 range_bin, doppler_bin = rd_val_to_bin(range_val, vel_val)
 
                 # 3. Populate the visualization maps
                 if 0 <= range_bin < config.RANGE_BINS and 0 <= doppler_bin < config.DOPPLER_BINS:
-                    confirmed_tracks_map[doppler_bin, range_bin] = 1.0  # Mark the spot
-                    confirmed_tracks_angles[doppler_bin, range_bin] = np.rad2deg(angle_rad)
+                    filtered_centroids_map[doppler_bin, range_bin] = 1.0  # Mark the spot
+                    filtered_centroids_angles[doppler_bin, range_bin] = np.rad2deg(angle_rad)
 
-            def rda_to_visualisation():
-                
+            #def rda_to_visualisation():
+
 
 
             #print("Centroids: ",len(centroids))
@@ -303,8 +304,12 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
                 misses = track['ConsecutiveMisses']
                 detection = track['Detection'] # [range (m), velocity (m/s), angle (rad)]
                 
+                #TODO: Convert the state to the 
+                expected_detection = jpda.measurement_model.function(state)
+
+                print(expected_detection - detection)
                 # --- Convert physical units back to RDM bins ---
-                range_val, vel_val, angle_rad = detection
+                range_val, vel_val, angle_rad = expected_detection
                 
                 range_bin, doppler_bin = rd_val_to_bin(range_val, vel_val)
 

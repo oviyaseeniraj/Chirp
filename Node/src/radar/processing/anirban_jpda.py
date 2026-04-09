@@ -82,7 +82,11 @@ class JPDATracker:
         probabilities_detections_non_clutter = None 
         probabilities_effective_track_hit = None 
         
-    def __init__(self, dt, detection_probability, clutter_density, gating_threshold, measurement_noise_covariance, sigma_a, **kwargs):
+    CONSECUTIVE_MISS_THRESHOLD = 5
+    CONSECUTIVE_HIT_THRESHOLD = 5
+    TRACK_HIT_HISTORY = 8
+
+    def __init__(self, dt, detection_probability, clutter_density, gating_threshold, measurement_noise_covariance, sigma_a, max_feasible_events, **kwargs):
         sigma_a = kwargs.get('sigma_a', 0.1)
         sigma_range = kwargs.get('sigma_range', 0.1)
         sigma_doppler = kwargs.get('sigma_doppler', 0.1)
@@ -517,7 +521,8 @@ class JPDATracker:
                     squared_distance = innovation.T @ np.linalg.pinv(S) @ innovation
                 
                 #penalize state uncertainty
-                normalized_maha_distance = squared_distance + np.log(np.linalg.det(S)) 
+                normalized_maha_distance = squared_distance + max(0,np.log(np.linalg.det(S)))
+                #print(S, np.linalg.det(S))
 
                 if squared_distance > gating_threshold:
                     distance_matrix[trk_idx,det_idx] = np.inf
@@ -527,7 +532,6 @@ class JPDATracker:
 
                 #use for selecting threshold
                 self.distance_matrix_before_threshold[trk_idx,det_idx] = normalized_maha_distance
-
 
         print("Distance Matrix:")
         print(self.distance_matrix_before_threshold)
@@ -1001,11 +1005,11 @@ class JPDATracker:
         to_delete = []
         for tid, meta in self.track_metadata.items():
             # Confirmation: 5 hits in last 8 frames (nnz of bit vector)
-            if meta['status'] == 'Tentative' and sum(meta['bit_vector']) >= 5:
+            if meta['status'] == 'Tentative' and sum(meta['bit_vector']) >= self.CONSECUTIVE_HIT_THRESHOLD:
                 meta['status'] = 'Confirmed'
 
             # Deletion: 5 consecutive misses
-            if meta['consecutive_misses'] >= 5:
+            if meta['consecutive_misses'] >= self.CONSECUTIVE_MISS_THRESHOLD:
                 to_delete.append(tid)
 
         for tid in to_delete:
@@ -1086,12 +1090,14 @@ class JPDATracker:
 def test_stone_soup_jpda():
     """Test Stone Soup JPDA tracker with proper PDA hypothesiser."""
     
-    tracker = JPDATracker(
-        dt=0.1,
-        detection_probability=0.9,
-        clutter_density=config.CLUTTER_DENSITY,
-        gating_threshold=0.8
-    )
+
+
+    #tracker = JPDATracker(
+    #    dt=0.1,
+    #    detection_probability=0.9,
+    #    clutter_density=config.CLUTTER_DENSITY,
+        #gating_threshold=0.8
+    #)
     
     current_time = datetime.now()
     
@@ -1103,7 +1109,7 @@ def test_stone_soup_jpda():
         ])
         
         frame_time = current_time + timedelta(seconds=frame_idx * 0.1)
-        confirmed, tentative = tracker.process_frame(detections, frame_time)
+        confirmed, tentative = tracker.process(detections, frame_time)
         
         print(f"\n--- Frame {frame_idx} ---")
         print(f"Confirmed: {len(confirmed)}, Tentative: {len(tentative)}")

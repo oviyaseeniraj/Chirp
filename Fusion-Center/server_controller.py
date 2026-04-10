@@ -75,7 +75,7 @@ class ServerController:
         self.mqtt_user = os.getenv("MQTT_USERNAME", os.getenv("MQTT_SERVER_USER", "server-xavier"))
         self.mqtt_pass = os.getenv("MQTT_PASSWORD", os.getenv("MQTT_SERVER_PASS", ""))
 
-        self.lead_time_ms = _env_int("CHIRP_LEAD_TIME_MS", 3000)
+        self.lead_time_ms = _env_int("CHIRP_LEAD_TIME_MS", 5000)
         self.min_start_delay_ms = _env_int("CHIRP_MIN_START_DELAY_MS", 1000)
         self.max_start_delay_ms = _env_int("CHIRP_MAX_START_DELAY_MS", 10000)
         self.ack_timeout_ms = _env_int("CHIRP_ACK_TIMEOUT_MS", 5000)

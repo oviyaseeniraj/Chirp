@@ -14,6 +14,7 @@ fi
 export MQTT_HOST="${MQTT_HOST:-127.0.0.1}"
 export MQTT_PORT="${MQTT_PORT:-1883}"
 export MQTT_LAPTOP_USER="${MQTT_LAPTOP_USER:-laptop-control}"
+export MQTT_LAPTOP_PASS="${MQTT_LAPTOP_PASS:-}"
 
 if [[ -z "${MQTT_LAPTOP_PASS:-}" ]]; then
   echo "Missing MQTT password (MQTT_LAPTOP_PASS)."

@@ -10,3 +10,6 @@ In order to start up both of these services, you will need to follow these steps
     3. install Docker for Ubuntu using the [link](https://docs.docker.com/engine/install/ubuntu/) provided within the README.md located in `Chirp/Fusion-Center/MQTT-Broker`
     4. start up the MQTT broker by running the `./start_broker.sh` Bash script in the `Chirp/Fusion-Center/MQTT-Broker` path
     5. lastly, run `./start_server_controller.sh` in the `Chirp/Fusion-Center` path
+
+
+An external laptop will need to run the code located in the `/Laptop` directory located within this folder. 

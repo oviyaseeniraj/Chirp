@@ -14,6 +14,7 @@ from . import config
 from .processing.rdm import RangeDoppler
 
 from .processing.anirban_jpda import JPDATracker
+from .processing.anirban_jpda import maha_distance
 
 # Hardware acceleration check: Choose between GPU (PyTorch) and optimized CPU (NumPy/OpenCV)
 # if torch.cuda.is_available():
@@ -114,13 +115,13 @@ def rd_val_to_bin(range_val,vel_val):
     
     # 2. Convert velocity (m/s) to Doppler bin
     # The zero-velocity bin is at DOPPLER_BINS / 2 = 32
-    doppler_bin = int(round((vel_val / config.VELOCITY_RES) + (config.DOPPLER_BINS / 2)))
+    doppler_bin = int(round((vel_val / config.DOPPLER_RES) + (config.DOPPLER_BINS / 2)))
     #doppler_bin = np.clip(doppler_bin, 0, config.DOPPLER_BINS-1)
 
     return range_bin, doppler_bin
 
 def rd_bin_to_val(range_bin,vel_bin):
-    vel_val = (vel_bin - config.DOPPLER_BINS/2) * config.VELOCITY_RES
+    vel_val = (vel_bin - config.DOPPLER_BINS/2) * config.DOPPLER_RES
     range_val = range_bin * config.RANGE_RES
 
     return range_val, vel_val
@@ -255,7 +256,7 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
                 num_points = data[1]
 
                 range_val, vel_val = rd_bin_to_val(range_bin, vel_bin)
-
+                
                 if abs(vel_bin - 32) > eps: #keep moving targets
                     rda_centroids[label] = (torch.tensor([range_val, vel_val, angle]), num_points)
                 else:
@@ -265,7 +266,12 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
             filtered_centroids_angles = np.zeros_like(centroids_angles)
             for label, (tensor,num_points) in rda_centroids.items():
                 range_val, vel_val, angle_rad = tensor.cpu().numpy()
-                range_bin, doppler_bin = rd_val_to_bin(range_val, vel_val)
+                
+                try:
+                    range_bin, doppler_bin = rd_val_to_bin(range_val, vel_val)
+                except TypeError:
+                    print("TYPE ERROR OCCURRED =====================================")
+                    print(range_val)
 
                 # 3. Populate the visualization maps
                 if 0 <= range_bin < config.RANGE_BINS and 0 <= doppler_bin < config.DOPPLER_BINS:
@@ -297,7 +303,9 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
             confirmed_tracks_map = np.zeros_like(rdm_mag, dtype=np.float32)
             confirmed_tracks_angles = np.zeros_like(rdm_mag, dtype=np.float32)
 
-            print(f"Confirmed: {len(confirmed_tracks)} | Tentative: {len(tentative_tracks)}")
+            jpda.print_tracker_status()
+
+            #print(f"Confirmed: {len(confirmed_tracks)} | Tentative: {len(tentative_tracks)}")
             for track in confirmed_tracks:
                 tid = track['TrackID']
                 state = track['State'] # [x, vx, y, vy]
@@ -307,11 +315,26 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
                 #TODO: Convert the state to the 
                 expected_detection = jpda.measurement_model.function(state)
 
-                print(expected_detection - detection)
+                #print(expected_detection)
+                #print(detection)
+
                 # --- Convert physical units back to RDM bins ---
                 range_val, vel_val, angle_rad = expected_detection
                 
+                #don't worry about it
+                range_val = range_val[0]
+                vel_val = vel_val[0]
+                angle_rad = angle_rad[0]
+
+                #print("Difference")
+                #print(maha_distance(np.array([range_val, vel_val, angle_rad]), detection, jpda.measurement_model.noise_covar))
+
+                #try: 
                 range_bin, doppler_bin = rd_val_to_bin(range_val, vel_val)
+                #except TypeError:
+                #    print("TYPE ERROR OCCURRED =====================================")
+                #    print(range_val)
+                #    print(expected_detection)
 
                 # 3. Populate the visualization maps
                 if 0 <= range_bin < config.RANGE_BINS and 0 <= doppler_bin < config.DOPPLER_BINS:

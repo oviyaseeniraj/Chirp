@@ -38,9 +38,10 @@ class RDANonLinearMeasurementModel(NonLinearGaussianMeasurement):
         d = (x * vx + y * vy) / r if r > 1e-6 else 0.0
         a = np.arctan2(y, x)
 
-        z = np.array([[r], [d], [a]])
+        z = np.array([ [r], [d], [a] ])
         if noise:
-            z += np.random.multivariate_normal(np.zeros(3), self.noise_covar).reshape(-1, 1)
+            z += np.random.multivariate_normal(np.zeros(3), self.noise_covar)
+            
         return z
     
     def jacobian(self, state, **kwargs) -> np.ndarray:
@@ -229,8 +230,69 @@ class JPDATracker:
         # Extract results
         return self._extract_track_results()
 
-    #associates (range, doppler, angle) detections with existing tracks
+    def print_tracker_status(self) -> None:
+        """
+        Print comprehensive JPDA tracker status including:
+        - Track counts (confirmed vs tentative)
+        - Individual track details
+        - Distance matrix from last frame
+        - Detection count
+        """
+        print("\n" + "="*70)
+        print("JPDA TRACKER STATUS")
+        print("="*70)
+        
+        # Count tracks by status
+        confirmed_count = sum(1 for meta in self.track_metadata.values() 
+                            if meta.get('status') == 'Confirmed')
+        tentative_count = sum(1 for meta in self.track_metadata.values() 
+                            if meta.get('status') == 'Tentative')
+        total_tracks = len(self.tracks)
+        
+        print(f"\nTrack Summary:")
+        print(f"  Total Tracks: {total_tracks}")
+        print(f"  Confirmed:    {confirmed_count}")
+        print(f"  Tentative:    {tentative_count}")
+        
+        # Detailed track information
+        print(f"\nTrack Details:")
+        print(f"  {'TrackID':<10} {'Status':<12} {'State (x,y,vx,vy)':<40} {'Age':<6} {'Hits':<6} {'Misses':<8}")
+        print(f"  {'-'*10} {'-'*12} {'-'*40} {'-'*6} {'-'*6} {'-'*8}")
+        
+        for track_id in sorted(self.tracks.keys()):
+            track = self.tracks[track_id]
+            metadata = self.track_metadata[track_id]
+            
+            if len(track) > 0:
+                state = track[-1]
+                state_vec = state.state_vector.flatten()
+                state_str = f"[{state_vec[0]:7.2f}, {state_vec[2]:7.2f}, {state_vec[1]:7.2f}, {state_vec[3]:7.2f}]"
+            else:
+                state_str = "N/A"
+            
+            status = metadata.get('status', 'Unknown')
+            age = len(track)
+            hits = metadata.get('hits', 0)
+            misses = metadata.get('consecutive_misses', 0)
+            
+            print(f"  {track_id:<10} {status:<12} {state_str:<40} {age:<6} {hits:<6} {misses:<8}")
+        
+        # Distance matrix
+        if self.distance_matrix_before_threshold is not None and self.distance_matrix_before_threshold.size > 0:
+            print(f"\nDistance Matrix (Mahalanobis distances):")
+            print(f"  Shape: {self.distance_matrix_before_threshold.shape} (tracks x detections)")
+            print(self.distance_matrix_before_threshold)
+            
+            # Mark gated-out entries
+            gated_count = np.sum(np.isinf(self.distance_matrix_before_threshold))
+            if gated_count > 0:
+                print(f"  Gated-out pairs (inf): {gated_count}")
+        else:
+            print(f"\nDistance Matrix: None (no associations yet)")
+        
+        print("\n" + "="*70)
 
+    #associates (range, doppler, angle) detections with existing tracks
     def get_soft_associations_and_marginals(self, detection_centroids: List[Detection],
                                             track_dict: Dict,
                                             detection_probability: float,
@@ -887,7 +949,7 @@ class JPDATracker:
     def update(self, detections: List[Detection], timestamp: datetime, 
            associations: 'JPDATracker.AssociationData' = None) -> None:
         """Matched to MATLAB: Soft JPDA Weighted Update (correctjpda equivalent)."""
-        print(f"update: # detections = {len(detections)}")
+        #print(f"update: # detections = {len(detections)}")
         
         if associations is None:
             print("Error, failed to associate")
@@ -929,7 +991,12 @@ class JPDATracker:
                     if prob > 0:
                         weights.append(prob)
                         detection = detections[det_idx]
-                        
+                        #print("===========================")
+                        #print(detection)
+
+                        #print("Predicted State")
+                        #print(predicted_state)
+
                         meas_hypothesis = SingleHypothesis(
                             prediction=predicted_state,
                             measurement=detection,
@@ -937,6 +1004,8 @@ class JPDATracker:
                         )
 
                         # Update the prediction with this detection
+                        #print("bruh")
+                        #print(meas_hypothesis)
                         hypothesis = self.updater.update(meas_hypothesis, timestamp=timestamp)
                         posteriors.append(hypothesis)
                         weighted_meas += prob * detection.state_vector
@@ -952,17 +1021,22 @@ class JPDATracker:
                 self.track_metadata[track_id]['last_weighted_meas'] = weighted_meas.flatten()
                 
                 # Fuse using Mixture of Gaussians (Moment Matching)
+                                # Fuse using Mixture of Gaussians (Moment Matching)
                 if posteriors:
-                    # Sum weighted state vectors
-                    x_fused_array = sum(w * p.state_vector for w, p in zip(weights, posteriors))
+                    # Sum weighted state vectors - convert to flat arrays first
+                    x_fused_array = np.zeros(4)
+                    for w, p in zip(weights, posteriors):
+                        x_fused_array += w * p.state_vector.flatten()
                     
                     # Wrap in StateVector - needs to be column vector
-                    x_fused = StateVector(x_fused_array.reshape(-1, 1) if x_fused_array.ndim == 1 
-                                        else x_fused_array)
+                    x_fused = StateVector(x_fused_array.reshape(-1, 1))
                     
                     # Fuse covariances with spreading term
-                    P_fused = sum(w * (p.covar + (p.state_vector - x_fused) @ (p.state_vector - x_fused).T) 
-                                for w, p in zip(weights, posteriors))
+                    P_fused = np.zeros((4, 4))
+                    for w, p in zip(weights, posteriors):
+                        state_diff = p.state_vector.flatten() - x_fused_array  # Use flat arrays
+                        spreading = np.outer(state_diff, state_diff)
+                        P_fused += w * (p.covar + spreading)
                     
                     # Wrap covariance matrix
                     P_fused = CovarianceMatrix(P_fused)
@@ -1047,7 +1121,7 @@ class JPDATracker:
             del self.tracks[tid]
             del self.track_metadata[tid]
 
-
+    #for comparing tracks
     def _maha_dist(self, state1: State, state2: State):
         """MATLAB: maha2_avg logic."""
         dx = state1.state_vector - state2.state_vector
@@ -1084,6 +1158,13 @@ class JPDATracker:
         
         return confirmed, tentative
 
+
+
+#
+def maha_distance(state1: np.ndarray, state2: np.ndarray, S):
+    """MATLAB: maha2_avg logic."""
+    dx = state1 - state2
+    return np.sqrt(dx.T @ np.linalg.pinv(S) @ dx)
 
 # ==================== EXAMPLE USAGE ====================
 

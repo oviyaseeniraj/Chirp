@@ -330,7 +330,7 @@ class JPDATracker:
         if track_dict:
             for track_id, track_info in track_dict.items():
                 status = self.track_metadata.get(track_id, {}).get('status', 'Unknown')
-                print(f"Track_ID {track_id}, Status {status}")
+                #print(f"Track_ID {track_id}, Status {status}")
         num_tracks = len(track_dict)
         
         distance_matrix = self.get_distance_matrix(detection_centroids, track_dict, gating_threshold, self.measurement_model)
@@ -595,8 +595,8 @@ class JPDATracker:
                 #use for selecting threshold
                 self.distance_matrix_before_threshold[trk_idx,det_idx] = normalized_maha_distance
 
-        print("Distance Matrix:")
-        print(self.distance_matrix_before_threshold)
+        #print("Distance Matrix:")
+        #print(self.distance_matrix_before_threshold)
         
         return distance_matrix
 

@@ -294,7 +294,7 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
 
             #6. =============================== JPDA Multi-Target Tracking ===========================================
             current_timestamp = datetime.now()
-            print(f"# of prefiltered detections: {len(rda_centroids)}")
+            #print(f"# of prefiltered detections: {len(rda_centroids)}")
             confirmed_tracks, tentative_tracks = jpda.process(rda_centroids, current_timestamp)
 
             t7 = time.perf_counter_ns()
@@ -303,7 +303,8 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
             confirmed_tracks_map = np.zeros_like(rdm_mag, dtype=np.float32)
             confirmed_tracks_angles = np.zeros_like(rdm_mag, dtype=np.float32)
 
-            jpda.print_tracker_status()
+
+            #jpda.print_tracker_status()
 
             #print(f"Confirmed: {len(confirmed_tracks)} | Tentative: {len(tentative_tracks)}")
             for track in confirmed_tracks:
@@ -340,9 +341,15 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
                 if 0 <= range_bin < config.RANGE_BINS and 0 <= doppler_bin < config.DOPPLER_BINS:
                     confirmed_tracks_map[doppler_bin, range_bin] = 1.0  # Mark the spot
                     confirmed_tracks_angles[doppler_bin, range_bin] = np.rad2deg(angle_rad)
-
+                    #print("marked")
                 #print(f"Track {tid} at x={state[0]:.2f}, y={state[3]:.2f}, misses={misses}, avg det={detection}")
 
+
+            #print(np.sum(confirmed_tracks_map))
+            #print(np.sum(confirmed_tracks_angles))
+
+
+            # ====================================================
 
             # Calibration Hook
             # if save_calibration and centroids and len(centroids) > 0:
@@ -395,8 +402,12 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
                 "clusters": clusters_meta,
                 # Additional keys for internal tracking or alternative consumers
                 "rdm_centroids": centroids_map,
-                "dbscan_2d": dbscan_data_2d
+                "dbscan_2d": dbscan_data_2d,
+                "confirmed_tracks_rd": confirmed_tracks_map.astype(np.float32).tobytes() if confirmed_tracks_map is not None else b"",
+                "confirmed_tracks_angles": confirmed_tracks_angles.astype(np.float32).tobytes() if confirmed_tracks_angles is not None else b""
             }
+
+            #print(output_data["confirmed_tracks_rd"])
 
             try:
                 processed_queue.put_nowait(output_data)
@@ -441,6 +452,7 @@ def socket_process(processed_queue, server_url, node_id):
     print(f"[SOCKET] Started on core 3, target: {server_url}")
     sio = None
 
+
     while True:
         # Non-blocking get with brief sleep fallback
         try:
@@ -464,8 +476,12 @@ def socket_process(processed_queue, server_url, node_id):
                 "angles": data.get("angles", b""),
                 "cfar": data.get("cfar", b""),
                 "cluster_count": data.get("cluster_count", 0),
-                "clusters": data.get("clusters", []),
+                "clusters": data.get("clusters", b""),
+                "confirmed_tracks_rd": data.get("confirmed_tracks_rd",b""),
+                "confirmed_tracks_angles": data.get("confirmed_tracks_angles",b"")
             })
+
+            #print(data.get("confirmed_tracks_rd"))
         except Exception as e:
             print(f"[SOCKET] Send error: {e}")
             sio = None

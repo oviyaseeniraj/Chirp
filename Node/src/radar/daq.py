@@ -23,7 +23,7 @@ class DataAcquisition:
         
         # Allocate buffers
         # uint16_t equivalent - use numpy for better performance and matching C behavior
-        self.frame_data = np.zeros(config.BYTES_IN_FRAME // 2, dtype=np.uint16) # Size in uint16
+        self.frame_data = np.zeros(config.BYTES_IN_FRAME // 2, dtype=np.int16) # Size in uint16
         self.buffer = bytearray(config.BUFFER_SIZE)
         
         self.sockfd = None
@@ -147,7 +147,7 @@ class DataAcquisition:
                     # FAST PATH: same frame
                     if j < P and not g[j]:
                         k = (j * B) >> 1
-                        d[k : k + U] = np.frombuffer(b, np.uint16, U, 10)
+                        d[k : k + U] = np.frombuffer(b, np.int16, U, 10)
                         g[j] = 1
                         n += 1
                         if n == P:
@@ -167,7 +167,7 @@ class DataAcquisition:
                     d[:] = 0
                     if j < P:
                         k = (j * B) >> 1
-                        d[k : k + U] = np.frombuffer(b, np.uint16, U, 10)
+                        d[k : k + U] = np.frombuffer(b, np.int16, U, 10)
                         g[j] = 1
                         n = 1
                 elif i > c:
@@ -185,7 +185,7 @@ class DataAcquisition:
                     d[:] = 0
                     if j < P:
                         k = (j * B) >> 1
-                        d[k : k + U] = np.frombuffer(b, np.uint16, U, 10)
+                        d[k : k + U] = np.frombuffer(b, np.int16, U, 10)
                         g[j] = 1
                         n = 1
                 # else: i < c, ignore old packet

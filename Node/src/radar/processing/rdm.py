@@ -67,7 +67,7 @@ class RangeDoppler:
         )
 
     def set_buffer(self, buf):
-        arr = np.asarray(buf, dtype=np.float32)
+        arr = np.asarray(buf, dtype=np.int16)
         if arr.size != self.SIZE:
             raise ValueError(f"Invalid input buffer size: {arr.size} != {self.SIZE}")
         self.adc_data_flat[:] = arr

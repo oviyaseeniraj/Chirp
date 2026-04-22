@@ -3,8 +3,8 @@
 # fake ddns, uses a github gist to store the current ip, and updates /etc/hosts to point base-station to the new ip
 
 # Configuration
+source ../../.env
 GIST_ID="f196ea8bc691933371b88ced2d097e13"
-TOKEN="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"
 FILENAME="ip_registry.txt"
 
 # 1. Fetch the raw file content directly from the Gist raw URL

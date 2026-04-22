@@ -9,7 +9,8 @@
 
 
 # Configuration
-source ../../.env
+# adjust to match whatever path
+source /home/chirp/Documents/Chirp/.env
 GIST_ID="f196ea8bc691933371b88ced2d097e13"
 FILENAME="ip_registry.txt"
 
@@ -34,5 +35,5 @@ curl -L -X PATCH \
   -d "{\"files\": {\"$FILENAME\": {\"content\": \"$LOCAL_IP\"}}}" \
   "https://api.github.com/gists/$GIST_ID"
 else
-# echo "IP is unchanged: $LOCAL_IP"
+echo "IP is unchanged: $LOCAL_IP"
 fi

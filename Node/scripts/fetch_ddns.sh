@@ -2,10 +2,21 @@
 
 # fake ddns, uses a github gist to store the current ip, and updates /etc/hosts to point base-station to the new ip
 
+# view the logs at /var/log/script_startup.log
+# add the following to cron (sudo crontab -e), adjust path as needed:
+# @reboot /home/chirp/Chirp/Node/scripts/fetch_ddns.sh >> /var/log/script_startup.log 2>&1
+# @hourly /home/chirp/Chirp/Node/scripts/fetch_ddns.sh >> /var/log/script_startup.log 2>&1
+
+
 # Configuration
-source ../../.env
 GIST_ID="f196ea8bc691933371b88ced2d097e13"
 FILENAME="ip_registry.txt"
+
+echo "Waiting for internet connection..."
+until curl -s --head https://github.com > /dev/null; do
+    sleep 2
+done
+echo "Internet is up!"
 
 # 1. Fetch the raw file content directly from the Gist raw URL
 # This avoids dependencies on JSON parsing tools like jq or python3

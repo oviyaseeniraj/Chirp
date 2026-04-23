@@ -7,10 +7,10 @@ import socket
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
-    from src.radar.daq import DataAcquisition
+    from src.radar.daq_new import DataAcquisition
     from src.radar.pipeline import daq_process, processing_process, socket_process
 except ImportError:
-    from ..src.radar.daq import DataAcquisition
+    from ..src.radar.daq_new import DataAcquisition
     from ..src.radar.pipeline import daq_process, processing_process, socket_process
 
 # Configuration

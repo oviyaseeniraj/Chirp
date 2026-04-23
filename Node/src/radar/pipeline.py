@@ -210,8 +210,8 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
 
             # 1. ============================== Range-Doppler Processing ========================
             t1 = time.perf_counter_ns()
-            
-            rdm.set_buffer(np.array(frame_data, dtype=np.float32))
+            # TODO: why is dtype np.float32, should be np.uint16
+            rdm.set_buffer(np.array(frame_data, dtype=np.int16))
             rdm_mag = rdm.process().reshape(config.SLOW_TIME, config.FAST_TIME)
             clean_rdm = rdm.get_clean_rdm()
             frame_num += 1

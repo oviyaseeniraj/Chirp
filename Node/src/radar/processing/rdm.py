@@ -151,7 +151,7 @@ class RangeDoppler:
         mag2 = rdm.real * rdm.real + rdm.imag * rdm.imag
         mag = np.log2(mag2) * 0.5
 
-        avg = mag.reshape((config.TX * config.RX, config.SLOW_TIME * config.FAST_TIME).mean(axis=0))
+        avg = mag.reshape((config.TX * config.RX, config.SLOW_TIME * config.FAST_TIME)).mean(axis=0)
 
         mn = avg.min()
         mx = avg.max()

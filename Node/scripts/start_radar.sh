@@ -6,7 +6,7 @@ fi
 
 
 INTERFACE=$(nmcli device status | grep ethernet | awk '{print $1}' | head -n 1)
-CONNECTION=$(nmcli -t -f NAME,DEVICE connection show | grep ":${INTERFACE}$" | cut -d: -f1 | head -n 1)
+CONNECTION=$(nmcli -f NAME,TYPE connection show | grep ethernet | awk '{print $1}')
 # Suppress output of ip check
 if ! ip addr show $INTERFACE | grep -q "inet " > /dev/null 2>&1; then
    sudo nmcli connection up $CONNECTION > /dev/null 2>&1 || { echo "Failed to bring up nmcli connection $CONNECTION"; exit 1; }

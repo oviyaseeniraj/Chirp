@@ -47,11 +47,29 @@ export LD_LIBRARY_PATH
 sudo ldconfig $(pwd)
 popd
 
+#jetgpio for hardware trigger
+pushd /home/chirp/Downloads/
+git clone https://github.com/Rubberazer/JETGPIO.git
+cd JETGPIO 
+sudo make
+sudo make install
+cd ..
+rm -rf JETGPIO 
+popd
+
+#python
+sudo apt install python3.10-venv -y
+
 # network setup
 INTERFACE=$(nmcli device status | grep ethernet | awk '{print $1}' | head -n 1)
 # sometimes the interface is unavailable, this is the only way I have found to make sure it works
 sudo ip addr add dev $INTERFACE 192.168.33.30/24
 sudo nmcli con mod $INTERFACE ipv4.addresses 192.168.33.30/24
+
+pushd ../setup_radar
+cmake -S . -B build
+cmake --build build
+popd
 
 echo "Please reboot the system to apply all changes."
 # Radar Permissions

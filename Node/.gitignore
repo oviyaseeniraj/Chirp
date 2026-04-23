@@ -191,3 +191,9 @@ server
 
 ### Build directories ###
 */build_*/
+
+# Hardware trigger executables
+src/hardware_trigger/jetgpio_example
+src/hardware_trigger/networked_trigger
+src/hardware_trigger/trigger_test
+src/hardware_trigger/timing_test

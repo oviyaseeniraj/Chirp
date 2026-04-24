@@ -7,9 +7,4 @@ Node/test/data/
 Node/DCA1000/SourceCode/Release/CLI_LogFile.txt
 Node/src/hardware_trigger/local_trigger
 Node/src/hardware_trigger/networked_trigger
-*_log.txt
-
-# Files related to MQTT broker
 .env
-log
-passwords

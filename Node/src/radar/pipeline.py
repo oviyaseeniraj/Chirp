@@ -6,9 +6,6 @@ import psutil
 import socketio
 import torch
 from queue import Empty, Full
-from supabase import create_client
-from dotenv import load_dotenv
-from pathlib import Path
 
  
 from datetime import datetime
@@ -29,34 +26,6 @@ else:
     from .processing.cfar_cpu import cfar_cpu as cfar_func
     from .processing.angle_cpu import angle_cpu as angle_func
     from .processing.clustering_cpu import dbscan_process, centroid_process
-
-node_root_dir = Path(__file__).resolve().parents[2]  # returns path to 'Node' directory
-load_dotenv(node_root_dir / ".env", override=False)
-
-def init_supabase_client():
-    """
-    Initialize Supabase once from env vars.
-    Returns (client OR None, db_enabled_bool).
-    """
-    db_write_enabled = os.getenv("DB_WRITE_ENABLED", "false").strip().lower() == "true"
-    if db_write_enabled is False:
-        print("[DB] Writing to Supabase is disabled")
-        return None, False
-
-    supabase_url = os.getenv("SUPABASE_URL")
-    service_role_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-    if not supabase_url or not service_role_key:
-        print("[DB] Missing Supabase URL or Service Role Key in .env file")
-        return None, False
-
-    try:
-        client = create_client(supabase_url, service_role_key)
-        print("[DB] Supabase client initialized")
-        return client, True
-
-    except Exception as e:
-        print(f"[DB] Supabase client initialization failed: {e}")
-        return None, False
 
 def reconnect_socketio(server_url):
     """Helper to reconnect to the Socket.IO server."""
@@ -406,26 +375,12 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
             if centroids:
                 for label, (centroid_vec, mass) in centroids.items():
                     c = centroid_vec.cpu().numpy()
-
-                    range_idx = float(c[0])
-                    doppler_idx = float(c[1])
-                    angle_rad = float(c[2])
-
-                    # multiply by range/velocity resolution, because each idx/bin of the RDM corresponds to a physical value
-                    range_meters = range_idx * config.RANGE_RES
-                    # subtract SLOW_TIME / 2 to remove the zero-centering from doppler_idx
-                    doppler_meters_per_sec = (doppler_idx - (config.SLOW_TIME / 2.0)) * config.VELOCITY_RES 
-
                     clusters_meta.append({
                         "id": int(label),
-                        "range_idx": range_idx,
-                        "doppler_idx": doppler_idx,
-
-                        "range_m": float(range_meters),
-                        "doppler_mps": float(doppler_meters_per_sec),
-
-                        "angle_rad": angle_rad,
-                        "angle_deg": float(np.rad2deg(angle_rad)),
+                        "range_idx": float(c[0]),
+                        "doppler_idx": float(c[1]),
+                        "angle_rad": float(c[2]),
+                        "angle_deg": float(np.rad2deg(c[2])),
                         "mass": int(mass)
 
                         #TODO: add track data to output
@@ -496,7 +451,6 @@ def socket_process(processed_queue, server_url, node_id):
         
     print(f"[SOCKET] Started on core 3, target: {server_url}")
     sio = None
-    db_client, db_enabled = init_supabase_client()
 
 
     while True:
@@ -517,7 +471,7 @@ def socket_process(processed_queue, server_url, node_id):
             # Emit data payload combining base requirements and shim enhancements
             sio.emit("send_frame", {
                 "node_id": node_id,
-                "timestamp_ms": data.get("timestamp", int(time.time() * 1000)),
+                "frame_num": data.get("timestamp", int(time.time() * 1000)),
                 "array": data.get("array", b""),
                 "angles": data.get("angles", b""),
                 "cfar": data.get("cfar", b""),
@@ -531,15 +485,3 @@ def socket_process(processed_queue, server_url, node_id):
         except Exception as e:
             print(f"[SOCKET] Send error: {e}")
             sio = None
-        
-        if db_enabled and db_client is not None:
-            try:
-                db_row = {
-                    "node_id": node_id,
-                    "timestamp_ms": data.get("timestamp", int(time.time() * 1000)),
-                    "cluster_count": data.get("cluster_count", 0),
-                    "clusters": data.get("clusters", []),
-                }
-                db_client.table("radar_frame_summary").insert(db_row).execute()
-            except Exception as e:
-                print(f"[DB] Insert row failed: {e}")

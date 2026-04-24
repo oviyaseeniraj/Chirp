@@ -117,104 +117,11 @@ class PerformanceStats:
         self.frame_count = 0
 
 stats = PerformanceStats()
-def overlay_confirmed_tracks(bgr_image, confirmed_tracks_map, confirmed_tracks_angles):
-    """
-    Overlay confirmed tracks on the BGR image with distinct coloring (Bright Blue).
-    
-    Args:
-        bgr_image: Base BGR image (512x512)
-        confirmed_tracks_map: 64x512 numpy array where non-zero values are track IDs
-        confirmed_tracks_angles: 64x512 numpy array containing angles
-    
-    Returns:
-        BGR image with overlaid confirmed tracks
-    """
-    # Create a copy to avoid modifying original
-    overlay_image = bgr_image.copy()
-    
-    if confirmed_tracks_map is None:
-        return overlay_image
 
-    # Distinct color for confirmed tracks: Bright Blue in BGR
-    TRACK_COLOR = (125, 0, 0)  # BGR format: Bright Blue (high B, medium G, low R)
-    TRACK_RADIUS = 20
-    TRACK_THICKNESS = 2
-    TEXT_COLOR = (255, 200, 100)  # Slightly lighter blue for text
-    
-    # Find all coordinates where a track exists (value > 0)
-    doppler_indices, range_indices = np.where(confirmed_tracks_map > 0)
-    
-    for d, r in zip(doppler_indices, range_indices):
-        track_id = int(confirmed_tracks_map[d, r])
-        
-        # Convert from RDM space to image pixel space
-        # Image is 512x512 after rotation
-        # doppler_bin maps to x-axis (0-64 -> 0-512)
-        # range_bin maps to y-axis (0-512 -> 512-0, inverted)
-        pixel_x = int((d / 64.0) * 512)
-        pixel_y = int(512 - (r / 512.0) * 512)
-        
-        # Clamp to image bounds
-        pixel_x = np.clip(pixel_x, 0, 511)
-        pixel_y = np.clip(pixel_y, 0, 511)
-        
-        # Draw filled circle for track position
-        cv2.circle(overlay_image, (pixel_x, pixel_y), TRACK_RADIUS, TRACK_COLOR, -1)
-        
-        # Draw circle outline
-        cv2.circle(overlay_image, (pixel_x, pixel_y), TRACK_RADIUS, TEXT_COLOR, TRACK_THICKNESS)
-        
-        # Draw track ID label
-        cv2.putText(overlay_image, f"T{track_id}", (pixel_x + 10, pixel_y - 10),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, TEXT_COLOR, 1)
-        
-        # Optional: Draw angle indicator if available
-        if confirmed_tracks_angles is not None:
-            angle = float(confirmed_tracks_angles[d, r])
-            if angle != 0: # Assuming 0 might mean no angle data
-                # Draw a line from center point in direction of angle
-                angle_rad = np.radians(angle)
-                line_length = 20
-                end_x = int(pixel_x + line_length * np.cos(angle_rad))
-                end_y = int(pixel_y - line_length * np.sin(angle_rad))
-                cv2.line(overlay_image, (pixel_x, pixel_y), (end_x, end_y), TEXT_COLOR, 2)
-    
-    return overlay_image
-
-
-def array_to_raw_image_with_tracks(data_array, confirmed_tracks_map=None, confirmed_tracks_angles=None):
-    """
-    Complete pipeline: Convert 64x512 array to 512x512 BGR image with confirmed tracks overlaid.
-    
-    Args:
-        data_array: 64x512 RDM power array
-        confirmed_tracks_map: Dict mapping track_id to [range_bin, doppler_bin]
-        confirmed_tracks_angles: Dict mapping track_id to angle_value
-    
-    Returns:
-        512x512 BGR image with RDM data and confirmed tracks
-    """
-    # Original processing
-    normalized = cv2.normalize(data_array, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-    scaled = cv2.resize(normalized, (512, 512), interpolation=cv2.INTER_NEAREST)
-    rotated = cv2.rotate(scaled, cv2.ROTATE_90_COUNTERCLOCKWISE)
-    bgr_image = COLORMAP_BGR[rotated]
-    
-    # Overlay confirmed tracks if provided
-    if confirmed_tracks_map is not None and len(confirmed_tracks_map) > 0:
-        #pass
-        bgr_image = overlay_confirmed_tracks(bgr_image, confirmed_tracks_map, confirmed_tracks_angles)
-    
-    return bgr_image
-
-
-#UNUSED    
 def process_frame(data):
     """CPU-bound processing logic separated from the event loop"""
     start_time = time.time()
     
-    print("bruh")
-
     # 1. Parse array
     try:
         array_data = np.frombuffer(data["array"], dtype=np.float32)
@@ -237,78 +144,27 @@ def process_frame(data):
     elif data.get("angles") is not None:
         try:
             angles_array = np.frombuffer(data["angles"], dtype=np.float32).reshape(64, 512)
+            # Robust fallback: create CFAR-like detection map from RDM data
             threshold = np.mean(array_data) + 2 * np.std(array_data)
             cfar_detections = (array_data > threshold).astype(np.uint8)
             detections = extract_detections(cfar_detections, angles_array, array_data)
         except Exception:
             pass
 
-
-    
-    # 3. Handle image with confirmed tracks overlay
-    confirmed_tracks_map = np.frombuffer(data["confirmed_tracks_rd"], dtype=np.float32).reshape(64, 512)
-    print(confirmed_tracks_map)
-    
-    confirmed_tracks_angles = np.frombuffer(data["confirmed_tracks_angles"], dtype=np.float32).reshape(64, 512)
-    
-    
-    bgr_image = array_to_raw_image_with_tracks(
-        array_data,
-        confirmed_tracks_map,
-        confirmed_tracks_angles
-    )
+    # 3. Handle image
+    bgr_image = array_to_raw_image(array_data)
     image_data = encode_image_data(bgr_image)
-
-    print("bruh2")
-
-    # 4. Convert confirmed tracks to pixel coordinates for frontend
-    confirmed_tracks = []
-    """try:
-        for track_id, rd_data in confirmed_tracks_map.items():
-            # Safely extract in case the producer sends more than just [range, doppler]
-            if len(rd_data) >= 2:
-                range_bin = rd_data[0]
-                doppler_bin = rd_data[1]
-                
-                pixel_x = int((doppler_bin / 64.0) * 512)
-                pixel_y = int(512 - (range_bin / 512.0) * 512)
-                pixel_x = np.clip(pixel_x, 0, 511)
-                pixel_y = np.clip(pixel_y, 0, 511)
-                
-                # Ensure track_id type matches between maps (JSON parsing usually makes keys strings)
-                angle = confirmed_tracks_angles.get(str(track_id))
-                if angle is None:
-                    angle = confirmed_tracks_angles.get(int(track_id))
-                
-                confirmed_tracks.append({
-                    "track_id": int(track_id),
-                    "x": pixel_x,
-                    "y": pixel_y,
-                    "range_bin": int(range_bin),
-                    "doppler_bin": int(doppler_bin),
-                    "angle": float(angle) if angle is not None else None
-                })
-    except Exception as e:
-        print(f"DEBUG: Error parsing confirmed tracks data: {e}")
-    """
-        
+    
     proc_time = (time.time() - start_time) * 1000
     
     payload = {
         "image": image_data,
         "detections": detections,
-        "confirmed_tracks": confirmed_tracks,
         "cluster_count": data.get("cluster_count", 0),
         "clusters": data.get("clusters", []),
         "mime": "image/jpeg"
     }
-
-    #print("BRH ==============")
-    #print(confirmed_tracks)
-
-
     return payload, proc_time
-
 
 @sio.on("send_frame")
 async def handle_array(sid, data):
@@ -324,9 +180,7 @@ async def handle_array(sid, data):
         
         if payload:
             await sio.emit("radar_plot", payload)
-            #confirmed_count = 0
-            confirmed_count = len(payload.get("confirmed_tracks", []))
-            print(f"Frame {stats.frame_count} | Arrival: {arrival_delta:.1f}ms | Process: {proc_time:.1f}ms | Detections: {len(payload['detections'])} | Confirmed Tracks: {confirmed_count}")
+            print(f"Frame {stats.frame_count} | Arrival: {arrival_delta:.1f}ms | Process: {proc_time:.1f}ms | Detections: {len(payload['detections'])}")
         else:
             print(f"Frame {stats.frame_count} | Arrival: {arrival_delta:.1f}ms | ERROR: process_frame returned None")
     except Exception as e:
@@ -343,7 +197,7 @@ async def index_handler(request):
         max_velocity=config.MAX_VELOCITY,
         max_range=config.MAX_RANGE,
         range_res=config.RANGE_RES,
-        velocity_res=config.DOPPLER_RES,
+        velocity_res=config.VELOCITY_RES,
         slow_time=config.SLOW_TIME,
         fast_time=config.FAST_TIME
     )

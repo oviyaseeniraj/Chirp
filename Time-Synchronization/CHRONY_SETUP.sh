@@ -14,12 +14,10 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
-# Install Chrony and fake-hwclock (dependencies)
-echo "[1/4] Installing Chrony and fake-hwclock..."
-if ! dpkg -s chrony fake-hwclock >/dev/null 2>&1; then
-    apt-get update
-    apt-get install -y chrony fake-hwclock
-fi
+# Install Chrony
+echo "[1/4] Installing Chrony..."
+apt-get update
+apt-get install -y chrony
 
 echo ""
 echo "[2/4] Which Jetson is this?"
@@ -36,15 +34,9 @@ if [ "$choice" = "1" ]; then
 # Chrony NTP Server Configuration
 # ================================
 
-# External NTP sources (sync master to real-world time)
-pool time.google.com iburst maxsources 4
-pool ntp.ubuntu.com iburst maxsources 2
-
-# Do a big initial time correction before serving clients - "30" represents timeout in seconds
-initstepslew 30 time.google.com
-
-# Fallback: serve local clock only when external sources are unreachable
-local stratum 10 orphan
+# Use system clock as reference (local mode)
+local stratum 8
+manual
 
 # Allow clients on local network
 allow 169.231.0.0/16
@@ -55,8 +47,11 @@ logdir /var/log/chrony
 # Enable kernel synchronization
 rtcsync
 
-# Always step the clock if offset > 1 second
-makestep 1 -1
+# Smooth time adjustments
+smoothtime 400 0.001
+
+# Step threshold (step if offset > 1 second)
+makestep 1.0 3
 EOF
 
     echo "[4/4] Starting Chrony server..."
@@ -89,7 +84,7 @@ elif [ "$choice" = "2" ] || [ "$choice" = "3" ]; then
 # ================================
 
 # Use local master as time source
-server $master_ip trust prefer require iburst minpoll 0 maxpoll 4
+server $master_ip iburst minpoll 0 maxpoll 4
 
 # Fallback to internet NTP if local master unavailable
 pool time.google.com iburst
@@ -195,3 +190,4 @@ echo ""
 echo "On Master, check connected clients:"
 echo "  chronyc clients"
 echo ""
+

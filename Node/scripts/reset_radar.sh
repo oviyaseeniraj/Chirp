@@ -1,13 +1,4 @@
 #!/bin/bash
-
-# make sure that system can find libRF_API.so by caching it in ldconfig 
-# (redundant if already ran start_radar.sh, but good check to prevent future errors)
-pushd ../DCA1000/SourceCode/Release/
-LD_LIBRARY_PATH=$(pwd)
-export LD_LIBRARY_PATH
-sudo ldconfig $(pwd)
-popd
-
 sudo pkill -f setup_radar
 
 pushd ../DCA1000/SourceCode/Release/

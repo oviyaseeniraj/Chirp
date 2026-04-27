@@ -12,6 +12,7 @@ import sys
 import threading
 import time
 import uuid
+import webbrowser
 from typing import Any, Dict, Optional
 
 import paho.mqtt.client as mqtt
@@ -69,6 +70,8 @@ class LaptopTriggerClient:
         timeout_ms: int,
         print_json: bool,
         calibration_timeout_ms: int = 120_000,
+        dashboard_url: Optional[str] = None,
+        open_browser: bool = True,
     ) -> None:
         self.mqtt_host = mqtt_host
         self.mqtt_port = mqtt_port
@@ -81,6 +84,8 @@ class LaptopTriggerClient:
         self.timeout_ms = timeout_ms
         self.print_json = print_json
         self.calibration_timeout_ms = calibration_timeout_ms
+        self.dashboard_url = dashboard_url
+        self.open_browser = open_browser
         self.is_calibration = bool(capture_config.get("calibration", False))
 
         self.request_id = f"req-{uuid.uuid4().hex[:12]}"
@@ -211,6 +216,11 @@ class LaptopTriggerClient:
 
         start_ok = bool(self.result_payload.get("ok", False))
 
+        # Open the bird's-eye dashboard in the default browser as soon as nodes are armed
+        if self.is_calibration and start_ok and self.open_browser and self.dashboard_url:
+            print(f"\nOpening bird's-eye dashboard: {self.dashboard_url}")
+            webbrowser.open(self.dashboard_url)
+
         # For calibration mode, stay connected and wait for the solver result
         if self.is_calibration and start_ok:
             print("\nWaiting for calibration result from server...")
@@ -334,6 +344,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Max time to wait for calibration result from server (default 120 s).",
     )
     parser.add_argument(
+        "--dashboard-port",
+        type=int,
+        default=_env_int("DASHBOARD_PORT", 5002),
+        help="Port the bird's-eye dashboard is running on (default 5002).",
+    )
+    parser.add_argument(
+        "--no-browser",
+        action="store_true",
+        help="Do not automatically open the dashboard in a browser.",
+    )
+    parser.add_argument(
         "--print-json",
         action="store_true",
         help="Print full result payload JSON instead of summary lines.",
@@ -370,6 +391,8 @@ def main() -> int:
         print("ERROR: Missing MQTT password. Set MQTT_LAPTOP_PASS.")
         return 2
 
+    dashboard_url = f"http://{mqtt_host}:{args.dashboard_port}"
+
     client = LaptopTriggerClient(
         mqtt_host=mqtt_host,
         mqtt_port=mqtt_port,
@@ -382,6 +405,8 @@ def main() -> int:
         timeout_ms=max(1000, args.timeout_ms),
         print_json=args.print_json,
         calibration_timeout_ms=args.calibration_timeout_ms,
+        dashboard_url=dashboard_url,
+        open_browser=not args.no_browser,
     )
 
     def _signal_handler(sig: int, frame: Any) -> None:

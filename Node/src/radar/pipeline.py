@@ -1,6 +1,8 @@
+import json
+import logging
 import os
+import threading
 import time
-import pickle
 import numpy as np
 import psutil
 import socketio
@@ -9,6 +11,8 @@ from queue import Empty, Full
 from supabase import create_client
 from dotenv import load_dotenv
 from pathlib import Path
+
+import paho.mqtt.client as mqtt_lib
 
 from . import config
 from .processing.rdm import RangeDoppler
@@ -132,7 +136,7 @@ def daq_process(raw_queue, daq_class, **daq_kwargs):
                 print(f"[DAQ] Error: {e}")
                 time.sleep(0.1)
 
-def processing_process(raw_queue, processed_queue, node_id, device=None, save_calibration=True, visualize_clusters_only=False, **cfar_kwargs):
+def processing_process(raw_queue, processed_queue, node_id, calib_queue=None, device=None, save_calibration=True, visualize_clusters_only=False, **cfar_kwargs):
     """
     Signal processing pipeline: RDM -> CFAR -> Angle -> 3D Mapping -> DBSCAN -> Centroids.
     """
@@ -159,9 +163,6 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
     m_angle_data = np.zeros((config.SLOW_TIME, config.FAST_TIME), dtype=np.float32)
     m_cluster_data = np.zeros((config.SLOW_TIME, config.FAST_TIME), dtype=np.float32)
 
-    calibration_save_file = f"calibration_data_{node_id}.pkl"
-    calibration_data_dict = {}
-    save_interval = 10
     frame_num = 0
 
     # Default CFAR parameters if not provided
@@ -235,17 +236,15 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
             
             t5_extra = time.perf_counter_ns()
 
-            # Calibration Hook
-            # if save_calibration and centroids and len(centroids) > 0:
-            #     centroid_values = [v[0].cpu().numpy() for v in centroids.values()]
-            #     calibration_data_dict[frame_num] = np.array(centroid_values)
-
-            #     if frame_num % save_interval == 0:
-            #         try:
-            #             with open(calibration_save_file, 'wb') as f:
-            #                 pickle.dump(calibration_data_dict, f)
-            #         except Exception as e:
-            #             print(f"[PROCESSING] Save failed: {e}")
+            # Calibration Hook — feed detection coordinates to the calibration publisher
+            if calib_queue is not None and len(detection_coords_3d) > 0:
+                try:
+                    calib_queue.put_nowait({
+                        "frame_num": frame_num,
+                        "detections": detection_coords_3d.tolist(),
+                    })
+                except Full:
+                    pass
 
             # Pack output
             # If visualize_clusters_only is True, we overwrite regular RDM and CFAR 
@@ -322,6 +321,151 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
             print(f"[PROCESSING] Error: {e}")
             import traceback
             traceback.print_exc()
+
+def calibration_mqtt_process(
+    calib_queue,
+    node_id,
+    group_id,
+    mqtt_host,
+    mqtt_port,
+    mqtt_user,
+    mqtt_pass,
+    schema_version=1,
+):
+    """
+    Subscribes to capture/start and, when calibration mode is requested,
+    drains calib_queue and streams per-frame centroid data to the MQTT broker.
+
+    Publishes to:
+      chirp/v1/group/<groupId>/calibration/frame/<nodeId>  — one message per frame
+      chirp/v1/group/<groupId>/calibration/done/<nodeId>   — when collection is complete
+    """
+    try:
+        psutil.Process(os.getpid()).cpu_affinity([0])
+    except Exception:
+        pass
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [CALIB] %(message)s")
+
+    topic_prefix = "chirp/v1"
+    start_topic = f"{topic_prefix}/group/{group_id}/capture/start"
+    frame_pub_topic = f"{topic_prefix}/group/{group_id}/calibration/frame/{node_id}"
+    done_pub_topic = f"{topic_prefix}/group/{group_id}/calibration/done/{node_id}"
+
+    # Shared state between MQTT callback thread and main collection loop
+    calibration_event = threading.Event()
+    active_command: dict = {"id": None, "max_frames": 50, "start_epoch_ms": None}
+
+    def _on_connect(client, userdata, flags, reason_code, properties):
+        if reason_code != 0:
+            logging.error("Calibration MQTT connect failed reason_code=%s", reason_code)
+            return
+        client.subscribe(start_topic, qos=1)
+        logging.info("Calibration publisher connected, subscribed to %s", start_topic)
+
+    def _on_message(client, userdata, msg):
+        try:
+            payload = json.loads(msg.payload.decode()) if msg.payload else {}
+        except json.JSONDecodeError:
+            return
+
+        capture_cfg = payload.get("captureConfig", {}) or {}
+        if not capture_cfg.get("calibration", False):
+            return
+
+        target_ids = payload.get("targetNodeIds")
+        if target_ids and node_id not in [str(t) for t in target_ids]:
+            return
+
+        active_command["id"] = payload.get("commandId")
+        active_command["max_frames"] = int(capture_cfg.get("calibrationFrames", 50))
+        active_command["start_epoch_ms"] = payload.get("startEpochMs")
+        calibration_event.set()
+        logging.info(
+            "Calibration mode activated commandId=%s frames=%d",
+            active_command["id"],
+            active_command["max_frames"],
+        )
+
+    client = mqtt_lib.Client(
+        mqtt_lib.CallbackAPIVersion.VERSION2,
+        client_id=f"calib-{node_id}",
+        clean_session=True,
+    )
+    if mqtt_user:
+        client.username_pw_set(mqtt_user, mqtt_pass)
+    client.on_connect = _on_connect
+    client.on_message = _on_message
+
+    try:
+        client.connect(mqtt_host, mqtt_port, keepalive=30)
+    except Exception as exc:
+        logging.error("Calibration MQTT initial connect failed: %s", exc)
+
+    client.loop_start()
+
+    while True:
+        calibration_event.wait()
+        calibration_event.clear()
+
+        cmd_id = active_command["id"]
+        max_frames = active_command["max_frames"]
+        start_epoch_ms = active_command["start_epoch_ms"]
+
+        # Drain stale items from before the trigger fired
+        if start_epoch_ms is not None:
+            now_ms = int(time.time() * 1000)
+            if start_epoch_ms > now_ms:
+                wait_s = (start_epoch_ms - now_ms) / 1000.0
+                logging.info("Waiting %.2fs for capture start epoch", wait_s)
+                time.sleep(wait_s)
+            # Discard frames that accumulated before the start epoch
+            while True:
+                try:
+                    calib_queue.get_nowait()
+                except Exception:
+                    break
+
+        frame_count = 0
+        logging.info("Collecting %d frames for commandId=%s", max_frames, cmd_id)
+
+        while frame_count < max_frames:
+            try:
+                item = calib_queue.get(timeout=10.0)
+            except Exception:
+                logging.warning(
+                    "Timeout waiting for calibration frame %d/%d commandId=%s",
+                    frame_count,
+                    max_frames,
+                    cmd_id,
+                )
+                break
+
+            frame_payload = {
+                "schemaVersion": schema_version,
+                "timestampMs": int(time.time() * 1000),
+                "nodeId": node_id,
+                "groupId": group_id,
+                "commandId": cmd_id,
+                "frameNum": item["frame_num"],
+                "detections": item["detections"],
+            }
+            client.publish(frame_pub_topic, payload=json.dumps(frame_payload), qos=1, retain=False)
+            frame_count += 1
+
+        done_payload = {
+            "schemaVersion": schema_version,
+            "timestampMs": int(time.time() * 1000),
+            "nodeId": node_id,
+            "groupId": group_id,
+            "commandId": cmd_id,
+            "totalFrames": frame_count,
+        }
+        client.publish(done_pub_topic, payload=json.dumps(done_payload), qos=1, retain=False)
+        logging.info(
+            "Calibration done: published %d frames for commandId=%s", frame_count, cmd_id
+        )
+
 
 def socket_process(processed_queue, server_url, node_id):
     """

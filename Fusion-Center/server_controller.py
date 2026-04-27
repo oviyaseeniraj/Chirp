@@ -11,20 +11,90 @@ import signal
 import threading
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+import numpy as np
 import paho.mqtt.client as mqtt
 
 
 SCHEMA_VERSION = 1
 TOPIC_PREFIX = "chirp/v1"
-START_REQUEST_TOPIC = f"{TOPIC_PREFIX}/server/start/request"    # subscribed topic
-START_RESULT_TOPIC = f"{TOPIC_PREFIX}/server/start/result"      # published topic
-SERVER_STATUS_TOPIC = f"{TOPIC_PREFIX}/server/status"           # published topic
-PRESENCE_TOPIC_FILTER = f"{TOPIC_PREFIX}/presence/+"            # subscribed topic
-STATE_TOPIC_FILTER = f"{TOPIC_PREFIX}/group/+/capture/state/+"  # subscribed topic
-ACK_TOPIC_FILTER = f"{TOPIC_PREFIX}/group/+/capture/ack/+"      # subscribed topic
+START_REQUEST_TOPIC = f"{TOPIC_PREFIX}/server/start/request"        # subscribed topic
+START_RESULT_TOPIC = f"{TOPIC_PREFIX}/server/start/result"          # published topic
+SERVER_STATUS_TOPIC = f"{TOPIC_PREFIX}/server/status"               # published topic
+PRESENCE_TOPIC_FILTER = f"{TOPIC_PREFIX}/presence/+"                # subscribed topic
+STATE_TOPIC_FILTER = f"{TOPIC_PREFIX}/group/+/capture/state/+"      # subscribed topic
+ACK_TOPIC_FILTER = f"{TOPIC_PREFIX}/group/+/capture/ack/+"          # subscribed topic
+CALIB_FRAME_TOPIC_FILTER = f"{TOPIC_PREFIX}/group/+/calibration/frame/+"  # subscribed
+CALIB_DONE_TOPIC_FILTER = f"{TOPIC_PREFIX}/group/+/calibration/done/+"    # subscribed
+
+
+def closed_form_calibration(
+    frame_data: Dict[str, Dict[int, List]],
+) -> Tuple[Optional[List[str]], Optional[np.ndarray], Optional[np.ndarray]]:
+    """
+    Closed-form spatial calibration across multiple radar nodes.
+
+    Parameters
+    ----------
+    frame_data : node_id -> (frame_num -> list of [range_bin, doppler_bin, angle_rad])
+
+    Returns
+    -------
+    node_ids  : ordered list of node IDs
+    P_opt     : complex translation matrix  (num_nodes × num_nodes)
+    theta_opt : rotation matrix in degrees  (num_nodes × num_nodes)
+    Returns (None, None, None) when calibration cannot be solved.
+    """
+    node_ids = list(frame_data.keys())
+    num_nodes = len(node_ids)
+    if num_nodes < 2:
+        return None, None, None
+
+    # Find frames that every node observed
+    frame_sets = [set(frame_data[n].keys()) for n in node_ids]
+    common_frames = sorted(set.intersection(*frame_sets))
+    if not common_frames:
+        return None, None, None
+
+    # Build complex trajectory matrix: shape (num_nodes, num_common_frames)
+    trajectory = np.zeros((num_nodes, len(common_frames)), dtype=np.complex64)
+    for i, node_id in enumerate(node_ids):
+        for t, frame_num in enumerate(common_frames):
+            dets = frame_data[node_id][frame_num]
+            if not dets:
+                trajectory[i, t] = np.nan
+                continue
+            arr = np.array(dets, dtype=np.float32)
+            if arr.ndim < 2 or arr.shape[1] < 3:
+                trajectory[i, t] = np.nan
+                continue
+            mean_range = float(np.mean(arr[:, 0]))
+            mean_angle = float(np.mean(arr[:, 2]))
+            trajectory[i, t] = mean_range * np.exp(1j * mean_angle)
+
+    # Drop frames where any node has no valid detection
+    valid_mask = ~np.isnan(trajectory).any(axis=0)
+    trajectory = trajectory[:, valid_mask]
+    if trajectory.shape[1] < 3:
+        logging.warning("[CALIB] Too few valid common frames (%d) to calibrate", trajectory.shape[1])
+        return None, None, None
+
+    P_opt = np.zeros((num_nodes, num_nodes), dtype=np.complex64)
+    theta_opt = np.zeros((num_nodes, num_nodes), dtype=np.float32)
+    for i in range(num_nodes):
+        for k in range(num_nodes):
+            z_i = trajectory[i, :]
+            z_k = trajectory[k, :]
+            z_i_mean = np.mean(z_i)
+            z_k_mean = np.mean(z_k)
+            val = np.sum((z_k - z_k_mean) * np.conj(z_i - z_i_mean))
+            phi = np.arctan2(float(val.imag), float(val.real))
+            theta_opt[i, k] = float(np.rad2deg(-phi))
+            P_opt[i, k] = z_i_mean - np.exp(-1j * phi) * z_k_mean
+
+    return node_ids, P_opt, theta_opt
 
 # Helper functions
 def _env_int(name: str, default: int) -> int:
@@ -63,6 +133,19 @@ class ActiveCommand:
     done: bool = False
 
 
+@dataclass
+class CalibrationSession:
+    """Tracks per-node calibration frame data for one commandId."""
+    command_id: str
+    group_id: str
+    target_nodes: Set[str]
+    # node_id -> frame_num -> list of [range_bin, doppler_bin, angle_rad]
+    frame_data: Dict[str, Dict[int, List]] = field(default_factory=dict)
+    done_nodes: Set[str] = field(default_factory=set)
+    created_ms: int = field(default_factory=lambda: int(time.time() * 1000))
+    lock: threading.Lock = field(default_factory=threading.Lock)
+
+
 class ServerController:
     """Coordinates group capture starts from laptop start requests."""
 
@@ -86,10 +169,12 @@ class ServerController:
         self.presence_lock = threading.Lock()
         self.state_lock = threading.Lock()
         self.command_lock = threading.Lock()
+        self.calib_lock = threading.Lock()
 
         self.presence: Dict[str, Dict[str, Any]] = {} # what nodes are alive?
         self.state: Dict[Tuple[str, str], Dict[str, Any]] = {} # what state are the nodes in? the tuple is (group_id, node_id)
-        self.active_commands: Dict[str, ActiveCommand] = {} 
+        self.active_commands: Dict[str, ActiveCommand] = {}
+        self.calib_sessions: Dict[str, CalibrationSession] = {}  # commandId -> session 
 
         self.client = mqtt.Client(
             mqtt.CallbackAPIVersion.VERSION2,
@@ -137,10 +222,12 @@ class ServerController:
             return
 
         logging.info("Connected to broker at %s:%s", self.mqtt_host, self.mqtt_port)
-        client.subscribe(START_REQUEST_TOPIC, qos=1) # request from laptop to server 
-        client.subscribe(PRESENCE_TOPIC_FILTER, qos=1) # each radar node sends its status + group membership to server
-        client.subscribe(STATE_TOPIC_FILTER, qos=1) # each radar node sends its current state (error, offline, etc.) to server 
-        client.subscribe(ACK_TOPIC_FILTER, qos=1) # each radar node sends an ACK to the server
+        client.subscribe(START_REQUEST_TOPIC, qos=1)
+        client.subscribe(PRESENCE_TOPIC_FILTER, qos=1)
+        client.subscribe(STATE_TOPIC_FILTER, qos=1)
+        client.subscribe(ACK_TOPIC_FILTER, qos=1)
+        client.subscribe(CALIB_FRAME_TOPIC_FILTER, qos=1)
+        client.subscribe(CALIB_DONE_TOPIC_FILTER, qos=1)
 
         online_payload = {
             "schemaVersion": SCHEMA_VERSION,
@@ -175,6 +262,12 @@ class ServerController:
             return
         if "/capture/ack/" in topic:
             self._handle_ack(topic, payload)
+            return
+        if "/calibration/frame/" in topic:
+            self._handle_calib_frame(topic, payload)
+            return
+        if "/calibration/done/" in topic:
+            self._handle_calib_done(topic, payload)
             return
 
     def _handle_presence(self, topic: str, payload: Dict[str, Any]) -> None:
@@ -307,6 +400,21 @@ class ServerController:
             sorted(selected_nodes),
         )
 
+        # If calibration mode, pre-create a session so frame messages can be matched
+        if capture_config.get("calibration", False):
+            session = CalibrationSession(
+                command_id=command_id,
+                group_id=group_id,
+                target_nodes=set(selected_nodes),
+            )
+            with self.calib_lock:
+                self.calib_sessions[command_id] = session
+            logging.info(
+                "Created CalibrationSession commandId=%s targetNodes=%s",
+                command_id,
+                sorted(selected_nodes),
+            )
+
         self._wait_for_acks_and_publish_result(active)
 
     def _wait_for_acks_and_publish_result(self, active: ActiveCommand) -> None:
@@ -373,6 +481,121 @@ class ServerController:
 
         with self.command_lock:
             self.active_commands.pop(active.command_id, None)
+
+    def _handle_calib_frame(self, topic: str, payload: Dict[str, Any]) -> None:
+        parts = topic.split("/")
+        if len(parts) < 7:
+            return
+        node_id = parts[-1]
+        command_id = str(payload.get("commandId", ""))
+        frame_num = payload.get("frameNum")
+        detections = payload.get("detections", [])
+
+        if not command_id or frame_num is None:
+            return
+
+        with self.calib_lock:
+            session = self.calib_sessions.get(command_id)
+            if session is None:
+                return
+
+        with session.lock:
+            if node_id not in session.frame_data:
+                session.frame_data[node_id] = {}
+            session.frame_data[node_id][int(frame_num)] = detections
+
+    def _handle_calib_done(self, topic: str, payload: Dict[str, Any]) -> None:
+        parts = topic.split("/")
+        if len(parts) < 7:
+            return
+        node_id = parts[-1]
+        command_id = str(payload.get("commandId", ""))
+        total_frames = payload.get("totalFrames", 0)
+
+        if not command_id:
+            return
+
+        with self.calib_lock:
+            session = self.calib_sessions.get(command_id)
+            if session is None:
+                logging.warning("[CALIB] Done signal for unknown commandId=%s nodeId=%s", command_id, node_id)
+                return
+
+        with session.lock:
+            session.done_nodes.add(node_id)
+            all_done = session.done_nodes >= session.target_nodes
+            logging.info(
+                "[CALIB] Node done nodeId=%s commandId=%s frames=%d (%d/%d nodes done)",
+                node_id,
+                command_id,
+                total_frames,
+                len(session.done_nodes),
+                len(session.target_nodes),
+            )
+
+        if all_done:
+            threading.Thread(target=self._run_calibration, args=(session,), daemon=True).start()
+
+    def _run_calibration(self, session: CalibrationSession) -> None:
+        with session.lock:
+            frame_data_snapshot = {
+                node_id: dict(frames)
+                for node_id, frames in session.frame_data.items()
+            }
+            command_id = session.command_id
+            group_id = session.group_id
+
+        logging.info(
+            "[CALIB] Running calibration commandId=%s nodes=%s",
+            command_id,
+            sorted(frame_data_snapshot.keys()),
+        )
+
+        node_ids, P_opt, theta_opt = closed_form_calibration(frame_data_snapshot)
+
+        result_topic = f"{TOPIC_PREFIX}/group/{group_id}/calibration/result"
+
+        if node_ids is None:
+            result_payload: Dict[str, Any] = {
+                "schemaVersion": SCHEMA_VERSION,
+                "timestampMs": _now_ms(),
+                "groupId": group_id,
+                "commandId": command_id,
+                "ok": False,
+                "reason": "insufficient_common_frames",
+                "nodeIds": sorted(frame_data_snapshot.keys()),
+            }
+            self.client.publish(result_topic, payload=json.dumps(result_payload), qos=1, retain=True)
+            logging.warning("[CALIB] Calibration failed commandId=%s", command_id)
+        else:
+            # Serialize complex matrix as list of [real, imag] pairs per cell
+            def _serialize_complex(mat: np.ndarray) -> List:
+                rows = []
+                for row in mat:
+                    rows.append([[float(v.real), float(v.imag)] for v in row])
+                return rows
+
+            result_payload = {
+                "schemaVersion": SCHEMA_VERSION,
+                "timestampMs": _now_ms(),
+                "groupId": group_id,
+                "commandId": command_id,
+                "ok": True,
+                "reason": "calibration_complete",
+                "nodeIds": node_ids,
+                "P_opt": _serialize_complex(P_opt),
+                "theta_opt": theta_opt.tolist(),
+            }
+            self.client.publish(result_topic, payload=json.dumps(result_payload), qos=1, retain=True)
+            logging.info(
+                "[CALIB] Result published commandId=%s nodes=%s topic=%s",
+                command_id,
+                node_ids,
+                result_topic,
+            )
+
+        with self.calib_lock:
+            self.calib_sessions.pop(command_id, None)
 
     def _select_active_nodes(self, group_id: str, now_ms: int) -> Set[str]:
         active_nodes: Set[str] = set()

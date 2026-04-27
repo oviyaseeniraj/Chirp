@@ -67,6 +67,13 @@ def main():
     p_sock = Process(
         target=socket_process,
         args=(processed_queue, SERVER_URL, NODE_ID),
+        kwargs={
+            "group_id": GROUP_ID,
+            "mqtt_host": MQTT_HOST,
+            "mqtt_port": MQTT_PORT,
+            "mqtt_user": MQTT_USERNAME,
+            "mqtt_pass": MQTT_PASSWORD,
+        },
         name="Socket",
     )
 

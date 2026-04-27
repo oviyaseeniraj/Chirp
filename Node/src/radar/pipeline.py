@@ -467,19 +467,48 @@ def calibration_mqtt_process(
         )
 
 
-def socket_process(processed_queue, server_url, node_id):
+def socket_process(
+    processed_queue,
+    server_url,
+    node_id,
+    group_id="default",
+    mqtt_host=None,
+    mqtt_port=1883,
+    mqtt_user=None,
+    mqtt_pass=None,
+):
     """
-    Process that sends processed data to the visualization server.
+    Process that sends processed data to the visualization server and,
+    when MQTT params are provided, also publishes per-frame cluster data
+    to chirp/v1/group/<groupId>/frames/<nodeId> for the bird's-eye dashboard.
     """
-    # Pin to CPU core 2
     try:
         psutil.Process(os.getpid()).cpu_affinity([3])
     except Exception:
         pass
-        
+
     print(f"[SOCKET] Started on core 3, target: {server_url}")
     sio = None
     db_client, db_enabled = init_supabase_client()
+
+    # MQTT frame publisher (optional)
+    frame_topic = f"chirp/v1/group/{group_id}/frames/{node_id}"
+    mqtt_client = None
+    if mqtt_host:
+        mqtt_client = mqtt_lib.Client(
+            mqtt_lib.CallbackAPIVersion.VERSION2,
+            client_id=f"frames-{node_id}",
+            clean_session=True,
+        )
+        if mqtt_user:
+            mqtt_client.username_pw_set(mqtt_user, mqtt_pass)
+        try:
+            mqtt_client.connect(mqtt_host, mqtt_port, keepalive=30)
+            mqtt_client.loop_start()
+            print(f"[SOCKET] MQTT frame publisher connected → {frame_topic}")
+        except Exception as exc:
+            print(f"[SOCKET] MQTT connect failed: {exc}; frame publishing disabled")
+            mqtt_client = None
 
     while True:
         # Non-blocking get with brief sleep fallback
@@ -521,3 +550,32 @@ def socket_process(processed_queue, server_url, node_id):
                 db_client.table("radar_frame_summary").insert(db_row).execute()
             except Exception as e:
                 print(f"[DB] Insert row failed: {e}")
+
+        if mqtt_client is not None:
+            clusters = data.get("clusters", [])
+            if clusters:
+                frame_payload = {
+                    "schemaVersion": 1,
+                    "timestampMs": data.get("timestamp", int(time.time() * 1000)),
+                    "nodeId": node_id,
+                    "groupId": group_id,
+                    "clusters": [
+                        {
+                            "range_m": c.get("range_m", 0.0),
+                            "angle_rad": c.get("angle_rad", 0.0),
+                            "angle_deg": c.get("angle_deg", 0.0),
+                            "doppler_mps": c.get("doppler_mps", 0.0),
+                            "mass": c.get("mass", 1),
+                        }
+                        for c in clusters
+                    ],
+                }
+                try:
+                    mqtt_client.publish(
+                        frame_topic,
+                        payload=json.dumps(frame_payload),
+                        qos=0,
+                        retain=False,
+                    )
+                except Exception as exc:
+                    print(f"[SOCKET] MQTT publish failed: {exc}")

@@ -20,15 +20,17 @@ Step-by-step commands to bring up the full system. See `README.md` for architect
 
 ### [XAVIER] — MQTT broker credentials
 
-```bash
-cd Chirp/Fusion-Center/MQTT-Broker
-cp .env.example .env
-# Edit .env: set MQTT_HOST to Xavier's LAN IP, set passwords for
-#   MQTT_LAPTOP_PASS, MQTT_SERVER_PASS, MQTT_RADAR_PASSWORD
+From the **repo root** (the `Chirp` directory), one command creates `Fusion-Center/MQTT-Broker/.env`, sets `MQTT_HOST` to this machine’s LAN IP, replaces example passwords with random secrets, and runs `set_mqttbroker_passwords` under `sudo` (same as before, but no manual editing):
 
-chmod +x set_mqttbroker_passwords.sh start_broker.sh clear_retained.sh
-sudo ./set_mqttbroker_passwords.sh
+```bash
+cd Chirp
+chmod +x scripts/chirp_install_shell_rc.sh
+./scripts/chirp_runbook_xavier_mqtt.sh
 ```
+
+To customize broker users, node list, or passwords later, edit `Fusion-Center/MQTT-Broker/.env` and re-run `sudo Fusion-Center/MQTT-Broker/set_mqttbroker_passwords.sh`. Restart the broker container if it was already running.
+
+> **Note:** `start_broker.sh` also refreshes `MQTT_HOST` in `.env` when it still looks like `X.X.X.X`, so routine broker startups stay aligned with the LAN.
 
 ### [XAVIER] — Fusion-Center Python environment
 
@@ -47,26 +49,19 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-cp .env.example .env
-# Edit .env for this specific node:
-#   MQTT_HOST      = Xavier's LAN IP
-#   NODE_ID        = unique node name, e.g. node1
-#   GROUP_ID       = default
-#   MQTT_USERNAME  = same as NODE_ID
-#   MQTT_PASSWORD  = value of MQTT_RADAR_PASSWORD from broker .env
-#   MQTT_CLIENT_ID = radar-<NODE_ID>
-```
-
-Auto-source `.env` on every terminal open:
-
-```bash
-sudo vim ~/.bashrc
-# Add to the bottom:
-#   set -a
-#   source /home/chirp/Chirp/Node/.env
-#   set +a
+cd ..
+./scripts/chirp_runbook_orin_env.sh              # or: ./scripts/chirp_runbook_orin_env.sh node1
+./scripts/chirp_install_shell_rc.sh orin "$(pwd)"
 source ~/.bashrc
 ```
+
+`chirp_runbook_orin_env.sh` creates `Node/.env` from `.env.example` if needed, sets **`MQTT_HOST`** (from `Fusion-Center/MQTT-Broker/.env` on the same clone, from repo-root **`.chirp_broker_ip`**, or pass **`<broker_ip>`** as the second argument), sets **`NODE_ID`** (argument or `CHIRP_NODE_ID` or short hostname), and copies **`MQTT_PASSWORD`** from **`MQTT_RADAR_PASSWORD`** in the broker `.env` when that file is present.
+
+If this Orin does **not** have `Fusion-Center/` checked out, copy **`.chirp_broker_ip`** from the Xavier after running the Xavier MQTT step, or run:
+
+`./scripts/chirp_runbook_orin_env.sh node1 <xavier-lan-ip>`
+
+Edit `Node/.env` for **Supabase** and any non-default **GROUP_ID** if your deployment uses them.
 
 Build the hardware trigger binary:
 
@@ -90,12 +85,16 @@ chronyc tracking      # System time offset should be < 1 ms
 
 ### [LAPTOP] — Credentials
 
+With a **full Chirp clone** that already has `Fusion-Center/MQTT-Broker/.env` (from the Xavier, or after syncing that file from the Xavier):
+
 ```bash
-# Create a local .env or export these before running the trigger client:
-export MQTT_HOST=<xavier-ip>
-export MQTT_LAPTOP_PASS=<value of MQTT_LAPTOP_PASS from broker .env>
-export DASHBOARD_PORT=5002
+cd Chirp
+./scripts/chirp_runbook_laptop_env.sh
+./scripts/chirp_install_shell_rc.sh laptop "$(pwd)"
+source ~/.bashrc
 ```
+
+That writes `Fusion-Center/Laptop/.env` and `start_laptop_trigger.sh` loads it (or the broker `.env`) automatically. If you keep only a partial tree, copy `MQTT-Broker/.env` from the Xavier and point `MQTT_HOST` / `MQTT_LAPTOP_PASS` at that file manually.
 
 ---
 
@@ -110,13 +109,14 @@ cd Chirp/Fusion-Center/MQTT-Broker
 sudo ./start_broker.sh
 
 # Verify
-docker compose -f docker-compose.yaml ps
+sudo docker compose -f docker-compose.yaml ps
 ```
 
 ### Step 2 — [XAVIER] Start server controller
 
 ```bash
 cd Chirp/Fusion-Center
+pip install -r requirements.txt
 source .venv/bin/activate
 ./start_server_controller.sh
 ```
@@ -124,14 +124,12 @@ source .venv/bin/activate
 ### Step 3 — [XAVIER] Start bird's-eye dashboard
 
 ```bash
-cd Chirp/Fusion-Center
-source .venv/bin/activate
-
-export MQTT_HOST=127.0.0.1
-export MQTT_SERVER_PASS=<server-password>
-python3 dashboard.py
+cd Chirp
+./scripts/chirp_runbook_xavier_dashboard.sh
 # Dashboard → http://<xavier-ip>:5002
 ```
+
+If the repo has no `Fusion-Center/dashboard.py`, start it however your tree provides it, using `MQTT-Broker/.env` for credentials and `MQTT_HOST=127.0.0.1` on the Xavier.
 
 ### Step 4 — [ORIN] Initialize radar hardware
 
@@ -142,13 +140,21 @@ sudo bash start_radar.sh
 # If hardware is in a bad state, reset first:
 sudo bash reset_radar.sh
 sudo bash start_radar.sh
+
+# if nmcli error, activate ethernet and UCSB wireless web
+sudo nmtui
+
+# if build not found
+cd Chirp/Node/setup_radar
+cmake -S . -B build
+cmake --build build
 ```
 
 ### Step 5 — [ORIN] Start MQTT trigger client
 
 ```bash
 cd Chirp/Node/src/hardware_trigger_mqtt
-sudo -E /home/chirp/Chirp/Node/.venv/bin/python3 mqtt_trigger_client.py
+sudo -E ../../.venv/bin/python3 mqtt_trigger_client.py
 ```
 
 > Must use `sudo -E` — the C trigger worker needs root for GPIO access, and `-E` preserves the `.env` variables.
@@ -171,7 +177,7 @@ Repeat Steps 4–6 on every Orin before triggering from the laptop.
 
 ```bash
 # [LAPTOP] — from Chirp/Fusion-Center/Laptop/
-python3 laptop_trigger_client.py --group-id default
+./start_laptop_trigger.sh --group-id default
 ```
 
 ### Autocalibration capture
@@ -180,7 +186,7 @@ Walk a single person slowly across the radar field of view, then:
 
 ```bash
 # [LAPTOP]
-python3 laptop_trigger_client.py \
+./start_laptop_trigger.sh \
   --group-id default \
   --calibration \
   --calibration-frames 50
@@ -214,7 +220,7 @@ sudo bash reset_radar.sh
 
 # [XAVIER] Ctrl-C on dashboard and server controller, then stop broker
 cd Chirp/Fusion-Center/MQTT-Broker
-docker compose -f docker-compose.yaml down
+sudo docker compose -f docker-compose.yaml down
 ```
 
 ---

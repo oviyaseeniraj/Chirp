@@ -14,9 +14,14 @@ if [[ $EUID -ne 0 ]]; then
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+REFRESH="${REPO_ROOT}/scripts/chirp_refresh_mqtt_host_in_broker_env.sh"
+if [[ -f "${REFRESH}" ]]; then
+  bash "${REFRESH}" "${SCRIPT_DIR}/.env" || true
+fi
 
 if [[ ! -f "${SCRIPT_DIR}/passwords" ]]; then
-  echo "Missing passwords file. Run ./bootstrap_passwords.sh first."
+  echo "Missing passwords file. Run ./set_mqttbroker_passwords.sh first."
   exit 1
 fi
 

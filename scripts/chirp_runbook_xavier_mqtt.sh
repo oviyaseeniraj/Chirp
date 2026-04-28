@@ -23,5 +23,8 @@ done
 echo "Applying credentials to Mosquitto password file (requires sudo if not using local mosquitto_passwd)..." >&2
 sudo "${BROKER_DIR}/set_mqttbroker_passwords.sh"
 
+"${SCRIPT_DIR}/chirp_write_orin_bootstrap_secrets.sh"
+
 echo "Done. Broker .env: ${BROKER_DIR}/.env"
-echo "Tip: Repo root .chirp_broker_ip has the Xavier LAN IP for Orin bootstrap."
+echo "Tip: Push env to every Orin over SSH (edit scripts/chirp_orin_inventory.txt if IPs change):"
+echo "       ./scripts/chirp_bootstrap_all_orins.sh"

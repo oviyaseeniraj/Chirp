@@ -16,3 +16,5 @@ passwords
 
 # Local broker IP hint (written by scripts/chirp_bootstrap_mqtt_broker_env.sh)
 .chirp_broker_ip
+# Radar MQTT shared password for Orin bootstrap (written by chirp_write_orin_bootstrap_secrets.sh)
+.chirp_radar_mqtt_password

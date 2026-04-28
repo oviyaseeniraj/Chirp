@@ -6,6 +6,7 @@
 #
 # node_id defaults to CHIRP_NODE_ID or short hostname. MQTT_HOST from arg, CHIRP_BROKER_MQTT_HOST,
 # CHIRP_BROKER_IP_FILE, Fusion-Center/MQTT-Broker/.env, .chirp_broker_ip, or IPv4 from chrony (Xavier NTP).
+# MQTT_PASSWORD from broker .env, CHIRP_RADAR_MQTT_PASSWORD, CHIRP_RADAR_PASSWORD_FILE, or .chirp_radar_mqtt_password.
 # Interactive: if still unknown and stdin is a TTY, prompts once for the broker IP.
 set -euo pipefail
 
@@ -14,6 +15,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 NODE_ENV="${REPO_ROOT}/Node/.env"
 NODE_EXAMPLE="${REPO_ROOT}/Node/.env.example"
 IP_FILE="${REPO_ROOT}/.chirp_broker_ip"
+RADAR_PASS_FILE="${REPO_ROOT}/.chirp_radar_mqtt_password"
 BROKER_ENV="${REPO_ROOT}/Fusion-Center/MQTT-Broker/.env"
 
 node_id="${1:-${CHIRP_NODE_ID:-$(hostname -s)}}"
@@ -45,7 +47,7 @@ if [[ -z "${mqtt_host}" ]]; then
   echo "Could not set MQTT_HOST. Examples:" >&2
   echo "  CHIRP_BROKER_MQTT_HOST=169.231.x.x ./scripts/chirp_runbook_orin_env.sh ${node_id}" >&2
   echo "  ./scripts/chirp_runbook_orin_env.sh ${node_id} 169.231.x.x" >&2
-  echo "  scp xavier:Chirp/.chirp_broker_ip ${IP_FILE}" >&2
+  echo "  scp xavier:Chirp/.chirp_broker_ip xavier:Chirp/.chirp_radar_mqtt_password ${REPO_ROOT}/" >&2
   exit 1
 fi
 
@@ -64,16 +66,27 @@ fi
 "${SCRIPT_DIR}/chirp_patch_env_key.sh" "${NODE_ENV}" MQTT_CLIENT_ID "radar-${node_id}"
 "${SCRIPT_DIR}/chirp_patch_env_key.sh" "${NODE_ENV}" GROUP_ID "${GROUP_ID:-default}"
 
+radar_pass=""
 if [[ -f "${BROKER_ENV}" ]]; then
   radar_pass="$("${SCRIPT_DIR}/chirp_env_get.sh" "${BROKER_ENV}" MQTT_RADAR_PASSWORD || true)"
-  if [[ -n "${radar_pass}" ]]; then
-    "${SCRIPT_DIR}/chirp_patch_env_key.sh" "${NODE_ENV}" MQTT_PASSWORD "${radar_pass}"
-  fi
+fi
+if [[ -z "${radar_pass}" && -n "${CHIRP_RADAR_MQTT_PASSWORD:-}" ]]; then
+  radar_pass="${CHIRP_RADAR_MQTT_PASSWORD}"
+fi
+if [[ -z "${radar_pass}" && -n "${CHIRP_RADAR_PASSWORD_FILE:-}" && -f "${CHIRP_RADAR_PASSWORD_FILE}" ]]; then
+  radar_pass="$(tr -d '\r\n' <"${CHIRP_RADAR_PASSWORD_FILE}")"
+fi
+if [[ -z "${radar_pass}" && -f "${RADAR_PASS_FILE}" ]]; then
+  radar_pass="$(tr -d '\r\n' <"${RADAR_PASS_FILE}")"
+fi
+if [[ -n "${radar_pass}" ]]; then
+  "${SCRIPT_DIR}/chirp_patch_env_key.sh" "${NODE_ENV}" MQTT_PASSWORD "${radar_pass}"
 fi
 
 pass_val="$("${SCRIPT_DIR}/chirp_env_get.sh" "${NODE_ENV}" MQTT_PASSWORD || true)"
 if [[ -z "${pass_val}" || "${pass_val}" == "change-me-radar" ]]; then
-  echo "Reminder: set MQTT_PASSWORD in ${NODE_ENV} to MQTT_RADAR_PASSWORD from the Xavier (no usable broker .env here)." >&2
+  echo "Missing MQTT_PASSWORD. Copy from Xavier: ${RADAR_PASS_FILE} or set CHIRP_RADAR_MQTT_PASSWORD." >&2
+  exit 1
 fi
 
 echo "Updated ${NODE_ENV}: MQTT_HOST=${mqtt_host} NODE_ID=${node_id} MQTT_USERNAME=${node_id} MQTT_CLIENT_ID=radar-${node_id}"

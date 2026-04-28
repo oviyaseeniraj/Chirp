@@ -1,0 +1,5 @@
+# MQTT NODE_ID (must match MQTT_RADAR_NODE_IDS on the broker) and Orin LAN IP.
+# Host aliases: tien1 / tien2 / tien3
+node1 169.231.203.157
+node2 169.231.209.31
+node3 169.231.104.92

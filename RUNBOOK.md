@@ -55,13 +55,24 @@ cd ..
 source ~/.bashrc
 ```
 
-`chirp_runbook_orin_env.sh` creates `Node/.env` from `.env.example` if needed, sets **`MQTT_HOST`** (from `Fusion-Center/MQTT-Broker/.env` on the same clone, from repo-root **`.chirp_broker_ip`**, or pass **`<broker_ip>`** as the second argument), sets **`NODE_ID`** (argument or `CHIRP_NODE_ID` or short hostname), and copies **`MQTT_PASSWORD`** from **`MQTT_RADAR_PASSWORD`** in the broker `.env` when that file is present.
+`chirp_runbook_orin_env.sh` creates `Node/.env` from `.env.example` if needed and sets **`MQTT_HOST`**, **`NODE_ID`**, **`MQTT_USERNAME`**, **`MQTT_CLIENT_ID`**, **`GROUP_ID`**, and **`MQTT_PASSWORD`** with no manual edits. Password resolution order: `Fusion-Center/MQTT-Broker/.env` on the same clone, then **`CHIRP_RADAR_MQTT_PASSWORD`**, then **`CHIRP_RADAR_PASSWORD_FILE`**, then repo-root **`.chirp_radar_mqtt_password`** (created on the Xavier by **`chirp_runbook_xavier_mqtt.sh`** — copy it next to **`.chirp_broker_ip`** on each Orin). For **`MQTT_HOST`**, the same clone’s broker `.env`, **`.chirp_broker_ip`**, chrony, or an interactive prompt / second CLI arg applies as before.
 
 If this Orin does **not** have `Fusion-Center/` checked out, the script tries **chrony** (first `server`/`peer` IPv4 in `/etc/chrony/`, or the `^*` source from `chronyc -n sources`). If that fails, run it in an interactive shell and enter the Xavier IP when prompted, or:
 
 `./scripts/chirp_runbook_orin_env.sh node1 <xavier-lan-ip>`
 
 Edit `Node/.env` for **Supabase** and any non-default **GROUP_ID** if your deployment uses them.
+
+#### [XAVIER] — Push `Node/.env` to all Orins over SSH (optional)
+
+After **`chirp_runbook_xavier_mqtt.sh`**, with passwordless (or interactive) **SSH** to each Orin as **`chirp`**, and the same repo path on each (default **`~/Chirp`**):
+
+```bash
+cd Chirp
+./scripts/chirp_bootstrap_all_orins.sh
+```
+
+Targets and **`NODE_ID`**s are listed in **`scripts/chirp_orin_inventory.txt`** (must match **`MQTT_RADAR_NODE_IDS`** on the broker). Override with **`CHIRP_SSH_USER`**, **`CHIRP_REMOTE_CHIRP`** (e.g. `Documents/Chirp`), or **`CHIRP_ORIN_INVENTORY`**. For password prompts, use `CHIRP_SSH_OPTS="-o ConnectTimeout=15"`.
 
 Build the hardware trigger binary:
 

@@ -13,3 +13,6 @@ Node/src/hardware_trigger/networked_trigger
 .env
 log
 passwords
+
+# Local broker IP hint (written by scripts/chirp_bootstrap_mqtt_broker_env.sh)
+.chirp_broker_ip

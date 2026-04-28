@@ -57,7 +57,7 @@ source ~/.bashrc
 
 `chirp_runbook_orin_env.sh` creates `Node/.env` from `.env.example` if needed, sets **`MQTT_HOST`** (from `Fusion-Center/MQTT-Broker/.env` on the same clone, from repo-root **`.chirp_broker_ip`**, or pass **`<broker_ip>`** as the second argument), sets **`NODE_ID`** (argument or `CHIRP_NODE_ID` or short hostname), and copies **`MQTT_PASSWORD`** from **`MQTT_RADAR_PASSWORD`** in the broker `.env` when that file is present.
 
-If this Orin does **not** have `Fusion-Center/` checked out, copy **`.chirp_broker_ip`** from the Xavier after running the Xavier MQTT step, or run:
+If this Orin does **not** have `Fusion-Center/` checked out, the script tries **chrony** (first `server`/`peer` IPv4 in `/etc/chrony/`, or the `^*` source from `chronyc -n sources`). If that fails, run it in an interactive shell and enter the Xavier IP when prompted, or:
 
 `./scripts/chirp_runbook_orin_env.sh node1 <xavier-lan-ip>`
 

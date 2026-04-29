@@ -907,57 +907,11 @@ class JPDATracker:
             )
             
             track.append(prediction)
+    
     """
-    def update(self, detections: List[Detection], timestamp: datetime, associations: Dict = None) -> None:
-        #Matched to MATLAB: Soft JPDA Weighted Update (correctjpda equivalent).
-        print(len(detections))
-            # Calculate Effective Hit Probability (Sum of detection hypotheses)
-            prob_hit = sum(float(h.probability) for h in multi_hypothesis if not isinstance(h.measurement, MissedDetection))
-            
-            # MATLAB threshold_hit_miss = 0.3
-            if prob_hit < 0.3:
-                self._register_miss(track_id)
-                track.append(multi_hypothesis[0].prediction) 
-                continue
-
-            # Soft Update: Moment Matching (True JPDA)
-            try:
-                # Weighted mean state
-                posteriors = []
-                weights = []
-
-                weighted_meas = np.zeros((3, 1))
-
-                for h in multi_hypothesis:
-                    p = float(h.probability)
-                    if p > 0:
-                        weights.append(p)
-                        # If it is a real detection, update. If MissedDetection, use prediction.
-                        if not isinstance(h.measurement, MissedDetection):
-                            posteriors.append(self.updater.update(h))
-                            weighted_meas += p * h.measurement.state_vector
-                        else:
-                            posteriors.append(h.prediction)
-                            exp_z = self.measurement_model.function(h.prediction)
-                            weighted_meas += p * exp_z
-
-                self.track_metadata[track_id]['last_weighted_meas'] = weighted_meas.flatten()
-
-
-                # Fuse using Mixture of Gaussians (Moment Matching)
-                x_fused = sum(w * p.state_vector for w, p in zip(weights, posteriors))
-                # Covariance includes spreading term
-                P_fused = sum(w * (p.covar + (p.state_vector - x_fused) @ (p.state_vector - x_fused).T) 
-                              for w, p in zip(weights, posteriors))
-
-                track.append(GaussianState(x_fused, P_fused, timestamp=timestamp))
-                self._register_hit(track_id, prob_hit)
-            except Exception:
-                self._register_miss(track_id)
-"""
     def update(self, detections: List[Detection], timestamp: datetime, 
            associations: 'JPDATracker.AssociationData' = None) -> None:
-        """Matched to MATLAB: Soft JPDA Weighted Update (correctjpda equivalent)."""
+        #Matched to MATLAB: Soft JPDA Weighted Update (correctjpda equivalent).
         #print(f"update: # detections = {len(detections)}")
         
         if associations is None:
@@ -990,6 +944,7 @@ class JPDATracker:
                 posteriors = []
                 weights = []
                 weighted_meas = np.zeros((3, 1))
+                weighted_residual = np.zeros((3,1))
                 
                 # Get the current predicted state (appended by predict())
                 predicted_state = track[-1]
@@ -1013,20 +968,24 @@ class JPDATracker:
                         )
 
                         # Update the prediction with this detection
-                        #print(meas_hypothesis)
+                        print(meas_hypothesis)
                         hypothesis = self.updater.update(meas_hypothesis, timestamp=timestamp)
-                        posteriors.append(hypothesis)
-                        weighted_meas += prob * (detection.state_vector - expected(predicted_state) ) 
+                        #posteriors.append(hypothesis)
+                        expected_z = self.measurement_model.function(predicted_state)
+                        weighted_residual += prob * (detection.state_vector - expected_z ) 
+
+                        weighted_meas += prob * (detection.state_vector)
                 
                 # Process miss hypothesis (last column)
                 
-                print(" MAKE SURE NOT TO CORRECT IF THERE IS NO ASSOCIATED DETECTION", )
+                #print(" MAKE SURE NOT TO CORRECT IF THERE IS NO ASSOCIATED DETECTION", )
                 miss_prob = track_probs[-1]
                 if miss_prob > 0:
-                    weights.append(miss_prob)
-                    posteriors.append(predicted_state)
+                    #weights.append(miss_prob)
+                    #posteriors.append(predicted_state)
                     expected_z = self.measurement_model.function(predicted_state)
-                    #weighted_meas += miss_prob * expected_z
+
+                    weighted_meas += miss_prob * expected_z
                 
                 self.track_metadata[track_id]['last_weighted_meas'] = weighted_meas.flatten()
                 
@@ -1060,7 +1019,106 @@ class JPDATracker:
             except Exception as e:
                 print(f"Update exception for track {track_id}: {e}")
                 self._register_miss(track_id)          
+    """
 
+    def update(self, detections: List[Detection], timestamp: datetime, 
+        associations: 'JPDATracker.AssociationData' = None) -> None:
+        #Matched to MATLAB: Soft JPDA Weighted Update (correctjpda equivalent).
+        #print(f"update: # detections = {len(detections)}")
+        
+        if associations is None:
+            print("Error, failed to associate")
+            return
+        
+        # Build track_id to index mapping
+        track_ids_list = list(self.tracks.keys())
+        track_id_to_idx = {tid: idx for idx, tid in enumerate(track_ids_list)}
+        n_det = len(detections)
+        
+        for track_id, track in self.tracks.items():
+            track_idx = track_id_to_idx[track_id]
+            
+            # Get association probabilities for this track
+            track_probs = associations.probabilities_tracks_detections[track_idx, :]
+            prob_hit = associations.probabilities_effective_track_hit[track_idx]
+            
+            # MATLAB threshold_hit_miss = 0.3
+            if prob_hit < self.threshold_hit_miss:
+                self._register_miss(track_id)
+                # Keep the predicted state (already appended by predict())
+                continue
+            
+            # Soft Update: Moment Matching (True JPDA EKF Math)
+            try:
+                predicted_state = track[-1]
+                x_minus = predicted_state.state_vector.reshape(-1, 1)
+                P_minus = predicted_state.covar
+                
+                # EKF Matrices
+                z_minus = self.measurement_model.function(predicted_state)
+                H = self.measurement_model.jacobian(predicted_state)
+                R = self.measurement_model.noise_covar
+                
+                S = H @ P_minus @ H.T + R
+                try:
+                    S_inv = np.linalg.inv(S)
+                except np.linalg.LinAlgError:
+                    S_inv = np.linalg.pinv(S)
+                    
+                K = P_minus @ H.T @ S_inv
+                
+                beta_0 = track_probs[-1]
+                
+                # Accumulators for standard JPDA formulas
+                delta_y = np.zeros_like(z_minus) # δy
+                spread_innov_sum = np.zeros_like(S) # Sum of β_i * (y_i - h(x_k^-))(y_i - h(x_k^-))^T
+                weighted_meas = np.zeros(3)
+
+                for det_idx in range(n_det):
+                    beta_i = track_probs[det_idx]
+                    if beta_i > 0:
+                        y_i = detections[det_idx].state_vector
+                        weighted_meas += beta_i * y_i.flatten()
+                        
+                        innov = y_i - z_minus
+                        # Normalize angle wrapping
+                        innov[2, 0] = np.arctan2(np.sin(innov[2, 0]), np.cos(innov[2, 0]))
+                        
+                        delta_y += beta_i * innov
+                        spread_innov_sum += beta_i * (innov @ innov.T)
+                
+                # Add missed detection expected measurement expectation
+                if beta_0 > 0:
+                    weighted_meas += beta_0 * z_minus.flatten()
+                
+                self.track_metadata[track_id]['last_weighted_meas'] = weighted_meas
+                
+                # 1. State Update: x_k+ = x_k- + K_k * δy
+                x_plus = x_minus + K @ delta_y
+                
+                # 2. Covariance Update Spread Term: P_c = K_k * [Sum(...) - δy * δy^T] * K_k^T
+                P_c = K @ (spread_innov_sum - delta_y @ delta_y.T) @ K.T
+                
+                # 3. Final Covariance: P_k+ = P_k- - (1 - β_0) * K_k * S_k * K_k^T + P_c
+                P_plus = P_minus - (1 - beta_0) * (K @ S @ K.T) + P_c
+                
+                # Enforce symmetry constraints on covariance matrix just to be safe
+                P_plus = (P_plus + P_plus.T) / 2.0
+                
+                # REPLACE the predicted state with the fused state
+                track[-1] = GaussianState(
+                    StateVector(x_plus), 
+                    CovarianceMatrix(P_plus), 
+                    timestamp=timestamp
+                )
+                
+                self._register_hit(track_id, prob_hit)
+                
+            except Exception as e:
+                print(f"Update exception for track {track_id}: {e}")
+                self._register_miss(track_id)          
+
+        
     def _register_hit(self, track_id, prob):
         meta = self.track_metadata[track_id]
         meta['hits'] += 1

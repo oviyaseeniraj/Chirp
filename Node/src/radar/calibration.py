@@ -85,7 +85,8 @@ def closed_form_calibration(calibration_data):
                 # encoding used in dashboard._apply_calibration.
                 # dets shape: (n, 3) [range_m, doppler_bin, angle_rad]
                 mean_range = np.mean(dets[:, 0])
-                mean_angle = np.mean(dets[:, 2])
+                # Circular mean prevents wraparound bias near -pi/+pi.
+                mean_angle = np.arctan2(np.mean(np.sin(dets[:, 2])), np.mean(np.cos(dets[:, 2])))
                 x_loc = mean_range * np.sin(mean_angle)
                 y_loc = mean_range * np.cos(mean_angle)
                 trajectory[i, t] = complex(x_loc, y_loc)

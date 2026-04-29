@@ -236,20 +236,6 @@ def processing_process(raw_queue, processed_queue, node_id, calib_queue=None, de
             
             t5_extra = time.perf_counter_ns()
 
-            # Calibration Hook — feed detection coordinates to the calibration publisher.
-            # Convert range_bin → range_m so P_opt is computed in metres (matching
-            # the metres-based z_local used in dashboard._apply_calibration).
-            if calib_queue is not None and len(detection_coords_3d) > 0:
-                try:
-                    calib_dets = detection_coords_3d.copy()
-                    calib_dets[:, 0] = calib_dets[:, 0] * config.RANGE_RES
-                    calib_queue.put_nowait({
-                        "frame_num": frame_num,
-                        "detections": calib_dets.tolist(),
-                    })
-                except Full:
-                    pass
-
             # Pack output
             # If visualize_clusters_only is True, we overwrite regular RDM and CFAR 
             # with the centroids data to match the shim's visualization style.
@@ -284,6 +270,25 @@ def processing_process(raw_queue, processed_queue, node_id, calib_queue=None, de
                         "angle_deg": float(np.rad2deg(angle_rad)),
                         "mass": int(mass)
                     })
+
+            # Calibration Hook — use DBSCAN centroids instead of raw CFAR detections.
+            # Raw detections include heavy static clutter and can bias spatial
+            # calibration away from the true target overlap between nodes.
+            if calib_queue is not None and clusters_meta:
+                try:
+                    calib_queue.put_nowait({
+                        "frame_num": frame_num,
+                        "detections": [
+                            [
+                                float(c["range_m"]),
+                                float(c["doppler_idx"]),
+                                float(c["angle_rad"]),
+                            ]
+                            for c in clusters_meta
+                        ],
+                    })
+                except Full:
+                    pass
 
             output_data = {
                 "node_id": node_id,

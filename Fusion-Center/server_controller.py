@@ -71,7 +71,8 @@ def closed_form_calibration(
                 trajectory[i, t] = np.nan
                 continue
             mean_range = float(np.mean(arr[:, 0]))
-            mean_angle = float(np.mean(arr[:, 2]))
+            # Circular mean prevents wraparound bias near -pi/+pi.
+            mean_angle = float(np.arctan2(np.mean(np.sin(arr[:, 2])), np.mean(np.cos(arr[:, 2]))))
             # Use x+j*y convention (x=r·sin θ, y=r·cos θ) to match the
             # complex(x_local, y_local) encoding in dashboard._apply_calibration.
             x_loc = mean_range * np.sin(mean_angle)

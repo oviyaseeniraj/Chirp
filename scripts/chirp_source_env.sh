@@ -7,9 +7,9 @@
 #   source "$CHIRP_REPO_ROOT/scripts/chirp_source_env.sh"
 #
 # CHIRP_ROLE:
-#   xavier  — Fusion-Center/MQTT-Broker/.env
+#   xavier  — Fusion-Center/.env (or MQTT-Broker/.env)
 #   orin    — Node/.env
-#   laptop  — Fusion-Center/MQTT-Broker/.env (same passwords as broker file)
+#   laptop  — Fusion-Center/.env (or Laptop/.env, or MQTT-Broker/.env)
 # Do not use `set -e` here — this file is sourced from interactive shells.
 
 _chirp_source_env_fatal() { echo "chirp_source_env.sh: $*" >&2; return 1; }
@@ -30,6 +30,7 @@ if [[ -z "${role}" ]]; then
   return 1 2>/dev/null || exit 1
 fi
 
+fc_env="${CHIRP_REPO_ROOT}/Fusion-Center/.env"
 broker_env="${CHIRP_REPO_ROOT}/Fusion-Center/MQTT-Broker/.env"
 laptop_env="${CHIRP_REPO_ROOT}/Fusion-Center/Laptop/.env"
 node_env="${CHIRP_REPO_ROOT}/Node/.env"
@@ -37,9 +38,16 @@ node_env="${CHIRP_REPO_ROOT}/Node/.env"
 set -a
 case "${role}" in
   xavier)
-    [[ -f "${broker_env}" ]] || { _chirp_source_env_fatal "missing ${broker_env}"; return 1; }
-    # shellcheck disable=SC1090
-    source "${broker_env}"
+    if [[ -f "${fc_env}" ]]; then
+      # shellcheck disable=SC1090
+      source "${fc_env}"
+    elif [[ -f "${broker_env}" ]]; then
+      # shellcheck disable=SC1090
+      source "${broker_env}"
+    else
+      _chirp_source_env_fatal "missing ${fc_env} and ${broker_env}"
+      return 1
+    fi
     ;;
   orin)
     [[ -f "${node_env}" ]] || { _chirp_source_env_fatal "missing ${node_env} — run scripts/chirp_bootstrap_node_env.sh"; return 1; }
@@ -47,14 +55,17 @@ case "${role}" in
     source "${node_env}"
     ;;
   laptop)
-    if [[ -f "${broker_env}" ]]; then
+    if [[ -f "${fc_env}" ]]; then
+      # shellcheck disable=SC1090
+      source "${fc_env}"
+    elif [[ -f "${broker_env}" ]]; then
       # shellcheck disable=SC1090
       source "${broker_env}"
     elif [[ -f "${laptop_env}" ]]; then
       # shellcheck disable=SC1090
       source "${laptop_env}"
     else
-      _chirp_source_env_fatal "missing ${broker_env} and ${laptop_env} — run scripts/chirp_runbook_laptop_env.sh or copy MQTT-Broker/.env"
+      _chirp_source_env_fatal "missing ${fc_env}, ${broker_env}, and ${laptop_env} — create Fusion-Center/.env or run scripts/chirp_runbook_laptop_env.sh"
       return 1
     fi
     export MQTT_LAPTOP_USER="${MQTT_LAPTOP_USER:-laptop-control}"

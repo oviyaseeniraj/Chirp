@@ -1,17 +1,26 @@
 #!/usr/bin/env bash
-# Build Fusion-Center/Laptop/.env from MQTT-Broker/.env so laptop tools can load vars without manual exports.
+# Build Fusion-Center/Laptop/.env from Fusion-Center/.env (or MQTT-Broker/.env) so laptop tools can load vars without manual exports.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+FC_ENV="${REPO_ROOT}/Fusion-Center/.env"
 BROKER_ENV="${REPO_ROOT}/Fusion-Center/MQTT-Broker/.env"
 LAPTOP_ENV="${REPO_ROOT}/Fusion-Center/Laptop/.env"
 
-[[ -f "${BROKER_ENV}" ]] || { echo "Missing ${BROKER_ENV} — run chirp_runbook_xavier_mqtt.sh on Xavier first (or copy .env here)." >&2; exit 1; }
+SRC_ENV=""
+if [[ -f "${FC_ENV}" ]]; then
+  SRC_ENV="${FC_ENV}"
+elif [[ -f "${BROKER_ENV}" ]]; then
+  SRC_ENV="${BROKER_ENV}"
+else
+  echo "Missing ${FC_ENV} and ${BROKER_ENV} — create Fusion-Center/.env on the Xavier and sync it here (or keep MQTT-Broker/.env)." >&2
+  exit 1
+fi
 
 # shellcheck disable=SC1090
 set -a
-source "${BROKER_ENV}"
+source "${SRC_ENV}"
 set +a
 
 umask 077

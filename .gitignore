@@ -14,7 +14,7 @@ Node/src/hardware_trigger/networked_trigger
 log
 passwords
 
-# Local broker IP hint (written by scripts/chirp_bootstrap_mqtt_broker_env.sh)
+# Local broker IP hint (optional; chirp_bootstrap_all_orins.sh refreshes from Fusion-Center/.env)
 .chirp_broker_ip
 # Radar MQTT shared password for Orin bootstrap (written by chirp_write_orin_bootstrap_secrets.sh)
 .chirp_radar_mqtt_password

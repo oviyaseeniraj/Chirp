@@ -12,10 +12,13 @@ BROKER_HOST="${3:-127.0.0.1}"
 BROKER_PORT="${4:-1883}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ENV_FILE="${SCRIPT_DIR}/.env"
-
-if [[ ! -f "${ENV_FILE}" ]]; then
-  echo "Missing ${ENV_FILE}. Copy .env.example to .env and set credentials."
+FC_ENV="$(cd "${SCRIPT_DIR}/.." && pwd)/.env"
+if [[ -f "${FC_ENV}" ]]; then
+  ENV_FILE="${FC_ENV}"
+elif [[ -f "${SCRIPT_DIR}/.env" ]]; then
+  ENV_FILE="${SCRIPT_DIR}/.env"
+else
+  echo "Missing Fusion-Center/.env or MQTT-Broker/.env with MQTT_SERVER_USER / MQTT_SERVER_PASS." >&2
   exit 1
 fi
 

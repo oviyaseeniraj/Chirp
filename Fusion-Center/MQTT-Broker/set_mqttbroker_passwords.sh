@@ -8,12 +8,18 @@
 set -euo pipefail 
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ENV_FILE="${SCRIPT_DIR}/.env"
 PASSWORD_FILE="${SCRIPT_DIR}/passwords" # path to password file on LOCAL computer
 PASSWORD_FILE_CMD="${PASSWORD_FILE}" # path to password file on Docker container
 
-if [[ ! -f "${ENV_FILE}" ]]; then
-  echo "Missing ${ENV_FILE}. Copy .env.example to .env and set credentials."
+FC_ENV="$(cd "${SCRIPT_DIR}/.." && pwd)/.env"
+if [[ -n "${CHIRP_BROKER_ENV_FILE:-}" ]]; then
+  ENV_FILE="${CHIRP_BROKER_ENV_FILE}"
+elif [[ -f "${FC_ENV}" ]]; then
+  ENV_FILE="${FC_ENV}"
+elif [[ -f "${SCRIPT_DIR}/.env" ]]; then
+  ENV_FILE="${SCRIPT_DIR}/.env"
+else
+  echo "Missing Fusion-Center/.env or MQTT-Broker/.env. Copy Fusion-Center/.env.example to Fusion-Center/.env and set credentials." >&2
   exit 1
 fi
 

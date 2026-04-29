@@ -18,19 +18,22 @@ Step-by-step commands to bring up the full system. See `README.md` for architect
 
 > Run once per machine. Skip if already done.
 
-### [XAVIER] — MQTT broker credentials
+### [XAVIER] — Fusion-Center `.env` and MQTT broker passwords
 
-From the **repo root** (the `Chirp` directory), one command creates `Fusion-Center/MQTT-Broker/.env`, sets `MQTT_HOST` to this machine’s LAN IP, replaces example passwords with random secrets, and runs `set_mqttbroker_passwords` under `sudo` (same as before, but no manual editing):
+Configuration lives in a **single** file: `Fusion-Center/.env` (gitignored). Copy the template and fill in real values — especially **`MQTT_HOST`** as the Xavier’s LAN IPv4 (never leave `X.X.X.X`), Supabase keys, and the **`MQTT_*`** passwords that match how you run Mosquitto.
 
 ```bash
 cd Chirp
+cp Fusion-Center/.env.example Fusion-Center/.env
+# Edit Fusion-Center/.env with your IP, secrets, and MQTT_LAPTOP_*, MQTT_SERVER_*, MQTT_RADAR_* values.
+
 chmod +x scripts/chirp_install_shell_rc.sh
 ./scripts/chirp_runbook_xavier_mqtt.sh
 ```
 
-To customize broker users, node list, or passwords later, edit `Fusion-Center/MQTT-Broker/.env` and re-run `sudo Fusion-Center/MQTT-Broker/set_mqttbroker_passwords.sh`. Restart the broker container if it was already running.
+`chirp_runbook_xavier_mqtt.sh` replaces only **placeholder** broker passwords (same strings as in `.env.example`) with random secrets when needed, runs `sudo Fusion-Center/MQTT-Broker/set_mqttbroker_passwords.sh` (which reads **`Fusion-Center/.env`** first), and writes `.chirp_radar_mqtt_password` for Orin bootstrap scripts.
 
-> **Note:** `start_broker.sh` also refreshes `MQTT_HOST` in `.env` when it still looks like `X.X.X.X`, so routine broker startups stay aligned with the LAN.
+To change users, node list, or passwords later, edit `Fusion-Center/.env` and re-run `sudo Fusion-Center/MQTT-Broker/set_mqttbroker_passwords.sh`. Restart the broker container if it was already running.
 
 ### [XAVIER] — Fusion-Center Python environment
 
@@ -55,17 +58,13 @@ cd ..
 source ~/.bashrc
 ```
 
-`chirp_runbook_orin_env.sh` creates `Node/.env` from `.env.example` if needed and sets **`MQTT_HOST`**, **`NODE_ID`**, **`MQTT_USERNAME`**, **`MQTT_CLIENT_ID`**, **`GROUP_ID`**, and **`MQTT_PASSWORD`** with no manual edits. Password resolution order: `Fusion-Center/MQTT-Broker/.env` on the same clone, then **`CHIRP_RADAR_MQTT_PASSWORD`**, then **`CHIRP_RADAR_PASSWORD_FILE`**, then repo-root **`.chirp_radar_mqtt_password`** (created on the Xavier by **`chirp_runbook_xavier_mqtt.sh`** — copy it next to **`.chirp_broker_ip`** on each Orin). For **`MQTT_HOST`**, the same clone’s broker `.env`, **`.chirp_broker_ip`**, chrony, or an interactive prompt / second CLI arg applies as before.
+`chirp_runbook_orin_env.sh` only ensures `Node/.env` exists (copies from `Node/.env.example` once). Edit **`MQTT_HOST`** (Xavier IPv4, same as in `Fusion-Center/.env` on the server), **`NODE_ID`**, **`MQTT_USERNAME`** (usually same as `NODE_ID`), **`MQTT_PASSWORD`** (same as **`MQTT_RADAR_PASSWORD`** on the broker), **`MQTT_CLIENT_ID`** (e.g. `radar-node2`), **`GROUP_ID`**, **`CHIRP_SCHEMA_VERSION`**, and **Supabase** keys as needed.
 
-If this Orin does **not** have `Fusion-Center/` checked out, the script tries **chrony** (first `server`/`peer` IPv4 in `/etc/chrony/`, or the `^*` source from `chronyc -n sources`). If that fails, run it in an interactive shell and enter the Xavier IP when prompted, or:
-
-`./scripts/chirp_runbook_orin_env.sh node1 <xavier-lan-ip>`
-
-Edit `Node/.env` for **Supabase** and any non-default **GROUP_ID** if your deployment uses them.
+Optional: copy **`.chirp_broker_ip`** and **`.chirp_radar_mqtt_password`** from the Xavier repo root after **`chirp_runbook_xavier_mqtt.sh`**, or run **`./scripts/chirp_bootstrap_all_orins.sh`** from a host with SSH to every Orin (see **`scripts/chirp_orin_inventory.txt`**).
 
 #### [XAVIER] — Push `Node/.env` to all Orins over SSH (optional)
 
-After **`chirp_runbook_xavier_mqtt.sh`**, with passwordless (or interactive) **SSH** to each Orin as **`chirp`**, and the same repo path on each (default **`~/Chirp`**):
+After **`Fusion-Center/.env`** exists on the Xavier and **`chirp_runbook_xavier_mqtt.sh`** has been run, with passwordless (or interactive) **SSH** to each Orin as **`chirp`**, and the same repo path on each (default **`~/Chirp`**):
 
 ```bash
 cd Chirp
@@ -96,7 +95,7 @@ chronyc tracking      # System time offset should be < 1 ms
 
 ### [LAPTOP] — Credentials
 
-With a **full Chirp clone** that already has `Fusion-Center/MQTT-Broker/.env` (from the Xavier, or after syncing that file from the Xavier):
+With a **full Chirp clone** that already has `Fusion-Center/.env` (sync from the Xavier, or legacy `Fusion-Center/MQTT-Broker/.env`):
 
 ```bash
 cd Chirp
@@ -105,7 +104,7 @@ cd Chirp
 source ~/.bashrc
 ```
 
-That writes `Fusion-Center/Laptop/.env` and `start_laptop_trigger.sh` loads it (or the broker `.env`) automatically. If you keep only a partial tree, copy `MQTT-Broker/.env` from the Xavier and point `MQTT_HOST` / `MQTT_LAPTOP_PASS` at that file manually.
+That writes `Fusion-Center/Laptop/.env` and `start_laptop_trigger.sh` loads it, `Fusion-Center/.env`, or `MQTT-Broker/.env` automatically. If you keep only a partial tree, copy `Fusion-Center/.env` from the Xavier and set `MQTT_HOST` / `MQTT_LAPTOP_PASS` manually.
 
 ---
 
@@ -127,8 +126,8 @@ sudo docker compose -f docker-compose.yaml ps
 
 ```bash
 cd Chirp/Fusion-Center
-pip install -r requirements.txt
 source .venv/bin/activate
+pip install -r requirements.txt
 ./start_server_controller.sh
 ```
 
@@ -140,7 +139,7 @@ cd Chirp
 # Dashboard → http://<xavier-ip>:5002
 ```
 
-If the repo has no `Fusion-Center/dashboard.py`, start it however your tree provides it, using `MQTT-Broker/.env` for credentials and `MQTT_HOST=127.0.0.1` on the Xavier.
+If the repo has no `Fusion-Center/dashboard.py`, start it however your tree provides it, using `Fusion-Center/.env` (or `MQTT-Broker/.env`) for credentials and `MQTT_HOST=127.0.0.1` on the Xavier.
 
 ### Step 4 — [ORIN] Initialize radar hardware
 

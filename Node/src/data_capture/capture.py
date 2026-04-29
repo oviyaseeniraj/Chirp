@@ -35,7 +35,8 @@ class CaptureSession:
         """
         self.logger.info(f"Starting capture of {num_frames} frames...")
         
-        for i in range(num_frames):
+        i = 0
+        while i < num_frames:
             try:
                 # 1. Capture Raw Data
                 # daq.capture() returns a uint16 numpy array
@@ -44,7 +45,8 @@ class CaptureSession:
                 except TimeoutError as te:
                     self.logger.error(f"Timeout capturing frame {i}: {te}")
                     continue
-
+                
+                i += 1
                 # 2. Save Raw Data
                 if save_raw:
                     raw_filename = os.path.join(self.raw_dir, f"raw_frame_{i:04d}.npy")

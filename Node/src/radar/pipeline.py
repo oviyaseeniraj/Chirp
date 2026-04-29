@@ -236,12 +236,16 @@ def processing_process(raw_queue, processed_queue, node_id, calib_queue=None, de
             
             t5_extra = time.perf_counter_ns()
 
-            # Calibration Hook — feed detection coordinates to the calibration publisher
+            # Calibration Hook — feed detection coordinates to the calibration publisher.
+            # Convert range_bin → range_m so P_opt is computed in metres (matching
+            # the metres-based z_local used in dashboard._apply_calibration).
             if calib_queue is not None and len(detection_coords_3d) > 0:
                 try:
+                    calib_dets = detection_coords_3d.copy()
+                    calib_dets[:, 0] = calib_dets[:, 0] * config.RANGE_RES
                     calib_queue.put_nowait({
                         "frame_num": frame_num,
-                        "detections": detection_coords_3d.tolist(),
+                        "detections": calib_dets.tolist(),
                     })
                 except Full:
                     pass

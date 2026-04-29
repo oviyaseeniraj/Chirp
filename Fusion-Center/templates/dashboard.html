@@ -295,7 +295,7 @@ function toCanvas(x, y) {
 }
 
 // ── Trail storage ─────────────────────────────────────────────────────────
-const TRAIL_LEN = 12;
+const TRAIL_LEN = 40;
 const trails = {};   // node_id -> [ {x,y,color,mass} ]
 
 // ── Doppler → hue helper ──────────────────────────────────────────────────
@@ -383,14 +383,29 @@ function drawTrails(s) {
   if (!showTrails.checked) return;
   ctx.save();
   for (const [nid, pts] of Object.entries(trails)) {
-    for (let i = 0; i < pts.length; i++) {
-      const pt = pts[i];
-      const alpha = (i / pts.length) * 0.35;
-      const [px, py] = toCanvas(pt.x, pt.y);
-      const r = Math.max(2, Math.sqrt(pt.mass / 30));
+    if (pts.length < 2) continue;
+    const color = pts[pts.length - 1].color;
+
+    // Connected line fading from transparent to semi-opaque
+    for (let i = 1; i < pts.length; i++) {
+      const alpha = (i / pts.length) * 0.7;
+      const [x0, y0] = toCanvas(pts[i - 1].x, pts[i - 1].y);
+      const [x1, y1] = toCanvas(pts[i].x, pts[i].y);
       ctx.beginPath();
-      ctx.arc(px, py, r * 0.7, 0, Math.PI * 2);
-      ctx.fillStyle = pt.color + Math.round(alpha * 255).toString(16).padStart(2, '0');
+      ctx.moveTo(x0, y0);
+      ctx.lineTo(x1, y1);
+      ctx.strokeStyle = color + Math.round(alpha * 255).toString(16).padStart(2, '0');
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+
+    // Small dot at each sample for clarity
+    for (let i = 0; i < pts.length; i++) {
+      const alpha = (i / pts.length) * 0.45;
+      const [px, py] = toCanvas(pts[i].x, pts[i].y);
+      ctx.beginPath();
+      ctx.arc(px, py, 2, 0, Math.PI * 2);
+      ctx.fillStyle = color + Math.round(alpha * 255).toString(16).padStart(2, '0');
       ctx.fill();
     }
   }

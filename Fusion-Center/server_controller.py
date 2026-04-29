@@ -38,7 +38,7 @@ def closed_form_calibration(
 
     Parameters
     ----------
-    frame_data : node_id -> (frame_num -> list of [range_bin, doppler_bin, angle_rad])
+    frame_data : node_id -> (frame_num -> list of [range_m, doppler_bin, angle_rad])
 
     Returns
     -------
@@ -72,7 +72,11 @@ def closed_form_calibration(
                 continue
             mean_range = float(np.mean(arr[:, 0]))
             mean_angle = float(np.mean(arr[:, 2]))
-            trajectory[i, t] = mean_range * np.exp(1j * mean_angle)
+            # Use x+j*y convention (x=r·sin θ, y=r·cos θ) to match the
+            # complex(x_local, y_local) encoding in dashboard._apply_calibration.
+            x_loc = mean_range * np.sin(mean_angle)
+            y_loc = mean_range * np.cos(mean_angle)
+            trajectory[i, t] = complex(x_loc, y_loc)
 
     # Drop frames where any node has no valid detection
     valid_mask = ~np.isnan(trajectory).any(axis=0)

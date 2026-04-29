@@ -79,11 +79,12 @@ if [[ "${MONITOR_CALIB_STREAM}" -eq 1 ]]; then
     echo "Calibration MQTT tap (group=${GROUP_ID_FOR_TOPICS}, broker=${MQTT_HOST}:${MQTT_PORT})"
     # ACL: laptop-control may read start/result + calibration/result only.
     #      server-xavier may read calibration/frame/+ and calibration/done/+ (not result).
+    # Merge stderr so broker/auth errors are visible (do not discard 2>/dev/null).
     mosquitto_sub -h "${MQTT_HOST}" -p "${MQTT_PORT}" \
       -u "${MQTT_LAPTOP_USER}" -P "${MQTT_LAPTOP_PASS}" \
       -t "${TOPIC_PREFIX}/server/start/result" \
       -t "${TOPIC_PREFIX}/group/${GROUP_ID_FOR_TOPICS}/calibration/result" \
-      -v 2>/dev/null | awk '{ print "[mqtt laptop] " $0; fflush() }' &
+      -v 2>&1 | awk '{ print "[mqtt laptop] " $0; fflush() }' &
     MQTT_TAP_PIDS+=($!)
 
     SERVER_USER="${MQTT_SERVER_USER:-${MQTT_USERNAME:-server-xavier}}"
@@ -93,7 +94,7 @@ if [[ "${MONITOR_CALIB_STREAM}" -eq 1 ]]; then
         -u "${SERVER_USER}" -P "${SERVER_PASS}" \
         -t "${TOPIC_PREFIX}/group/${GROUP_ID_FOR_TOPICS}/calibration/frame/+" \
         -t "${TOPIC_PREFIX}/group/${GROUP_ID_FOR_TOPICS}/calibration/done/+" \
-        -v 2>/dev/null | awk '{ print "[mqtt server] " $0; fflush() }' &
+        -v 2>&1 | awk '{ print "[mqtt server] " $0; fflush() }' &
       MQTT_TAP_PIDS+=($!)
     else
       echo "Note: set MQTT_SERVER_PASS or MQTT_PASSWORD in ${FC_ENV} to tap calibration/frame and calibration/done (laptop ACL cannot subscribe to those)."
@@ -102,4 +103,4 @@ if [[ "${MONITOR_CALIB_STREAM}" -eq 1 ]]; then
   fi
 fi
 
-python3 "${SCRIPT_DIR}/laptop_trigger_client.py" "${STRIP_STREAM_OPT[@]}"
+python3 -u "${SCRIPT_DIR}/laptop_trigger_client.py" "${STRIP_STREAM_OPT[@]}"

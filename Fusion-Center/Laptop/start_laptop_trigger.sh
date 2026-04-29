@@ -34,4 +34,73 @@ if [[ -z "${MQTT_LAPTOP_PASS:-}" ]]; then
   exit 1
 fi
 
-exec python3 "${SCRIPT_DIR}/laptop_trigger_client.py" "$@"
+MQTT_TAP_PIDS=()
+cleanup_mqtt_taps() {
+  if [[ "${#MQTT_TAP_PIDS[@]}" -gt 0 ]]; then
+    kill "${MQTT_TAP_PIDS[@]}" 2>/dev/null || true
+    MQTT_TAP_PIDS=()
+  fi
+}
+trap cleanup_mqtt_taps EXIT
+
+ORIG_ARGS=("$@")
+
+MONITOR_CALIB_STREAM=0
+STRIP_STREAM_OPT=()
+for arg in "${ORIG_ARGS[@]}"; do
+  case "$arg" in
+    --calibration)
+      MONITOR_CALIB_STREAM=1
+      STRIP_STREAM_OPT+=("$arg")
+      ;;
+    --no-calibration-stream)
+      MONITOR_CALIB_STREAM=0
+      ;;
+    *)
+      STRIP_STREAM_OPT+=("$arg")
+      ;;
+  esac
+done
+
+GROUP_ID_FOR_TOPICS="${GROUP_ID:-default}"
+for ((i = 0; i < ${#ORIG_ARGS[@]}; i++)); do
+  if [[ "${ORIG_ARGS[i]}" == "--group-id" && $((i + 1)) -lt ${#ORIG_ARGS[@]} ]]; then
+    GROUP_ID_FOR_TOPICS="${ORIG_ARGS[i + 1]}"
+    break
+  fi
+done
+
+TOPIC_PREFIX="chirp/v1"
+
+if [[ "${MONITOR_CALIB_STREAM}" -eq 1 ]]; then
+  if ! command -v mosquitto_sub >/dev/null 2>&1; then
+    echo "Note: install Mosquitto clients (mosquitto_sub) to see calibration MQTT traffic; continuing without tap."
+  else
+    echo "Calibration MQTT tap (group=${GROUP_ID_FOR_TOPICS}, broker=${MQTT_HOST}:${MQTT_PORT})"
+    # ACL: laptop-control may read start/result + calibration/result only.
+    #      server-xavier may read calibration/frame/+ and calibration/done/+ (not result).
+    # Merge stderr so broker/auth errors are visible (do not discard 2>/dev/null).
+    mosquitto_sub -h "${MQTT_HOST}" -p "${MQTT_PORT}" \
+      -u "${MQTT_LAPTOP_USER}" -P "${MQTT_LAPTOP_PASS}" \
+      -t "${TOPIC_PREFIX}/server/start/result" \
+      -t "${TOPIC_PREFIX}/group/${GROUP_ID_FOR_TOPICS}/calibration/result" \
+      -v 2>&1 | awk '{ print "[mqtt laptop] " $0; fflush() }' &
+    MQTT_TAP_PIDS+=($!)
+
+    SERVER_USER="${MQTT_SERVER_USER:-${MQTT_USERNAME:-server-xavier}}"
+    SERVER_PASS="${MQTT_SERVER_PASS:-${MQTT_PASSWORD:-}}"
+    if [[ -n "${SERVER_PASS}" ]]; then
+      mosquitto_sub -h "${MQTT_HOST}" -p "${MQTT_PORT}" \
+        -u "${SERVER_USER}" -P "${SERVER_PASS}" \
+        -t "${TOPIC_PREFIX}/group/${GROUP_ID_FOR_TOPICS}/calibration/frame/+" \
+        -t "${TOPIC_PREFIX}/group/${GROUP_ID_FOR_TOPICS}/calibration/done/+" \
+        -v 2>&1 | awk '{ print "[mqtt server] " $0; fflush() }' &
+      MQTT_TAP_PIDS+=($!)
+    else
+      echo "Note: set MQTT_SERVER_PASS or MQTT_PASSWORD in ${FC_ENV} to tap calibration/frame and calibration/done (laptop ACL cannot subscribe to those)."
+    fi
+    echo ""
+  fi
+fi
+
+python3 -u "${SCRIPT_DIR}/laptop_trigger_client.py" "${STRIP_STREAM_OPT[@]}"

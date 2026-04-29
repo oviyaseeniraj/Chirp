@@ -8,19 +8,35 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
     from src.radar.daq import DataAcquisition
-    from src.radar.pipeline import daq_process, processing_process, socket_process
+    from src.radar.pipeline import (
+        calibration_mqtt_process,
+        daq_process,
+        processing_process,
+        socket_process,
+    )
 except ImportError:
     from ..src.radar.daq import DataAcquisition
-    from ..src.radar.pipeline import daq_process, processing_process, socket_process
+    from ..src.radar.pipeline import (
+        calibration_mqtt_process,
+        daq_process,
+        processing_process,
+        socket_process,
+    )
 
 # Configuration
-SERVER_URL = "http://127.0.0.1:5001"
-NODE_ID = socket.gethostname()
+SERVER_URL = os.getenv("SERVER_URL", "http://127.0.0.1:5001")
+NODE_ID = os.getenv("NODE_ID", socket.gethostname())
+GROUP_ID = os.getenv("GROUP_ID", "default")
+MQTT_HOST = os.getenv("MQTT_HOST")
+MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
+MQTT_USERNAME = os.getenv("MQTT_USERNAME", NODE_ID)
+MQTT_PASSWORD = os.getenv("MQTT_PASSWORD", "")
 
 def main():
     # Create queues
     raw_queue = mp.Queue(maxsize=5)
     processed_queue = mp.Queue(maxsize=2)
+    calib_queue = mp.Queue(maxsize=200)
 
     # Create processes using modular components
     p_daq = mp.Process(
@@ -31,20 +47,43 @@ def main():
     
     p_proc = mp.Process(
         target=processing_process, 
-        args=(raw_queue, processed_queue, NODE_ID), 
+        args=(raw_queue, processed_queue, NODE_ID),
+        kwargs={"calib_queue": calib_queue},
         name="Processing"
     )
     
     p_sock = mp.Process(
         target=socket_process, 
-        args=(processed_queue, SERVER_URL, NODE_ID), 
+        args=(processed_queue, SERVER_URL, NODE_ID),
+        kwargs={
+            "group_id": GROUP_ID,
+            "mqtt_host": MQTT_HOST,
+            "mqtt_port": MQTT_PORT,
+            "mqtt_user": MQTT_USERNAME,
+            "mqtt_pass": MQTT_PASSWORD,
+        },
         name="Socket"
+    )
+
+    p_calib = mp.Process(
+        target=calibration_mqtt_process,
+        args=(
+            calib_queue,
+            NODE_ID,
+            GROUP_ID,
+            MQTT_HOST,
+            MQTT_PORT,
+            MQTT_USERNAME,
+            MQTT_PASSWORD,
+        ),
+        name="CalibPublisher",
     )
 
     # Start processes
     p_daq.start()
     p_proc.start()
     p_sock.start()
+    p_calib.start()
 
     print(f"Full Integration Test started. Node: {NODE_ID}, Server: {SERVER_URL}")
 
@@ -52,12 +91,14 @@ def main():
         p_daq.join()
         p_proc.join()
         p_sock.join()
+        p_calib.join()
     except KeyboardInterrupt:
         print("Stopping...")
     finally:
         p_daq.terminate()
         p_proc.terminate()
         p_sock.terminate()
+        p_calib.terminate()
         print("Clean exit")
 
 if __name__ == "__main__":

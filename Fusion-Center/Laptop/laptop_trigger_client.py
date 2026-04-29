@@ -173,15 +173,30 @@ class LaptopTriggerClient:
             request_id = payload.get("requestId")
             if request_id != self.request_id:
                 return
-            self._command_id = payload.get("commandId")
+            raw_cid = payload.get("commandId")
+            self._command_id = str(raw_cid) if raw_cid is not None else None
             self.result_payload = payload
             self.result_event.set()
             return
 
         if "/calibration/result" in msg.topic:
-            if payload.get("commandId") == self._command_id:
-                self.calib_result_payload = payload
-                self.calib_result_event.set()
+            raw_cid = payload.get("commandId")
+            msg_cid = str(raw_cid) if raw_cid is not None else None
+            if self._command_id is None:
+                logging.info(
+                    "Ignoring calibration/result (commandId=%r): start result not processed yet.",
+                    msg_cid,
+                )
+                return
+            if msg_cid != self._command_id:
+                logging.info(
+                    "Ignoring calibration/result for commandId=%r (waiting for %r).",
+                    msg_cid,
+                    self._command_id,
+                )
+                return
+            self.calib_result_payload = payload
+            self.calib_result_event.set()
 
     def run(self) -> int:
         self.client.connect(self.mqtt_host, self.mqtt_port, keepalive=30)
@@ -224,13 +239,30 @@ class LaptopTriggerClient:
         # For calibration mode, stay connected and wait for the solver result
         if self.is_calibration and start_ok:
             print("\nWaiting for calibration result from server...")
-            calib_completed = self.calib_result_event.wait(
-                timeout=self.calibration_timeout_ms / 1000.0
-            )
+            deadline = time.monotonic() + self.calibration_timeout_ms / 1000.0
+            calib_completed = False
+            while time.monotonic() < deadline:
+                if self.stop_event.is_set():
+                    print("Interrupted before calibration result arrived.")
+                    break
+                remaining = deadline - time.monotonic()
+                if self.calib_result_event.wait(timeout=min(0.5, max(0.05, remaining))):
+                    calib_completed = True
+                    break
             if calib_completed and self.calib_result_payload is not None:
                 self._print_calib_result(self.calib_result_payload)
-            else:
+            elif not self.stop_event.is_set():
                 print("WARNING: Timed out waiting for calibration result.")
+                print(f"         Expected commandId: {self._command_id!r}")
+                print(
+                    f"         Watch MQTT: {TOPIC_PREFIX}/group/{self.group_id}/calibration/"
+                    "{result|frame/+|done/+} on broker "
+                    f"{self.mqtt_host}:{self.mqtt_port}"
+                )
+                print(
+                    "         If frame/done never appear, nodes are not publishing calibration data; "
+                    "if they appear but result does not, check server_controller logs on the Xavier."
+                )
 
         self.stop_event.set()
         self.client.loop_stop()

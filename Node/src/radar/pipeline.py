@@ -187,7 +187,6 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
     cfar_params.update(cfar_kwargs)
 
     # EKF Tracker disabled
-
     while True:
         try:
             t0 = time.perf_counter_ns()
@@ -278,18 +277,6 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
                     filtered_centroids_map[doppler_bin, range_bin] = 1.0  # Mark the spot
                     filtered_centroids_angles[doppler_bin, range_bin] = np.rad2deg(angle_rad)
 
-            #def rda_to_visualisation():
-
-
-
-            #print("Centroids: ",len(centroids))
-            #print("Filtered Centroids: ",len(rda_centroids))
-
-            #if len(rda_centroids) > 0:
-            #    items = rda_centroids.items()
-            #    print(items)
-            #print(len(rda_centroids))
-
             t6 = time.perf_counter_ns()
 
             #6. =============================== JPDA Multi-Target Tracking ===========================================
@@ -302,7 +289,6 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
             # Create visualization maps for confirmed tracks
             confirmed_tracks_map = np.zeros_like(rdm_mag, dtype=np.float32)
             confirmed_tracks_angles = np.zeros_like(rdm_mag, dtype=np.float32)
-
 
             #jpda.print_tracker_status()
 
@@ -388,7 +374,6 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
                         #x,y,vx,vy 
                         #
                         #is_track_or_no
-
                     })
 
             output_data = {
@@ -403,6 +388,7 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
                 # Additional keys for internal tracking or alternative consumers
                 "rdm_centroids": centroids_map,
                 "dbscan_2d": dbscan_data_2d,
+                "confirmed_tracks": confirmed_tracks,
                 "confirmed_tracks_rd": confirmed_tracks_map.astype(np.float32).tobytes() if confirmed_tracks_map is not None else b"",
                 "confirmed_tracks_angles": confirmed_tracks_angles.astype(np.float32).tobytes() if confirmed_tracks_angles is not None else b""
             }
@@ -451,7 +437,6 @@ def socket_process(processed_queue, server_url, node_id):
         
     print(f"[SOCKET] Started on core 3, target: {server_url}")
     sio = None
-
 
     while True:
         # Non-blocking get with brief sleep fallback

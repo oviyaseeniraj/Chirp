@@ -213,8 +213,6 @@ def process_frame(data):
     """CPU-bound processing logic separated from the event loop"""
     start_time = time.time()
     
-    print("bruh")
-
     # 1. Parse array
     try:
         array_data = np.frombuffer(data["array"], dtype=np.float32)
@@ -243,13 +241,23 @@ def process_frame(data):
         except Exception:
             pass
 
-
-    
     # 3. Handle image with confirmed tracks overlay
-    confirmed_tracks_map = np.frombuffer(data["confirmed_tracks_rd"], dtype=np.float32).reshape(64, 512)
-    print(confirmed_tracks_map)
+    confirmed_tracks_map = None
+    if data.get("confirmed_tracks_rd") is not None:
+        try:
+            confirmed_tracks_map = np.frombuffer(data["confirmed_tracks_rd"], dtype=np.float32).reshape(64, 512)
+        except Exception:
+            pass
+
+    confirmed_tracks_data = data.get("confirmed_tracks", {})
     
-    confirmed_tracks_angles = np.frombuffer(data["confirmed_tracks_angles"], dtype=np.float32).reshape(64, 512)
+    confirmed_tracks_angles = None
+    if data.get("confirmed_tracks_angles") is not None:
+        try:
+            confirmed_tracks_angles = np.frombuffer(data["confirmed_tracks_angles"], dtype=np.float32).reshape(64, 512)
+        except Exception:
+            # Fallback if it's sent as a dictionary instead of bytes
+            confirmed_tracks_angles = data.get("confirmed_tracks_angles", {})
     
     
     bgr_image = array_to_raw_image_with_tracks(
@@ -259,12 +267,13 @@ def process_frame(data):
     )
     image_data = encode_image_data(bgr_image)
 
-    print("bruh2")
-
     # 4. Convert confirmed tracks to pixel coordinates for frontend
     confirmed_tracks = []
-    """try:
-        for track_id, rd_data in confirmed_tracks_map.items():
+    try:
+        if not isinstance(confirmed_tracks_data, dict):
+            print("server.py: confirmed_tracks_data should be a dictionary")
+
+        for track_id, rd_data in confirmed_tracks_data.items():
             # Safely extract in case the producer sends more than just [range, doppler]
             if len(rd_data) >= 2:
                 range_bin = rd_data[0]
@@ -288,14 +297,15 @@ def process_frame(data):
                     "doppler_bin": int(doppler_bin),
                     "angle": float(angle) if angle is not None else None
                 })
+
+                print(confirmed_tracks)
     except Exception as e:
         print(f"DEBUG: Error parsing confirmed tracks data: {e}")
-    """
         
     proc_time = (time.time() - start_time) * 1000
     
     payload = {
-        "image": image_data,
+        "image": image_data, 
         "detections": detections,
         "confirmed_tracks": confirmed_tracks,
         "cluster_count": data.get("cluster_count", 0),
@@ -304,11 +314,9 @@ def process_frame(data):
     }
 
     #print("BRH ==============")
-    #print(confirmed_tracks)
-
+    print(confirmed_tracks)
 
     return payload, proc_time
-
 
 @sio.on("send_frame")
 async def handle_array(sid, data):

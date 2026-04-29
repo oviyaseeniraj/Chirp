@@ -210,7 +210,7 @@
             lastTime = now;
         }, 1000);
 
-         function drawRangeAnglePlot(detections, tracks) {
+        function drawRangeAnglePlot(detections, tracks) {
             if (!rangeAngleCtx) return;
 
             const ctx = rangeAngleCtx;
@@ -450,7 +450,7 @@
 
 
        // ...existing code...
-       function drawConfirmedTracks(tracks) {
+        function drawConfirmedTracks(tracks) {
             if (!tracks || tracks.length === 0) return;
 
             const TRACK_COLOR = '#ffa500';      
@@ -557,24 +557,24 @@
             const renderOverlays = () => {
                 overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
                 
-                drawRDMGrid();
+                //drawRDMGrid();
                 
                 // Draw Range Angle plot for both detections and tracks
-                drawRangeAnglePlot(data.detections, null);
+                //drawRangeAnglePlot(data.detections, null);
 
                 console.log(data.confirmed_tracks)
 
-                if (data.detections) {
+                /*if (data.detections) {
                     drawDetections(data.detections);
-                }
+                }*/
 
-                if (data.clusters) {
+                /*if (data.clusters) {
                     drawClusters(data.clusters);
-                }
+                }*/
 
-                if (data.confirmed_tracks) {
+                /*if (data.confirmed_tracks) {
                     drawConfirmedTracks(data.confirmed_tracks);
-                }
+                }*/
                 
                 if (data.cluster_count !== undefined) {
                     clusterCount = data.cluster_count;

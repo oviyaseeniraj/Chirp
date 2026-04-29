@@ -560,21 +560,21 @@
                 //drawRDMGrid();
                 
                 // Draw Range Angle plot for both detections and tracks
-                //drawRangeAnglePlot(data.detections, null);
+                drawRangeAnglePlot(data.detections, null);
 
                 console.log(data.confirmed_tracks)
 
-                /*if (data.detections) {
+                if (data.detections) {
                     drawDetections(data.detections);
-                }*/
+                }
 
-                /*if (data.clusters) {
+                if (data.clusters) {
                     drawClusters(data.clusters);
-                }*/
+                }
 
-                /*if (data.confirmed_tracks) {
+                if (data.confirmed_tracks) {
                     drawConfirmedTracks(data.confirmed_tracks);
-                }*/
+                }
                 
                 if (data.cluster_count !== undefined) {
                     clusterCount = data.cluster_count;

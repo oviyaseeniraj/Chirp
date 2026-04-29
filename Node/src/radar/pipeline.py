@@ -57,6 +57,9 @@ def create_3d_detection_map_spatial(cfar_data, angle_data, rdm_power):
 
     return detection_coords, detection_power
 
+
+#average_frame_time = 0.1 #estimated frame time
+current_frame_time = datetime.now()
 def daq_process(raw_queue, daq_class, **daq_kwargs):
     """
     Generic DAQ process that handles frame capture and pushing to queue.
@@ -81,6 +84,7 @@ def daq_process(raw_queue, daq_class, **daq_kwargs):
                 frame_data = daq.capture()
                 
                 current_time = time.time()
+                current_frame_time = datetime.now()
                 if last_frame_time is not None:
                     frame_interval = current_time - last_frame_time
                     frame_times.append(frame_interval)
@@ -235,12 +239,34 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
                 cfar_data, angle_data, rdm_mag
             )
 
+            #print(detection_coords_3d)
+
             dbscan_data_2d, dbscan_angles, centroids = dbscan_process(detection_coords_3d, cfar_data.shape)
             t5 = time.perf_counter_ns()
 
             # 5. =============================== Centroid Processing ===============================
             centroids_map, centroids_angles = centroid_process(centroids, cfar_data.shape)
             
+            rda_centroids = {}
+            #print('measurements bin:', " ")
+            for label,data in centroids.items():
+                meas = data[0]
+                range_bin, vel_bin = meas[0], meas[1]
+                #print(meas[0], meas[1])
+                #print(range_bin,vel_bin)
+                angle = meas[2]
+
+                range_val, vel_val = rd_bin_to_val(range_bin, vel_bin)
+
+                #print(range_val,vel_val)
+                num_points = data[1]
+
+                rda_centroids[label] = (torch.tensor([range_val, vel_val, angle]), num_points)
+            print("")
+
+            print(rda_centroids)
+            #print( [detection[1] for (detection,p) in rda_centroids.values()])
+            """
             #Zero bin removal for centroids
             eps = 0.2
             rda_centroids = {}
@@ -276,13 +302,14 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
                 if 0 <= range_bin < config.RANGE_BINS and 0 <= doppler_bin < config.DOPPLER_BINS:
                     filtered_centroids_map[doppler_bin, range_bin] = 1.0  # Mark the spot
                     filtered_centroids_angles[doppler_bin, range_bin] = np.rad2deg(angle_rad)
-
+        """
+                    
             t6 = time.perf_counter_ns()
 
             #6. =============================== JPDA Multi-Target Tracking ===========================================
-            current_timestamp = datetime.now()
+            #current_timestamp = datetime.now()
             #print(f"# of prefiltered detections: {len(rda_centroids)}")
-            confirmed_tracks, tentative_tracks = jpda.process(rda_centroids, current_timestamp)
+            confirmed_tracks, tentative_tracks = jpda.process(rda_centroids, current_frame_time)
 
             t7 = time.perf_counter_ns()
 
@@ -292,7 +319,7 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
 
             #jpda.print_tracker_status()
 
-            #print(f"Confirmed: {len(confirmed_tracks)} | Tentative: {len(tentative_tracks)}")
+            print(f"Confirmed: {len(confirmed_tracks)} | Tentative: {len(tentative_tracks)}")
             for track in confirmed_tracks:
                 tid = track['TrackID']
                 state = track['State'] # [x, vx, y, vy]
@@ -302,8 +329,8 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
                 #TODO: Convert the state to the 
                 expected_detection = jpda.measurement_model.function(state)
 
-                #print(expected_detection)
-                #print(detection)
+                print(expected_detection)
+                print(detection)
 
                 # --- Convert physical units back to RDM bins ---
                 range_val, vel_val, angle_rad = expected_detection
@@ -318,6 +345,8 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
 
                 #try: 
                 range_bin, doppler_bin = rd_val_to_bin(range_val, vel_val)
+                #print(range_bin)
+                #print(doppler_bin)
                 #except TypeError:
                 #    print("TYPE ERROR OCCURRED =====================================")
                 #    print(range_val)
@@ -328,12 +357,10 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
                     confirmed_tracks_map[doppler_bin, range_bin] = 1.0  # Mark the spot
                     confirmed_tracks_angles[doppler_bin, range_bin] = np.rad2deg(angle_rad)
                     #print("marked")
-                #print(f"Track {tid} at x={state[0]:.2f}, y={state[3]:.2f}, misses={misses}, avg det={detection}")
-
+                print(f"Track {tid} at x={state[0]:.2f}, y={state[3]:.2f}, misses={misses}, avg det={detection}, expected det = {expected_detection}")
 
             #print(np.sum(confirmed_tracks_map))
             #print(np.sum(confirmed_tracks_angles))
-
 
             # ====================================================
 

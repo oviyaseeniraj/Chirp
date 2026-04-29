@@ -314,7 +314,7 @@ def process_frame(data):
     }
 
     #print("BRH ==============")
-    print(confirmed_tracks)
+    #print(confirmed_tracks)
 
     return payload, proc_time
 
@@ -334,7 +334,7 @@ async def handle_array(sid, data):
             await sio.emit("radar_plot", payload)
             #confirmed_count = 0
             confirmed_count = len(payload.get("confirmed_tracks", []))
-            print(f"Frame {stats.frame_count} | Arrival: {arrival_delta:.1f}ms | Process: {proc_time:.1f}ms | Detections: {len(payload['detections'])} | Confirmed Tracks: {confirmed_count}")
+            #print(f"Frame {stats.frame_count} | Arrival: {arrival_delta:.1f}ms | Process: {proc_time:.1f}ms | Detections: {len(payload['detections'])} | Confirmed Tracks: {confirmed_count}")
         else:
             print(f"Frame {stats.frame_count} | Arrival: {arrival_delta:.1f}ms | ERROR: process_frame returned None")
     except Exception as e:

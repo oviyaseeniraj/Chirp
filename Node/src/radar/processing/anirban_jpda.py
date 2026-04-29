@@ -98,6 +98,8 @@ class JPDATracker:
         self.clutter_density = clutter_density
         self.gating_threshold = gating_threshold
 
+        self.detections = None
+
         #other parameters
         threshold_init = kwargs.get('threshold_init', 0.05)
         threshold_hit_miss = kwargs.get('threshold_hit_miss', 0.3)
@@ -109,11 +111,9 @@ class JPDATracker:
         self.threshold_hit_miss = threshold_hit_miss
         self.threshold_merge = threshold_merge
 
-
         self.next_track_id = 1
         self.tracks: Dict[int, Track] = {}
         self.track_metadata: Dict[int, Dict] = {}
-
 
         #Stone Soup initialization
         # Transition model: Combined Constant Velocity in 2D
@@ -191,6 +191,8 @@ class JPDATracker:
             )
             for label, (centroid, num_point) in detection_centroids.items()
         ]
+
+        self.detections = detections
         
         # Step 1: Predict all existing tracks
         if self.tracks:
@@ -277,6 +279,13 @@ class JPDATracker:
             
             print(f"  {track_id:<10} {status:<12} {state_str:<40} {age:<6} {hits:<6} {misses:<8}")
         
+        print(f"DETECTIONS:")
+        if self.detections:
+            det_strs = [f"[{d.state_vector[0]:.2f}, {d.state_vector[1]:.2f}, {d.state_vector[2]:.3f}]" for d in self.detections]
+            print(f"  {', '.join(det_strs)}")
+        else:
+            print("  None")
+
         # Distance matrix
         if self.distance_matrix_before_threshold is not None and self.distance_matrix_before_threshold.size > 0:
             print(f"\nDistance Matrix (Mahalanobis distances):")
@@ -1004,19 +1013,20 @@ class JPDATracker:
                         )
 
                         # Update the prediction with this detection
-                        #print("bruh")
                         #print(meas_hypothesis)
                         hypothesis = self.updater.update(meas_hypothesis, timestamp=timestamp)
                         posteriors.append(hypothesis)
-                        weighted_meas += prob * detection.state_vector
+                        weighted_meas += prob * (detection.state_vector - expected(predicted_state) ) 
                 
                 # Process miss hypothesis (last column)
+                
+                print(" MAKE SURE NOT TO CORRECT IF THERE IS NO ASSOCIATED DETECTION", )
                 miss_prob = track_probs[-1]
                 if miss_prob > 0:
                     weights.append(miss_prob)
                     posteriors.append(predicted_state)
                     expected_z = self.measurement_model.function(predicted_state)
-                    weighted_meas += miss_prob * expected_z
+                    #weighted_meas += miss_prob * expected_z
                 
                 self.track_metadata[track_id]['last_weighted_meas'] = weighted_meas.flatten()
                 
@@ -1042,7 +1052,10 @@ class JPDATracker:
                     P_fused = CovarianceMatrix(P_fused)
                     
                     # REPLACE the predicted state with the fused state
+                    print("update track with detection: ===========")
+                    print(track[-1])
                     track[-1] = GaussianState(x_fused, P_fused, timestamp=timestamp)
+                    print(track[-1])
                     self._register_hit(track_id, prob_hit)
             except Exception as e:
                 print(f"Update exception for track {track_id}: {e}")

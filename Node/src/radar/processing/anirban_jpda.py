@@ -99,6 +99,7 @@ class JPDATracker:
         self.gating_threshold = gating_threshold
 
         self.detections = None
+        self.time_interval = 0.1
 
         #other parameters
         threshold_init = kwargs.get('threshold_init', 0.05)
@@ -218,7 +219,6 @@ class JPDATracker:
             
             self.update(detections, timestamp, associations=associations)
         
-        #print(associations)
         # Step 3: Initialize new tracks from same associations
         if detections:
             self.initialise_new_tracks(detections, associations)
@@ -332,14 +332,11 @@ class JPDATracker:
         num_tracks = 0
         
         if detection_centroids is not None and len(detection_centroids) > 0:
-            #print("Detections (range, doppler, angle):")
-            #print(detection_centroids)
             num_detections = len(detection_centroids)
         
         if track_dict:
             for track_id, track_info in track_dict.items():
                 status = self.track_metadata.get(track_id, {}).get('status', 'Unknown')
-                #print(f"Track_ID {track_id}, Status {status}")
         num_tracks = len(track_dict)
         
         distance_matrix = self.get_distance_matrix(detection_centroids, track_dict, gating_threshold, self.measurement_model)
@@ -522,10 +519,24 @@ class JPDATracker:
         for i in range(n_trk):
             for j in range(n_det):
                 likelihood_matrix[i + 1, j + 1] = detection_probability * np.exp(-0.5 * distance_matrix[i, j])
-        
+                #likelihood_matrix[i + 1, j + 1] = detection_probability * np.exp(-0.2 * distance_matrix[i, j])
+
+
         return likelihood_matrix
 
+    def detection_maha_sq_distance(self,det1,det2, S):
+        innovation = det1 - det2
+        
+        # Normalize angle difference to [-pi, pi]
+        innovation[2] = np.arctan2(np.sin(innovation[2]), np.cos(innovation[2]))
+        
+        try:
+            squared_distance = innovation @ np.linalg.solve(S, innovation)
+        except np.linalg.LinAlgError:
+            squared_distance = innovation.T @ np.linalg.pinv(S) @ innovation
 
+        return squared_distance
+    
     def get_distance_matrix(self, detection_centroids: List[Detection],
                             track_dict: Dict,
                             gating_threshold: float,
@@ -574,22 +585,23 @@ class JPDATracker:
                 continue
             # Innovation covariance
             S = model.noise_covar + H @ state_covar @ H.T
-            
+
             for det_idx in range(n_det):
 
                 # Extract measurement vector from Detection object
                 det_meas = detection_centroids[det_idx].state_vector.flatten()
 
                 # Innovation: [range, doppler, angle]
-                innovation = det_meas - meas_pred
+                squared_distance = self.detection_maha_sq_distance(det_meas, meas_pred,S)
+                #innovation = det_meas - meas_pred
                 
                 # Normalize angle difference to [-pi, pi]
-                innovation[2] = np.arctan2(np.sin(innovation[2]), np.cos(innovation[2]))
+                #innovation[2] = np.arctan2(np.sin(innovation[2]), np.cos(innovation[2]))
                 
-                try:
-                    squared_distance = innovation @ np.linalg.solve(S, innovation)
-                except np.linalg.LinAlgError:
-                    squared_distance = innovation.T @ np.linalg.pinv(S) @ innovation
+                #try:
+                #    squared_distance = innovation @ np.linalg.solve(S, innovation)
+                #except np.linalg.LinAlgError:
+                #    squared_distance = innovation.T @ np.linalg.pinv(S) @ innovation
                 
                 #penalize state uncertainty
                 normalized_maha_distance = squared_distance + max(0,np.log(np.linalg.det(S)))
@@ -597,6 +609,7 @@ class JPDATracker:
 
                 if squared_distance > gating_threshold:
                     distance_matrix[trk_idx,det_idx] = np.inf
+                    #print("set inf")
                 else:
                     distance_matrix[trk_idx,det_idx] = normalized_maha_distance
         
@@ -604,8 +617,6 @@ class JPDATracker:
                 #use for selecting threshold
                 self.distance_matrix_before_threshold[trk_idx,det_idx] = normalized_maha_distance
 
-        #print("Distance Matrix:")
-        #print(self.distance_matrix_before_threshold)
         
         return distance_matrix
 
@@ -899,12 +910,14 @@ class JPDATracker:
             
             # Calculate time step
             time_interval = timestamp - track[-1].timestamp
-            #print(time_interval)
+            self.time_interval = time_interval
+
             # Predict using transition model
             prediction = self.predictor.predict(
                 prior=track[-1],
                 timestamp=timestamp
             )
+            #print(prediction)
             
             track.append(prediction)
     
@@ -1036,16 +1049,27 @@ class JPDATracker:
         n_det = len(detections)
         
         for track_id, track in self.tracks.items():
+
             track_idx = track_id_to_idx[track_id]
             
             # Get association probabilities for this track
             track_probs = associations.probabilities_tracks_detections[track_idx, :]
             prob_hit = associations.probabilities_effective_track_hit[track_idx]
             
+            print(f"prob_hit: {prob_hit}")
             # MATLAB threshold_hit_miss = 0.3
             if prob_hit < self.threshold_hit_miss:
                 self._register_miss(track_id)
+                print("missed",prob_hit)
+                print("probs:",track_probs)
                 # Keep the predicted state (already appended by predict())
+                predicted_state = track[-1]
+                expected_z = self.measurement_model.function(predicted_state)
+                self.track_metadata[track_id]['last_weighted_meas'] = expected_z.flatten()
+                self.track_metadata[track_id]['last_predicted_meas'] = expected_z.flatten()
+
+                print(self.measurement_model.function(track[-1]))
+                print(self.measurement_model.function(self.predictor.predict(track[-1],timestamp).state_vector).flatten())
                 continue
             
             # Soft Update: Moment Matching (True JPDA EKF Math)
@@ -1056,6 +1080,8 @@ class JPDATracker:
                 
                 # EKF Matrices
                 z_minus = self.measurement_model.function(predicted_state)
+                print("prior_predicted_meas:",z_minus)
+
                 H = self.measurement_model.jacobian(predicted_state)
                 R = self.measurement_model.noise_covar
                 
@@ -1090,8 +1116,8 @@ class JPDATracker:
                 # Add missed detection expected measurement expectation
                 if beta_0 > 0:
                     weighted_meas += beta_0 * z_minus.flatten()
-                
-                self.track_metadata[track_id]['last_weighted_meas'] = weighted_meas
+                else:
+                    print("beta_0: {beta_0}")
                 
                 # 1. State Update: x_k+ = x_k- + K_k * δy
                 x_plus = x_minus + K @ delta_y
@@ -1111,7 +1137,12 @@ class JPDATracker:
                     CovarianceMatrix(P_plus), 
                     timestamp=timestamp
                 )
-                
+
+                self.track_metadata[track_id]['last_weighted_meas'] = weighted_meas
+                self.track_metadata[track_id]['last_predicted_meas'] = self.measurement_model.function(track[-1])
+                print("last_weighted_meas:",weighted_meas)
+                print("last_predicted_meas",self.track_metadata[track_id]['last_predicted_meas'].flatten() )
+
                 self._register_hit(track_id, prob_hit)
                 
             except Exception as e:

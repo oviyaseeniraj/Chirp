@@ -14,7 +14,7 @@ from . import config
 from .processing.rdm import RangeDoppler
 
 from .processing.anirban_jpda import JPDATracker
-from .processing.anirban_jpda import maha_distance
+#from .processing.anirban_jpda import 
 
 # Hardware acceleration check: Choose between GPU (PyTorch) and optimized CPU (NumPy/OpenCV)
 # if torch.cuda.is_available():
@@ -59,7 +59,6 @@ def create_3d_detection_map_spatial(cfar_data, angle_data, rdm_power):
 
 
 #average_frame_time = 0.1 #estimated frame time
-current_frame_time = datetime.now()
 def daq_process(raw_queue, daq_class, **daq_kwargs):
     """
     Generic DAQ process that handles frame capture and pushing to queue.
@@ -84,7 +83,6 @@ def daq_process(raw_queue, daq_class, **daq_kwargs):
                 frame_data = daq.capture()
                 
                 current_time = time.time()
-                current_frame_time = datetime.now()
                 if last_frame_time is not None:
                     frame_interval = current_time - last_frame_time
                     frame_times.append(frame_interval)
@@ -131,6 +129,7 @@ def rd_bin_to_val(range_bin,vel_bin):
     return range_val, vel_val
 
 
+current_frame_time = datetime.now()
 def processing_process(raw_queue, processed_queue, node_id, device=None, save_calibration=True, visualize_clusters_only=False, **cfar_kwargs):
     """
     Signal processing pipeline: RDM -> CFAR -> Angle -> 3D Mapping -> DBSCAN -> Centroids.
@@ -190,13 +189,14 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
     }
     cfar_params.update(cfar_kwargs)
 
-    # EKF Tracker disabled
     while True:
         try:
             t0 = time.perf_counter_ns()
             # Non-blocking get with timeout to minimize wait time
             try:
                 frame_data = raw_queue.get(timeout=1.0)
+                current_frame_time = datetime.now()
+
             except Empty:
                 time.sleep(0.001)  # Brief sleep if no data
                 continue
@@ -263,8 +263,9 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
 
                 rda_centroids[label] = (torch.tensor([range_val, vel_val, angle]), num_points)
             print("")
+            print("")
 
-            print(rda_centroids)
+            print("centroids:",rda_centroids)
             #print( [detection[1] for (detection,p) in rda_centroids.values()])
             """
             #Zero bin removal for centroids
@@ -319,26 +320,26 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
 
             #jpda.print_tracker_status()
 
-            print(f"Confirmed: {len(confirmed_tracks)} | Tentative: {len(tentative_tracks)}")
-            for track in confirmed_tracks:
+            all_tracks = (confirmed_tracks or []) + (tentative_tracks or [])
+
+            print(f"Time: {current_frame_time} Confirmed: {len(confirmed_tracks)} | Tentative: {len(tentative_tracks)}")
+            for track in all_tracks:
                 tid = track['TrackID']
                 state = track['State'] # [x, vx, y, vy]
                 misses = track['ConsecutiveMisses']
                 detection = track['Detection'] # [range (m), velocity (m/s), angle (rad)]
-                
-                #TODO: Convert the state to the 
-                expected_detection = jpda.measurement_model.function(state)
+                confirmed = track['Status']
 
-                print(expected_detection)
-                print(detection)
+
+
+                #TODO: Convert the state to the 
+                expected_detection = jpda.measurement_model.function(state).flatten()
+
+                #print(expected_detection)
+                #print(detection)
 
                 # --- Convert physical units back to RDM bins ---
                 range_val, vel_val, angle_rad = expected_detection
-                
-                #don't worry about it
-                range_val = range_val[0]
-                vel_val = vel_val[0]
-                angle_rad = angle_rad[0]
 
                 #print("Difference")
                 #print(maha_distance(np.array([range_val, vel_val, angle_rad]), detection, jpda.measurement_model.noise_covar))
@@ -357,7 +358,22 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
                     confirmed_tracks_map[doppler_bin, range_bin] = 1.0  # Mark the spot
                     confirmed_tracks_angles[doppler_bin, range_bin] = np.rad2deg(angle_rad)
                     #print("marked")
-                print(f"Track {tid} at x={state[0]:.2f}, y={state[3]:.2f}, misses={misses}, avg det={detection}, expected det = {expected_detection}")
+                    # Measurement Jacobian
+
+                model = jpda.measurement_model
+                H = model.jacobian(state)
+                
+                # Get covariance - handle both GaussianState (.covariance) and GaussianStatePrediction (.covar)
+                track_dict = jpda.tracks
+                gauss_state = track_dict[tid][-1]
+                state_covar = getattr(gauss_state, 'covariance', None) or getattr(gauss_state, 'covar', None)
+                if state_covar is None:
+                    print(f"Warning: Could not get covariance from state of type {type(gauss_state)}")
+                    continue
+                # Innovation covariance
+                S = model.noise_covar + H @ state_covar @ H.T
+
+                print(f"Track {tid} {confirmed} at x={state[0]:.2f}, y={state[3]:.2f}, misses={misses}, avg det={detection}, expected det = {expected_detection}, Distance: {jpda.detection_maha_sq_distance(detection, expected_detection,S)}")
 
             #print(np.sum(confirmed_tracks_map))
             #print(np.sum(confirmed_tracks_angles))

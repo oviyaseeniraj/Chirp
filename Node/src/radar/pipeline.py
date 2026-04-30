@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import sys
 import threading
 import time
 import numpy as np
@@ -274,10 +275,12 @@ def processing_process(raw_queue, processed_queue, node_id, calib_queue=None, de
             # Calibration Hook — use DBSCAN centroids instead of raw CFAR detections.
             # Raw detections include heavy static clutter and can bias spatial
             # calibration away from the true target overlap between nodes.
+            frame_timestamp_ms = int(time.time() * 1000)
             if calib_queue is not None and clusters_meta:
                 try:
                     calib_queue.put_nowait({
                         "frame_num": frame_num,
+                        "timestamp_ms": frame_timestamp_ms,
                         "detections": [
                             [
                                 float(c["range_m"]),
@@ -292,7 +295,7 @@ def processing_process(raw_queue, processed_queue, node_id, calib_queue=None, de
 
             output_data = {
                 "node_id": node_id,
-                "timestamp": int(time.time() * 1000),
+                "timestamp": frame_timestamp_ms,
                 "centroids": detection_coords_3d.astype(np.float32).tobytes() if len(detection_coords_3d) > 0 else b"",
                 "array": final_array.astype(np.float32).tobytes(),
                 "angles": final_angles.astype(np.float32).tobytes() if final_angles is not None else b"",
@@ -354,7 +357,23 @@ def calibration_mqtt_process(
     except Exception:
         pass
 
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s [CALIB] %(message)s")
+    # Keep a per-run log file for this subprocess so calibration MQTT
+    # activity is preserved across executions.
+    logs_dir = node_root_dir / "logs" / "calibration_mqtt"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    run_stamp = time.strftime("%Y%m%d_%H%M%S")
+    log_path = logs_dir / f"calib_mqtt_{node_id}_{run_stamp}.log"
+    log_file = open(log_path, "a", buffering=1, encoding="utf-8")
+    sys.stdout = log_file
+    sys.stderr = log_file
+
+    root_logger = logging.getLogger()
+    root_logger.handlers.clear()
+    root_logger.setLevel(logging.INFO)
+    log_handler = logging.StreamHandler(log_file)
+    log_handler.setFormatter(logging.Formatter("%(asctime)s [CALIB] %(message)s"))
+    root_logger.addHandler(log_handler)
+    logging.info("Calibration MQTT logs redirected to %s", log_path)
 
     topic_prefix = "chirp/v1"
     start_topic = f"{topic_prefix}/group/{group_id}/capture/start"
@@ -452,7 +471,7 @@ def calibration_mqtt_process(
 
             frame_payload = {
                 "schemaVersion": schema_version,
-                "timestampMs": int(time.time() * 1000),
+                "timestampMs": int(item.get("timestamp_ms", int(time.time() * 1000))),
                 "nodeId": node_id,
                 "groupId": group_id,
                 "commandId": cmd_id,

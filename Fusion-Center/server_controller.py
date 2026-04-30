@@ -38,7 +38,7 @@ def closed_form_calibration(
 
     Parameters
     ----------
-    frame_data : node_id -> (frame_num -> list of [range_m, doppler_bin, angle_rad])
+    frame_data : node_id -> (timestamp_ms -> list of [range_m, doppler_bin, angle_rad])
 
     Returns
     -------
@@ -52,17 +52,18 @@ def closed_form_calibration(
     if num_nodes < 2:
         return None, None, None
 
-    # Find frames that every node observed
+    # Find timestamps that every node observed.
+    # Using timestamp keys is robust to pipelines starting on different frame numbers.
     frame_sets = [set(frame_data[n].keys()) for n in node_ids]
-    common_frames = sorted(set.intersection(*frame_sets))
-    if not common_frames:
+    common_timestamps = sorted(set.intersection(*frame_sets))
+    if not common_timestamps:
         return None, None, None
 
-    # Build complex trajectory matrix: shape (num_nodes, num_common_frames)
-    trajectory = np.zeros((num_nodes, len(common_frames)), dtype=np.complex64)
+    # Build complex trajectory matrix: shape (num_nodes, num_common_timestamps)
+    trajectory = np.zeros((num_nodes, len(common_timestamps)), dtype=np.complex64)
     for i, node_id in enumerate(node_ids):
-        for t, frame_num in enumerate(common_frames):
-            dets = frame_data[node_id][frame_num]
+        for t, timestamp_ms in enumerate(common_timestamps):
+            dets = frame_data[node_id][timestamp_ms]
             if not dets:
                 trajectory[i, t] = np.nan
                 continue
@@ -144,7 +145,7 @@ class CalibrationSession:
     command_id: str
     group_id: str
     target_nodes: Set[str]
-    # node_id -> frame_num -> list of [range_bin, doppler_bin, angle_rad]
+    # node_id -> timestamp_ms -> list of [range_m, doppler_bin, angle_rad]
     frame_data: Dict[str, Dict[int, List]] = field(default_factory=dict)
     done_nodes: Set[str] = field(default_factory=set)
     created_ms: int = field(default_factory=lambda: int(time.time() * 1000))
@@ -494,9 +495,19 @@ class ServerController:
         node_id = parts[-1]
         command_id = str(payload.get("commandId", ""))
         frame_num = payload.get("frameNum")
+        timestamp_ms = payload.get("timestampMs")
         detections = payload.get("detections", [])
 
-        if not command_id or frame_num is None:
+        if not command_id:
+            return
+
+        # Prefer timestamp key for cross-node alignment; fallback to frame number
+        # keeps compatibility with older node publishers.
+        if timestamp_ms is not None:
+            frame_key = int(timestamp_ms)
+        elif frame_num is not None:
+            frame_key = int(frame_num)
+        else:
             return
 
         with self.calib_lock:
@@ -507,7 +518,7 @@ class ServerController:
         with session.lock:
             if node_id not in session.frame_data:
                 session.frame_data[node_id] = {}
-            session.frame_data[node_id][int(frame_num)] = detections
+            session.frame_data[node_id][frame_key] = detections
 
     def _handle_calib_done(self, topic: str, payload: Dict[str, Any]) -> None:
         parts = topic.split("/")

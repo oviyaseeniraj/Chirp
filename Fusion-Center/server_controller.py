@@ -59,19 +59,18 @@ def closed_form_calibration(
     if num_nodes < 2:
         return None, None, None, None
 
-    # Find timestamps that every node observed.
-    # Using timestamp keys is robust to pipelines starting on different frame numbers.
+    # Find relative frame indices that every node observed.
     frame_sets = [set(frame_data[n].keys()) for n in node_ids]
-    common_timestamps = sorted(set.intersection(*frame_sets))
-    if not common_timestamps:
+    common_frames = sorted(set.intersection(*frame_sets))
+    if not common_frames:
         return None, None, None, None
 
-    # Build complex trajectory matrix: shape (num_nodes, num_common_timestamps)
-    trajectory = np.zeros((num_nodes, len(common_timestamps)), dtype=np.complex64)
-    valid_flags: List[bool] = [True] * len(common_timestamps)
+    # Build complex trajectory matrix: shape (num_nodes, num_common_frames)
+    trajectory = np.zeros((num_nodes, len(common_frames)), dtype=np.complex64)
+    valid_flags: List[bool] = [True] * len(common_frames)
     for i, node_id in enumerate(node_ids):
-        for t, timestamp_ms in enumerate(common_timestamps):
-            dets = frame_data[node_id][timestamp_ms]
+        for t, frame_idx in enumerate(common_frames):
+            dets = frame_data[node_id][frame_idx]
             if not dets:
                 trajectory[i, t] = np.nan
                 valid_flags[t] = False
@@ -96,14 +95,14 @@ def closed_form_calibration(
     if trajectory.shape[1] < 3:
         logging.warning("[CALIB] Too few valid common frames (%d) to calibrate", trajectory.shape[1])
         return None, None, None, {
-            "commonTimestamps": common_timestamps,
-            "usedTimestamps": [ts for ts, keep in zip(common_timestamps, valid_flags) if keep],
-            "droppedTimestamps": [ts for ts, keep in zip(common_timestamps, valid_flags) if not keep],
+            "commonFrames": common_frames,
+            "usedFrames": [f for f, keep in zip(common_frames, valid_flags) if keep],
+            "droppedFrames": [f for f, keep in zip(common_frames, valid_flags) if not keep],
             "usedFrameDataByNode": {
                 node_id: {
-                    str(ts): frame_data[node_id][ts]
-                    for ts, keep in zip(common_timestamps, valid_flags)
-                    if keep and ts in frame_data[node_id]
+                    str(f): frame_data[node_id][f]
+                    for f, keep in zip(common_frames, valid_flags)
+                    if keep and f in frame_data[node_id]
                 }
                 for node_id in node_ids
             },
@@ -123,14 +122,14 @@ def closed_form_calibration(
             P_opt[i, k] = z_i_mean - np.exp(-1j * phi) * z_k_mean
 
     solve_meta = {
-        "commonTimestamps": common_timestamps,
-        "usedTimestamps": [ts for ts, keep in zip(common_timestamps, valid_flags) if keep],
-        "droppedTimestamps": [ts for ts, keep in zip(common_timestamps, valid_flags) if not keep],
+        "commonFrames": common_frames,
+        "usedFrames": [f for f, keep in zip(common_frames, valid_flags) if keep],
+        "droppedFrames": [f for f, keep in zip(common_frames, valid_flags) if not keep],
         "usedFrameDataByNode": {
             node_id: {
-                str(ts): frame_data[node_id][ts]
-                for ts, keep in zip(common_timestamps, valid_flags)
-                if keep and ts in frame_data[node_id]
+                str(f): frame_data[node_id][f]
+                for f, keep in zip(common_frames, valid_flags)
+                if keep and f in frame_data[node_id]
             }
             for node_id in node_ids
         },

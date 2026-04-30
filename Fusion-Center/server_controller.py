@@ -44,7 +44,7 @@ def closed_form_calibration(
 
     Parameters
     ----------
-    frame_data : node_id -> (timestamp_ms -> list of [range_m, doppler_bin, angle_rad])
+    frame_data : node_id -> (relative_frame_idx -> list of [range_m, doppler_bin, angle_rad])
 
     Returns
     -------
@@ -180,7 +180,7 @@ class CalibrationSession:
     command_id: str
     group_id: str
     target_nodes: Set[str]
-    # node_id -> timestamp_ms -> list of [range_m, doppler_bin, angle_rad]
+    # node_id -> relative_frame_idx -> list of [range_m, doppler_bin, angle_rad]
     frame_data: Dict[str, Dict[int, List]] = field(default_factory=dict)
     done_nodes: Set[str] = field(default_factory=set)
     created_ms: int = field(default_factory=lambda: int(time.time() * 1000))
@@ -532,17 +532,16 @@ class ServerController:
         node_id = parts[-1]
         command_id = str(payload.get("commandId", ""))
         frame_num = payload.get("frameNum")
-        timestamp_ms = payload.get("timestampMs")
         detections = payload.get("detections", [])
 
         if not command_id:
             return
 
-        # Prefer timestamp key for cross-node alignment; fallback to frame number
-        # keeps compatibility with older node publishers.
-        if timestamp_ms is not None:
-            frame_key = int(timestamp_ms)
-        elif frame_num is not None:
+        # Use the relative frame index (0, 1, 2, ...) as the key.
+        # Each node publishes frameNum as the index within its calibration collection
+        # window, so the same physical frame has the same key on all nodes regardless
+        # of small (<3 ms) wall-clock differences between nodes.
+        if frame_num is not None:
             frame_key = int(frame_num)
         else:
             return

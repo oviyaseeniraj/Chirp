@@ -475,7 +475,10 @@ def calibration_mqtt_process(
                 "nodeId": node_id,
                 "groupId": group_id,
                 "commandId": cmd_id,
-                "frameNum": item["frame_num"],
+                # Relative index within this calibration session (0, 1, 2, ...) so that
+                # all nodes share the same key for the same physical frame, regardless of
+                # the small (<3 ms) wall-clock differences between nodes.
+                "frameNum": frame_count,
                 "detections": item["detections"],
             }
             client.publish(frame_pub_topic, payload=json.dumps(frame_payload), qos=1, retain=False)

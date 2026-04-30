@@ -479,6 +479,11 @@ def calibration_mqtt_process(
                 "detections": item["detections"],
             }
             client.publish(frame_pub_topic, payload=json.dumps(frame_payload), qos=1, retain=False)
+            logging.info(
+                "Published calibration frame topic=%s payload=%s",
+                frame_pub_topic,
+                json.dumps(frame_payload, separators=(",", ":")),
+            )
             frame_count += 1
 
         done_payload = {
@@ -490,6 +495,11 @@ def calibration_mqtt_process(
             "totalFrames": frame_count,
         }
         client.publish(done_pub_topic, payload=json.dumps(done_payload), qos=1, retain=False)
+        logging.info(
+            "Published calibration done topic=%s payload=%s",
+            done_pub_topic,
+            json.dumps(done_payload, separators=(",", ":")),
+        )
         logging.info(
             "Calibration done: published %d frames for commandId=%s", frame_count, cmd_id
         )

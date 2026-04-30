@@ -12,6 +12,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 import numpy as np
@@ -32,7 +33,12 @@ CALIB_DONE_TOPIC_FILTER = f"{TOPIC_PREFIX}/group/+/calibration/done/+"    # subs
 
 def closed_form_calibration(
     frame_data: Dict[str, Dict[int, List]],
-) -> Tuple[Optional[List[str]], Optional[np.ndarray], Optional[np.ndarray]]:
+) -> Tuple[
+    Optional[List[str]],
+    Optional[np.ndarray],
+    Optional[np.ndarray],
+    Optional[Dict[str, Any]],
+]:
     """
     Closed-form spatial calibration across multiple radar nodes.
 
@@ -45,31 +51,35 @@ def closed_form_calibration(
     node_ids  : ordered list of node IDs
     P_opt     : complex translation matrix  (num_nodes × num_nodes)
     theta_opt : rotation matrix in degrees  (num_nodes × num_nodes)
-    Returns (None, None, None) when calibration cannot be solved.
+    solve_meta : dict with common/used timestamps and used frame detections
+    Returns (None, None, None, None) when calibration cannot be solved.
     """
     node_ids = list(frame_data.keys())
     num_nodes = len(node_ids)
     if num_nodes < 2:
-        return None, None, None
+        return None, None, None, None
 
     # Find timestamps that every node observed.
     # Using timestamp keys is robust to pipelines starting on different frame numbers.
     frame_sets = [set(frame_data[n].keys()) for n in node_ids]
     common_timestamps = sorted(set.intersection(*frame_sets))
     if not common_timestamps:
-        return None, None, None
+        return None, None, None, None
 
     # Build complex trajectory matrix: shape (num_nodes, num_common_timestamps)
     trajectory = np.zeros((num_nodes, len(common_timestamps)), dtype=np.complex64)
+    valid_flags: List[bool] = [True] * len(common_timestamps)
     for i, node_id in enumerate(node_ids):
         for t, timestamp_ms in enumerate(common_timestamps):
             dets = frame_data[node_id][timestamp_ms]
             if not dets:
                 trajectory[i, t] = np.nan
+                valid_flags[t] = False
                 continue
             arr = np.array(dets, dtype=np.float32)
             if arr.ndim < 2 or arr.shape[1] < 3:
                 trajectory[i, t] = np.nan
+                valid_flags[t] = False
                 continue
             mean_range = float(np.mean(arr[:, 0]))
             # Circular mean prevents wraparound bias near -pi/+pi.
@@ -85,7 +95,19 @@ def closed_form_calibration(
     trajectory = trajectory[:, valid_mask]
     if trajectory.shape[1] < 3:
         logging.warning("[CALIB] Too few valid common frames (%d) to calibrate", trajectory.shape[1])
-        return None, None, None
+        return None, None, None, {
+            "commonTimestamps": common_timestamps,
+            "usedTimestamps": [ts for ts, keep in zip(common_timestamps, valid_flags) if keep],
+            "droppedTimestamps": [ts for ts, keep in zip(common_timestamps, valid_flags) if not keep],
+            "usedFrameDataByNode": {
+                node_id: {
+                    str(ts): frame_data[node_id][ts]
+                    for ts, keep in zip(common_timestamps, valid_flags)
+                    if keep and ts in frame_data[node_id]
+                }
+                for node_id in node_ids
+            },
+        }
 
     P_opt = np.zeros((num_nodes, num_nodes), dtype=np.complex64)
     theta_opt = np.zeros((num_nodes, num_nodes), dtype=np.float32)
@@ -100,7 +122,20 @@ def closed_form_calibration(
             theta_opt[i, k] = float(np.rad2deg(-phi))
             P_opt[i, k] = z_i_mean - np.exp(-1j * phi) * z_k_mean
 
-    return node_ids, P_opt, theta_opt
+    solve_meta = {
+        "commonTimestamps": common_timestamps,
+        "usedTimestamps": [ts for ts, keep in zip(common_timestamps, valid_flags) if keep],
+        "droppedTimestamps": [ts for ts, keep in zip(common_timestamps, valid_flags) if not keep],
+        "usedFrameDataByNode": {
+            node_id: {
+                str(ts): frame_data[node_id][ts]
+                for ts, keep in zip(common_timestamps, valid_flags)
+                if keep and ts in frame_data[node_id]
+            }
+            for node_id in node_ids
+        },
+    }
+    return node_ids, P_opt, theta_opt, solve_meta
 
 # Helper functions
 def _env_int(name: str, default: int) -> int:
@@ -181,6 +216,8 @@ class ServerController:
         self.state: Dict[Tuple[str, str], Dict[str, Any]] = {} # what state are the nodes in? the tuple is (group_id, node_id)
         self.active_commands: Dict[str, ActiveCommand] = {}
         self.calib_sessions: Dict[str, CalibrationSession] = {}  # commandId -> session 
+        self.calibration_logs_dir = Path(__file__).resolve().parent / "logs" / "calibration_artifacts"
+        self.calibration_logs_dir.mkdir(parents=True, exist_ok=True)
 
         self.client = mqtt.Client(
             mqtt.CallbackAPIVersion.VERSION2,
@@ -567,9 +604,18 @@ class ServerController:
             sorted(frame_data_snapshot.keys()),
         )
 
-        node_ids, P_opt, theta_opt = closed_form_calibration(frame_data_snapshot)
+        node_ids, P_opt, theta_opt, solve_meta = closed_form_calibration(frame_data_snapshot)
 
         result_topic = f"{TOPIC_PREFIX}/group/{group_id}/calibration/result"
+        artifact_payload: Dict[str, Any] = {
+            "schemaVersion": SCHEMA_VERSION,
+            "timestampMs": _now_ms(),
+            "groupId": group_id,
+            "commandId": command_id,
+            "snapshotNodeIds": sorted(frame_data_snapshot.keys()),
+            "rawFrameDataByNode": frame_data_snapshot,
+            "solveMeta": solve_meta if solve_meta is not None else {},
+        }
 
         if node_ids is None:
             result_payload: Dict[str, Any] = {
@@ -583,6 +629,12 @@ class ServerController:
             }
             self.client.publish(result_topic, payload=json.dumps(result_payload), qos=1, retain=True)
             logging.warning("[CALIB] Calibration failed commandId=%s", command_id)
+            artifact_payload.update(
+                {
+                    "ok": False,
+                    "reason": "insufficient_common_frames",
+                }
+            )
         else:
             # Serialize complex matrix as list of [real, imag] pairs per cell
             def _serialize_complex(mat: np.ndarray) -> List:
@@ -609,6 +661,23 @@ class ServerController:
                 node_ids,
                 result_topic,
             )
+            artifact_payload.update(
+                {
+                    "ok": True,
+                    "reason": "calibration_complete",
+                    "nodeIds": node_ids,
+                    "P_opt": _serialize_complex(P_opt),
+                    "theta_opt": theta_opt.tolist(),
+                }
+            )
+
+        artifact_path = self.calibration_logs_dir / f"calibration_{command_id}_{artifact_payload['timestampMs']}.json"
+        try:
+            with artifact_path.open("w", encoding="utf-8") as f:
+                json.dump(artifact_payload, f, separators=(",", ":"), ensure_ascii=True)
+            logging.info("[CALIB] Wrote calibration artifact %s", artifact_path)
+        except Exception:
+            logging.exception("[CALIB] Failed to write calibration artifact for commandId=%s", command_id)
 
         with self.calib_lock:
             self.calib_sessions.pop(command_id, None)

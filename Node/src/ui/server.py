@@ -159,14 +159,14 @@ def overlay_confirmed_tracks(bgr_image, confirmed_tracks_map, confirmed_tracks_a
         pixel_y = np.clip(pixel_y, 0, 511)
         
         # Draw filled circle for track position
-        cv2.circle(overlay_image, (pixel_x, pixel_y), TRACK_RADIUS, TRACK_COLOR, -1)
+        #cv2.circle(overlay_image, (pixel_x, pixel_y), TRACK_RADIUS, TRACK_COLOR, -1)
         
         # Draw circle outline
-        cv2.circle(overlay_image, (pixel_x, pixel_y), TRACK_RADIUS, TEXT_COLOR, TRACK_THICKNESS)
+        #cv2.circle(overlay_image, (pixel_x, pixel_y), TRACK_RADIUS, TEXT_COLOR, TRACK_THICKNESS)
         
         # Draw track ID label
-        cv2.putText(overlay_image, f"T{track_id}", (pixel_x + 10, pixel_y - 10),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, TEXT_COLOR, 1)
+        #cv2.putText(overlay_image, f"T{track_id}", (pixel_x + 10, pixel_y - 10),
+        #           cv2.FONT_HERSHEY_SIMPLEX, 0.5, TEXT_COLOR, 1)
         
         # Optional: Draw angle indicator if available
         if confirmed_tracks_angles is not None:
@@ -208,16 +208,17 @@ def array_to_raw_image_with_tracks(data_array, confirmed_tracks_map=None, confir
     return bgr_image
 
 
-#UNUSED    
 def process_frame(data):
     """CPU-bound processing logic separated from the event loop"""
     start_time = time.time()
     
+    #print("bruh")
     # 1. Parse array
     try:
         array_data = np.frombuffer(data["array"], dtype=np.float32)
         if array_data.size == 64 * 512:
             array_data = array_data.reshape(64, 512)
+            #print(array_data)
         else:
             return None, 0
     except Exception:
@@ -249,8 +250,7 @@ def process_frame(data):
         except Exception:
             pass
 
-    confirmed_tracks_data = data.get("confirmed_tracks", {})
-    
+
     confirmed_tracks_angles = None
     if data.get("confirmed_tracks_angles") is not None:
         try:
@@ -259,7 +259,7 @@ def process_frame(data):
             # Fallback if it's sent as a dictionary instead of bytes
             confirmed_tracks_angles = data.get("confirmed_tracks_angles", {})
     
-    
+    print(np.sum(confirmed_tracks_angles))
     bgr_image = array_to_raw_image_with_tracks(
         array_data,
         confirmed_tracks_map,
@@ -268,42 +268,70 @@ def process_frame(data):
     image_data = encode_image_data(bgr_image)
 
     # 4. Convert confirmed tracks to pixel coordinates for frontend
+    confirmed_tracks_data = data.get("confirmed_tracks", [])
     confirmed_tracks = []
+    
     try:
-        if not isinstance(confirmed_tracks_data, dict):
-            print("server.py: confirmed_tracks_data should be a dictionary")
+        if not isinstance(confirmed_tracks_data, list):
+            print("server.py: confirmed_tracks_data should be a list")
+            confirmed_tracks_data = []
 
-        for track_id, rd_data in confirmed_tracks_data.items():
-            # Safely extract in case the producer sends more than just [range, doppler]
-            if len(rd_data) >= 2:
-                range_bin = rd_data[0]
-                doppler_bin = rd_data[1]
+        # Safely fetch resolution values from config with fallbacks
+        range_res = getattr(config, 'RANGE_RES', 0.05)
+        vel_res = getattr(config, 'VELOCITY_RES', getattr(config, 'DOPPLER_RES', 0.1))
+        slow_time = getattr(config, 'SLOW_TIME', 64)
+
+        for track in confirmed_tracks_data:
+            track_id = track.get('TrackID')
+            state = track.get('State', [0, 0, 0, 0])
+            expected_detection = track.get('Predicted Detection', [0, 0, 0])
+
+            print(expected_detection)
+            if len(state) >= 4:
+                # 1. State extraction [x, vx, y, vy]
+                x, vx, y, vy = state[0], state[1], state[2], state[3]
                 
+                # 2. Convert Cartesian to expected Radar values (Range, Velocity, Angle)
+                #range_val = (x**2 + y**2)**0.5
+                #vel_val = (x*vx + y*vy) / range_val if range_val > 0 else 0.0
+                #angle_val = np.arccos(np.clip(x / range_val, -1.0, 1.0)) if range_val > 0 else 0.0
+                
+                range_val = expected_detection[0]
+                vel_val = expected_detection[1]
+                angle_val = expected_detection[2]
+
+                #print(range_val - expected_detection[0])
+                #print(vel_val - expected_detection[1])
+                #print(angle_val - expected_detection[2])
+
+                # 3. Convert expected values to Bins
+                range_bin = int(range_val / range_res)
+                doppler_bin = int(vel_val / vel_res) + (slow_time // 2)
+                
+                # 4. Convert Bins to image pixels
                 pixel_x = int((doppler_bin / 64.0) * 512)
                 pixel_y = int(512 - (range_bin / 512.0) * 512)
                 pixel_x = np.clip(pixel_x, 0, 511)
                 pixel_y = np.clip(pixel_y, 0, 511)
                 
-                # Ensure track_id type matches between maps (JSON parsing usually makes keys strings)
-                angle = confirmed_tracks_angles.get(str(track_id))
-                if angle is None:
-                    angle = confirmed_tracks_angles.get(int(track_id))
-                
+                angle_degrees = float(angle_val) * 180/np.pi
+
                 confirmed_tracks.append({
                     "track_id": int(track_id),
-                    "x": pixel_x,
-                    "y": pixel_y,
+                    "x": int(pixel_x),
+                    "y": int(pixel_y),
                     "range_bin": int(range_bin),
                     "doppler_bin": int(doppler_bin),
-                    "angle": float(angle) if angle is not None else None
+                    "angle": float(angle_degrees)
                 })
 
-                print(confirmed_tracks)
     except Exception as e:
         print(f"DEBUG: Error parsing confirmed tracks data: {e}")
         
     proc_time = (time.time() - start_time) * 1000
+
     
+    print(confirmed_tracks)
     payload = {
         "image": image_data, 
         "detections": detections,

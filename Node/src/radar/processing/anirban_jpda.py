@@ -1080,7 +1080,7 @@ class JPDATracker:
                 
                 # EKF Matrices
                 z_minus = self.measurement_model.function(predicted_state)
-                print("prior_predicted_meas:",z_minus)
+                print("prior_predicted_meas:",z_minus.flatten())
 
                 H = self.measurement_model.jacobian(predicted_state)
                 R = self.measurement_model.noise_covar

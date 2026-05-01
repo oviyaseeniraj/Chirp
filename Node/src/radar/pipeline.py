@@ -419,6 +419,27 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
                         #is_track_or_no
                     })
 
+
+            # Format confirmed tracks for JSON serialization
+            serialized_tracks = []
+            if confirmed_tracks:
+                for t in confirmed_tracks:
+                    expected_detection = jpda.measurement_model.function(state).flatten()
+
+                    serialized_tracks.append({
+                        'TrackID': int(t['TrackID']),
+                        'State': np.array(t['State']).flatten().tolist(),
+                        'StateCovariance': np.array(t['StateCovariance']).tolist(),
+                        'Age': int(t['Age']),
+                        'Status': str(t['Status']),
+                        'Hits': int(t['Hits']),
+                        'ConsecutiveMisses': int(t['ConsecutiveMisses']),
+                        # Detection might be None if missed, handle safely
+                        'Last Detection': np.array(t['Detection']).flatten().tolist() if t['Detection'] is not None else [],
+                        'Predicted Detection': np.array(expected_detection).flatten().tolist()
+
+                    })
+
             output_data = {
                 "node_id": node_id,
                 "timestamp": int(time.time() * 1000),
@@ -431,7 +452,7 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
                 # Additional keys for internal tracking or alternative consumers
                 "rdm_centroids": centroids_map,
                 "dbscan_2d": dbscan_data_2d,
-                "confirmed_tracks": confirmed_tracks,
+                "confirmed_tracks": serialized_tracks,
                 "confirmed_tracks_rd": confirmed_tracks_map.astype(np.float32).tobytes() if confirmed_tracks_map is not None else b"",
                 "confirmed_tracks_angles": confirmed_tracks_angles.astype(np.float32).tobytes() if confirmed_tracks_angles is not None else b""
             }
@@ -505,6 +526,7 @@ def socket_process(processed_queue, server_url, node_id):
                 "cfar": data.get("cfar", b""),
                 "cluster_count": data.get("cluster_count", 0),
                 "clusters": data.get("clusters", b""),
+                "confirmed_tracks": data.get("confirmed_tracks",b""),
                 "confirmed_tracks_rd": data.get("confirmed_tracks_rd",b""),
                 "confirmed_tracks_angles": data.get("confirmed_tracks_angles",b"")
             })

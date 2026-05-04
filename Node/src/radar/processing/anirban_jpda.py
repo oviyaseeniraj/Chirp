@@ -30,7 +30,8 @@ class RDANonLinearMeasurementModel(NonLinearGaussianMeasurement):
     def ndim_meas(self) -> int:
         return 3
 
-    def function(self, state, noise=False, **kwargs) -> np.ndarray:
+
+    def measurement_function(self, state, noise=False, **kwargs) -> np.ndarray:
         state_vec = state.state_vector if hasattr(state, 'state_vector') else state
         x, vx, y, vy = state_vec.flat  # <-- fixed order
 
@@ -44,7 +45,11 @@ class RDANonLinearMeasurementModel(NonLinearGaussianMeasurement):
             
         return z
     
-    def jacobian(self, state, **kwargs) -> np.ndarray:
+    def function(self, state, noise=False, **kwargs):
+        return self.measurement_function(state, noise=False, **kwargs)
+
+
+    def measurement_jacobian(self, state, **kwargs) -> np.ndarray:
         state_vec = state.state_vector if hasattr(state, 'state_vector') else state
         x, vx, y, vy = state_vec.flat  # <-- fixed order
 
@@ -64,6 +69,9 @@ class RDANonLinearMeasurementModel(NonLinearGaussianMeasurement):
             [-y / r2,  0.0, x / r2,   0.0]
         ])
         return H
+    
+    def jacobian(self, state, noise=False, **kwargs):
+        return self.measurement_jacobian(state, noise=False, **kwargs)
     
     def _measurement_to_state(self, z: np.ndarray) -> np.ndarray:
         # z = [range, doppler, angle]
@@ -573,10 +581,10 @@ class JPDATracker:
             state_vec = state.state_vector.flatten()  # [x, vx, y, vy]
             
             # Predicted measurement: [range, doppler, angle]
-            meas_pred = model.function(state).flatten()
+            meas_pred = model.measurement_function(state).flatten()
             
             # Measurement Jacobian
-            H = model.jacobian(state)
+            H = model.measurement_jacobian(state)
             
             # Get covariance - handle both GaussianState (.covariance) and GaussianStatePrediction (.covar)
             state_covar = getattr(state, 'covariance', None) or getattr(state, 'covar', None)
@@ -1064,12 +1072,12 @@ class JPDATracker:
                 print("probs:",track_probs)
                 # Keep the predicted state (already appended by predict())
                 predicted_state = track[-1]
-                expected_z = self.measurement_model.function(predicted_state)
+                expected_z = self.measurement_model.measurement_function(predicted_state)
                 self.track_metadata[track_id]['last_weighted_meas'] = expected_z.flatten()
                 self.track_metadata[track_id]['last_predicted_meas'] = expected_z.flatten()
 
-                print(self.measurement_model.function(track[-1]))
-                print(self.measurement_model.function(self.predictor.predict(track[-1],timestamp).state_vector).flatten())
+                print(self.measurement_model.measurement_function(track[-1]))
+                print(self.measurement_model.measurement_function(self.predictor.predict(track[-1],timestamp).state_vector).flatten())
                 continue
             
             # Soft Update: Moment Matching (True JPDA EKF Math)
@@ -1079,10 +1087,10 @@ class JPDATracker:
                 P_minus = predicted_state.covar
                 
                 # EKF Matrices
-                z_minus = self.measurement_model.function(predicted_state)
+                z_minus = self.measurement_model.measurement_function(predicted_state)
                 print("prior_predicted_meas:",z_minus.flatten())
 
-                H = self.measurement_model.jacobian(predicted_state)
+                H = self.measurement_model.measurement_jacobian(predicted_state)
                 R = self.measurement_model.noise_covar
                 
                 S = H @ P_minus @ H.T + R
@@ -1139,9 +1147,9 @@ class JPDATracker:
                 )
 
                 self.track_metadata[track_id]['last_weighted_meas'] = weighted_meas
-                self.track_metadata[track_id]['last_predicted_meas'] = self.measurement_model.function(track[-1])
+                self.track_metadata[track_id]['last_implied_meas'] = self.measurement_model.measurement_function(track[-1])
                 print("last_weighted_meas:",weighted_meas)
-                print("last_predicted_meas",self.track_metadata[track_id]['last_predicted_meas'].flatten() )
+                print("last_implied_meas",self.track_metadata[track_id]['last_implied_meas'].flatten() )
 
                 self._register_hit(track_id, prob_hit)
                 

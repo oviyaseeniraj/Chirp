@@ -330,16 +330,14 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
                 detection = track['Detection'] # [range (m), velocity (m/s), angle (rad)]
                 confirmed = track['Status']
 
-
-
                 #TODO: Convert the state to the 
-                expected_detection = jpda.measurement_model.function(state).flatten()
+                implied_detection = jpda.measurement_model.function(state).flatten()
 
-                #print(expected_detection)
+                #print(implied_detection)
                 #print(detection)
 
                 # --- Convert physical units back to RDM bins ---
-                range_val, vel_val, angle_rad = expected_detection
+                range_val, vel_val, angle_rad = implied_detection
 
                 #print("Difference")
                 #print(maha_distance(np.array([range_val, vel_val, angle_rad]), detection, jpda.measurement_model.noise_covar))
@@ -351,7 +349,7 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
                 #except TypeError:
                 #    print("TYPE ERROR OCCURRED =====================================")
                 #    print(range_val)
-                #    print(expected_detection)
+                #    print(implied_detection)
 
                 # 3. Populate the visualization maps
                 if 0 <= range_bin < config.RANGE_BINS and 0 <= doppler_bin < config.DOPPLER_BINS:
@@ -373,7 +371,7 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
                 # Innovation covariance
                 S = model.noise_covar + H @ state_covar @ H.T
 
-                print(f"Track {tid} {confirmed} at x={state[0]:.2f}, y={state[3]:.2f}, misses={misses}, avg det={detection}, expected det = {expected_detection}, Distance: {jpda.detection_maha_sq_distance(detection, expected_detection,S)}")
+                print(f"Track {tid} {confirmed} at x={state[0]:.2f}, y={state[3]:.2f}, misses={misses}, avg det={detection}, implied det after correction = {implied_detection}, Distance: {jpda.detection_maha_sq_distance(detection, implied_detection,S)}")
 
             #print(np.sum(confirmed_tracks_map))
             #print(np.sum(confirmed_tracks_angles))
@@ -424,7 +422,7 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
             serialized_tracks = []
             if confirmed_tracks:
                 for t in confirmed_tracks:
-                    expected_detection = jpda.measurement_model.function(state).flatten()
+                    implied_detection = jpda.measurement_model.function(state).flatten()
 
                     serialized_tracks.append({
                         'TrackID': int(t['TrackID']),
@@ -436,7 +434,7 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
                         'ConsecutiveMisses': int(t['ConsecutiveMisses']),
                         # Detection might be None if missed, handle safely
                         'Last Detection': np.array(t['Detection']).flatten().tolist() if t['Detection'] is not None else [],
-                        'Predicted Detection': np.array(expected_detection).flatten().tolist()
+                        'Implied Detection': np.array(implied_detection).flatten().tolist()
 
                     })
 

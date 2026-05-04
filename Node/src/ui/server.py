@@ -259,7 +259,6 @@ def process_frame(data):
             # Fallback if it's sent as a dictionary instead of bytes
             confirmed_tracks_angles = data.get("confirmed_tracks_angles", {})
     
-    print(np.sum(confirmed_tracks_angles))
     bgr_image = array_to_raw_image_with_tracks(
         array_data,
         confirmed_tracks_map,
@@ -281,12 +280,13 @@ def process_frame(data):
         vel_res = getattr(config, 'VELOCITY_RES', getattr(config, 'DOPPLER_RES', 0.1))
         slow_time = getattr(config, 'SLOW_TIME', 64)
 
+        print("Server.py ==============================")
         for track in confirmed_tracks_data:
             track_id = track.get('TrackID')
             state = track.get('State', [0, 0, 0, 0])
-            expected_detection = track.get('Predicted Detection', [0, 0, 0])
+            implied_detection = track.get('Implied Detection', [0, 0, 0])
 
-            print(expected_detection)
+            print(implied_detection)
             if len(state) >= 4:
                 # 1. State extraction [x, vx, y, vy]
                 x, vx, y, vy = state[0], state[1], state[2], state[3]
@@ -296,13 +296,13 @@ def process_frame(data):
                 #vel_val = (x*vx + y*vy) / range_val if range_val > 0 else 0.0
                 #angle_val = np.arccos(np.clip(x / range_val, -1.0, 1.0)) if range_val > 0 else 0.0
                 
-                range_val = expected_detection[0]
-                vel_val = expected_detection[1]
-                angle_val = expected_detection[2]
+                range_val = implied_detection[0]
+                vel_val = implied_detection[1]
+                angle_val = implied_detection[2]
 
-                #print(range_val - expected_detection[0])
-                #print(vel_val - expected_detection[1])
-                #print(angle_val - expected_detection[2])
+                #print(range_val - implied_detection[0])
+                #print(vel_val - implied_detection[1])
+                #print(angle_val - implied_detection[2])
 
                 # 3. Convert expected values to Bins
                 range_bin = int(range_val / range_res)

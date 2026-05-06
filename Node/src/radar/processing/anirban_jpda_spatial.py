@@ -39,7 +39,7 @@ class RDANonLinearMeasurementModel(NonLinearGaussianMeasurement):
         d = (x * vx + y * vy) / r if r > 1e-6 else 0.0
         a = np.arctan2(y, x)
 
-        z = np.array([ [r], [d], [a] ])
+        z = np.array([ r, d, a ])
         if noise:
             z += np.random.multivariate_normal(np.zeros(3), self.noise_covar)
             
@@ -51,7 +51,7 @@ class RDANonLinearMeasurementModel(NonLinearGaussianMeasurement):
         u = np.pi* np.sin(a) 
         print("angle (rad):",a,"spatial:",u)
 
-        z = np.array([ [r], [d], [u] ])
+        z = np.array([ r, d, u ])
         if noise:
             z += np.random.multivariate_normal(np.zeros(3), self.noise_covar)
             
@@ -585,7 +585,7 @@ class JPDATracker:
         innovation = det1 - det2
         
         # Normalize spatial frequency difference to [-pi, pi]
-        innovation[2] = np.arctan2(np.sin(innovation[2]), np.cos(innovation[2]))
+        #innovation[2] = np.arctan2(np.sin(innovation[2]), np.cos(innovation[2]))
         
         try:
             squared_distance = innovation @ np.linalg.solve(S, innovation)
@@ -1136,7 +1136,7 @@ class JPDATracker:
                 
                 # EKF Matrices
                 z_minus = self.measurement_model.measurement_function_spatial(predicted_state).flatten()
-                print("prior_predicted_meas:",z_minus.flatten())
+                print("prior_predicted_meas (spatial):",z_minus.flatten())
 
                 H = self.measurement_model.measurement_jacobian_spatial(predicted_state)
                 R = self.measurement_model.noise_covar
@@ -1148,6 +1148,7 @@ class JPDATracker:
                     S_inv = np.linalg.pinv(S)
                     
                 K = P_minus @ H.T @ S_inv
+                #print("Kalman gain:",K)
                 
                 beta_0 = track_probs[-1]
                 
@@ -1156,7 +1157,7 @@ class JPDATracker:
                 spread_innov_sum = np.zeros_like(S) # Sum of β_i * (y_i - h(x_k^-))(y_i - h(x_k^-))^T
                 weighted_meas = np.zeros(3)
 
-                print("weighting")
+                #print("weighting")
                 for det_idx in range(n_det):
                     beta_i = track_probs[det_idx]
                     if beta_i > 0:
@@ -1164,8 +1165,8 @@ class JPDATracker:
                         weighted_meas += beta_i * y_i.flatten()
                         
                         innov = y_i - z_minus
-                        # Normalize angle wrapping
-                        innov[2] = np.arctan2(np.sin(innov[2]), np.cos(innov[2]))
+                        # Normalize wrapping (but not for spatial frequency)
+                        #innov[2] = np.arctan2(np.sin(innov[2]), np.cos(innov[2]))
                         
                         delta_y += beta_i * innov
                         spread_innov_sum += beta_i * (innov @ innov.T)
@@ -1176,7 +1177,7 @@ class JPDATracker:
                 else:
                     print("beta_0: {beta_0}")
                 
-                print("huh")
+                #print("huh")
                 # 1. State Update: x_k+ = x_k- + K_k * δy
                 x_plus = x_minus + K @ delta_y
                 
@@ -1198,9 +1199,9 @@ class JPDATracker:
 
                 self.track_metadata[track_id]['last_weighted_meas'] = weighted_meas
                 self.track_metadata[track_id]['last_implied_meas'] = self.measurement_model.measurement_function_spatial(track[-1])
-                print("last_weighted_meas:",weighted_meas)
-                print("last_implied_meas",self.track_metadata[track_id]['last_implied_meas'].flatten() )
-                print("delta y:",delta_y.flatten())
+                print("last_weighted_meas (spatial):",weighted_meas)
+                print("last_implied_meas (spatial)",self.track_metadata[track_id]['last_implied_meas'].flatten() )
+                print("delta y (spatial):",delta_y.flatten())
 
 
                 self._register_hit(track_id, prob_hit)
@@ -1302,6 +1303,10 @@ class JPDATracker:
             metadata = self.track_metadata[track_id]
             state = track[-1]
             
+            z = metadata.get('last_weighted_meas', np.array([0,0,0])); 
+            z[2] = np.arcsin(np.clip( z[2]/np.pi, -1.0 ,1.0) );  #convert back to spatial frequency
+
+
             track_dict = {
                 'TrackID': track_id,
                 'State': state.state_vector.flatten(),
@@ -1310,7 +1315,7 @@ class JPDATracker:
                 'Status': metadata['status'],
                 'Hits': metadata['hits'],
                 'ConsecutiveMisses': metadata['consecutive_misses'],
-                'Detection':  metadata.get('last_weighted_meas', np.array([0, 0, 0])) #weighted average of all associated detections
+                'Detection': z #weighted average of all associated detections
             }
             
             if metadata['status'] == 'Confirmed':

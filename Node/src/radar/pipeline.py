@@ -155,7 +155,7 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
     clutter_density=config.CLUTTER_DENSITY,            # Clutter model
     gating_threshold=config.GATING_THRESHOLD,           # Gating
     measurement_noise_covariance=config.MEASUREMENT_NOISE, #measurement noise covariance matrix (range, doppler, angle noise)
-    sigma_a=0.1,                     # Process noise #variance of human acceleration
+    sigma_a=config.SIGMA_A,                     # Process noise #variance of human acceleration
     max_feasible_events=config.MAX_NUM_FEASIBLE_JOINT_EVENTS,
     #multi-track parameters
     threshold_init = config.THRESHOLD_INIT,

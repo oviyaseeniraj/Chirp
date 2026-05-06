@@ -87,8 +87,9 @@ RANGE_ANGLE_PLOT_HEIGHT = 300
 # Measurement Noise Parameters (for Mahalanobis distance)
 SIGMA_RANGE = 0.035
 SIGMA_DOPPLER = 0.1534
-SIGMA_AZIMUTH = np.pi / 4
-#SIGMA_AZIMUTH = np.pi / 8
+#SIGMA_AZIMUTH = np.pi / 4
+SIGMA_AZIMUTH = np.pi / 8
+SIGMA_A = 0.1
 
 
 MEASUREMENT_NOISE = np.array(

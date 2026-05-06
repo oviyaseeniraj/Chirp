@@ -284,7 +284,8 @@ def processing_process(raw_queue, processed_queue, node_id, calib_queue=None, de
                         "detections": [
                             [
                                 float(c["range_m"]),
-                                float(c["doppler_idx"]),
+                                # float(c["doppler_idx"]), # we believe doppler_idx is bin number, not the actual value
+                                float(c["doppler_mps"]),
                                 float(c["angle_rad"]),
                             ]
                             for c in clusters_meta

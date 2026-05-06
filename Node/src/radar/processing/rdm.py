@@ -106,7 +106,7 @@ class RangeDoppler:
         t2 = time.perf_counter()
 
         # Apply IIR filter on complex data
-        rdm = self.iir_filter(rdm)
+        # rdm = self.iir_filter(rdm)
 
         # Now compute magnitude squared
         mag2 = rdm.real * rdm.real + rdm.imag * rdm.imag

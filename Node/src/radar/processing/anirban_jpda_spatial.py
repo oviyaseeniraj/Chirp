@@ -88,8 +88,8 @@ class RDANonLinearMeasurementModel(NonLinearGaussianMeasurement):
         r,d,a = self.measurement_function(state,noise=False,**kwargs)
 
         Hu = H.copy()
-        print(H)
-        print(H[2,:])
+        #print(H)
+        #print(H[2,:])
 
         Hu[2,:] = np.pi*np.cos(a)*H[2,:]
         
@@ -1120,12 +1120,12 @@ class JPDATracker:
                 print("probs:",track_probs)
                 # Keep the predicted state (already appended by predict())
                 predicted_state = track[-1]
-                expected_z = self.measurement_model.measurement_function(predicted_state)
+                expected_z = self.measurement_model.measurement_function_spatial(predicted_state)
                 self.track_metadata[track_id]['last_weighted_meas'] = expected_z.flatten()
                 self.track_metadata[track_id]['last_predicted_meas'] = expected_z.flatten()
 
-                print(self.measurement_model.measurement_function(track[-1]))
-                print(self.measurement_model.measurement_function(self.predictor.predict(track[-1],timestamp).state_vector).flatten())
+                #print(self.measurement_model.measurement_function(predicted_state))
+                #print(self.measurement_model.measurement_function(self.predictor.predict(track[-1],timestamp).state_vector).flatten())
                 continue
             
             # Soft Update: Moment Matching (True JPDA EKF Math)
@@ -1197,7 +1197,7 @@ class JPDATracker:
                 )
 
                 self.track_metadata[track_id]['last_weighted_meas'] = weighted_meas
-                self.track_metadata[track_id]['last_implied_meas'] = self.measurement_model.measurement_function(track[-1])
+                self.track_metadata[track_id]['last_implied_meas'] = self.measurement_model.measurement_function_spatial(track[-1])
                 print("last_weighted_meas:",weighted_meas)
                 print("last_implied_meas",self.track_metadata[track_id]['last_implied_meas'].flatten() )
                 print("delta y:",delta_y.flatten())

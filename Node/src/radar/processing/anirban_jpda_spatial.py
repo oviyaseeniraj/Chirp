@@ -45,8 +45,20 @@ class RDANonLinearMeasurementModel(NonLinearGaussianMeasurement):
             
         return z
     
+    def measurement_function_spatial(self, state, noise=False, **kwargs) -> np.ndarray:
+        r,d,a = self.measurement_function(state, noise = False, **kwargs)
+        
+        u = np.pi* np.sin(a) 
+        print("angle (rad):",a,"spatial:",u)
+
+        z = np.array([ [r], [d], [u] ])
+        if noise:
+            z += np.random.multivariate_normal(np.zeros(3), self.noise_covar)
+            
+        return z
+    
     def function(self, state, noise=False, **kwargs):
-        return self.measurement_function(state, noise=False, **kwargs)
+        return self.measurement_function_spatial(state, noise=False, **kwargs)
 
 
     def measurement_jacobian(self, state, **kwargs) -> np.ndarray:
@@ -70,8 +82,29 @@ class RDANonLinearMeasurementModel(NonLinearGaussianMeasurement):
         ])
         return H
     
+    def measurement_jacobian_spatial(self, state, **kwargs) -> np.ndarray:
+        H = self.measurement_jacobian(state,**kwargs)
+        
+        r,d,a = self.measurement_function(state,noise=False,**kwargs)
+
+        Hu = H.copy()
+        print(H)
+        print(H[2,:])
+
+        Hu[2,:] = np.pi*np.cos(a)*H[2,:]
+        
+        #print(a)
+        #print(Hu[2,:])
+
+        #print(a)
+        #print(H)
+        #print(Hu[2,:])
+        #print(Hu)
+
+        return Hu
+    
     def jacobian(self, state, noise=False, **kwargs):
-        return self.measurement_jacobian(state, noise=False, **kwargs)
+        return self.measurement_jacobian_spatial(state, **kwargs)
     
     def _measurement_to_state(self, z: np.ndarray) -> np.ndarray:
         # z = [range, doppler, angle]
@@ -108,7 +141,7 @@ class JPDATracker:
 
         self.detections = None
         self.time_interval = 0.1
-
+        
         #other parameters
         threshold_init = kwargs.get('threshold_init', 0.05)
         threshold_hit_miss = kwargs.get('threshold_hit_miss', 0.3)
@@ -201,6 +234,23 @@ class JPDATracker:
             for label, (centroid, num_point) in detection_centroids.items()
         ]
 
+        detections_spatial = []
+        for label, (centroid, num_point) in detection_centroids.items():
+            # centroid is typically [range, doppler, angle]
+            converted_centroid = np.array([
+                centroid[0],               # range
+                centroid[1],               # doppler
+                np.pi* np.sin(centroid[2])        # angle -> spatial frequency
+            ])
+            detections_spatial.append(
+                Detection(
+                    StateVector(converted_centroid.reshape(-1, 1)),
+                    timestamp=timestamp
+                )
+            )
+
+        self.detections_spatial = detections_spatial
+        #use to display tracker info
         self.detections = detections
         
         # Step 1: Predict all existing tracks
@@ -218,14 +268,13 @@ class JPDATracker:
             # Pass the pre-computed associations to avoid re-calculating inside update
             
             #3 lists, of size n, where n is the number of tracks
-            associations = self.get_soft_associations_and_marginals(detections,
+            associations = self.get_soft_associations_and_marginals(detections_spatial,
                                                                     self.tracks,
                                                                     self.prob_detect,
                                                                     self.clutter_density,
                                                                     self.gating_threshold
                                                                     )
-            
-            self.update(detections, timestamp, associations=associations)
+            self.update(detections_spatial, timestamp, associations=associations)
         
         # Step 3: Initialize new tracks from same associations
         if detections:
@@ -535,7 +584,7 @@ class JPDATracker:
     def detection_maha_sq_distance(self,det1,det2, S):
         innovation = det1 - det2
         
-        # Normalize angle difference to [-pi, pi]
+        # Normalize spatial frequency difference to [-pi, pi]
         innovation[2] = np.arctan2(np.sin(innovation[2]), np.cos(innovation[2]))
         
         try:
@@ -572,7 +621,6 @@ class JPDATracker:
 
         self.distance_matrix_before_threshold = distance_matrix
 
-        
         for trk_idx, track_id in enumerate(track_ids_list):
             track_info = track_dict[track_id]
             
@@ -580,11 +628,11 @@ class JPDATracker:
             state = track_info[-1]  # GaussianState
             state_vec = state.state_vector.flatten()  # [x, vx, y, vy]
             
-            # Predicted measurement: [range, doppler, angle]
-            meas_pred = model.measurement_function(state).flatten()
+            # Predicted measurement (in spatial frequency): [range, doppler, u]
+            meas_pred = model.measurement_function_spatial(state).flatten()
             
             # Measurement Jacobian
-            H = model.measurement_jacobian(state)
+            H = model.measurement_jacobian_spatial(state)
             
             # Get covariance - handle both GaussianState (.covariance) and GaussianStatePrediction (.covar)
             state_covar = getattr(state, 'covariance', None) or getattr(state, 'covar', None)
@@ -599,7 +647,7 @@ class JPDATracker:
                 # Extract measurement vector from Detection object
                 det_meas = detection_centroids[det_idx].state_vector.flatten()
 
-                # Innovation: [range, doppler, angle]
+                # Innovation: [range, doppler, u]
                 squared_distance = self.detection_maha_sq_distance(det_meas, meas_pred,S)
                 #innovation = det_meas - meas_pred
                 
@@ -1083,14 +1131,14 @@ class JPDATracker:
             # Soft Update: Moment Matching (True JPDA EKF Math)
             try:
                 predicted_state = track[-1]
-                x_minus = predicted_state.state_vector.reshape(-1, 1)
+                x_minus = predicted_state.state_vector.reshape(-1, 1).flatten()
                 P_minus = predicted_state.covar
                 
                 # EKF Matrices
-                z_minus = self.measurement_model.measurement_function(predicted_state)
+                z_minus = self.measurement_model.measurement_function_spatial(predicted_state).flatten()
                 print("prior_predicted_meas:",z_minus.flatten())
 
-                H = self.measurement_model.measurement_jacobian(predicted_state)
+                H = self.measurement_model.measurement_jacobian_spatial(predicted_state)
                 R = self.measurement_model.noise_covar
                 
                 S = H @ P_minus @ H.T + R
@@ -1108,15 +1156,16 @@ class JPDATracker:
                 spread_innov_sum = np.zeros_like(S) # Sum of β_i * (y_i - h(x_k^-))(y_i - h(x_k^-))^T
                 weighted_meas = np.zeros(3)
 
+                print("weighting")
                 for det_idx in range(n_det):
                     beta_i = track_probs[det_idx]
                     if beta_i > 0:
-                        y_i = detections[det_idx].state_vector
+                        y_i = detections[det_idx].state_vector.flatten()
                         weighted_meas += beta_i * y_i.flatten()
                         
                         innov = y_i - z_minus
                         # Normalize angle wrapping
-                        innov[2, 0] = np.arctan2(np.sin(innov[2, 0]), np.cos(innov[2, 0]))
+                        innov[2] = np.arctan2(np.sin(innov[2]), np.cos(innov[2]))
                         
                         delta_y += beta_i * innov
                         spread_innov_sum += beta_i * (innov @ innov.T)
@@ -1127,6 +1176,7 @@ class JPDATracker:
                 else:
                     print("beta_0: {beta_0}")
                 
+                print("huh")
                 # 1. State Update: x_k+ = x_k- + K_k * δy
                 x_plus = x_minus + K @ delta_y
                 

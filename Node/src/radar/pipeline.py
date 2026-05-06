@@ -13,7 +13,9 @@ from datetime import datetime
 from . import config
 from .processing.rdm import RangeDoppler
 
-from .processing.anirban_jpda import JPDATracker
+from .processing.anirban_jpda_spatial import JPDATracker
+#from .processing.anirban_jpda import JPDATracker
+
 #from .processing.anirban_jpda import 
 
 # Hardware acceleration check: Choose between GPU (PyTorch) and optimized CPU (NumPy/OpenCV)
@@ -331,7 +333,7 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
                 confirmed = track['Status']
 
                 #TODO: Convert the state to the 
-                implied_detection = jpda.measurement_model.function(state).flatten()
+                implied_detection = jpda.measurement_model.measurement_function(state).flatten()
 
                 #print(implied_detection)
                 #print(detection)
@@ -422,7 +424,9 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
             serialized_tracks = []
             if confirmed_tracks:
                 for t in confirmed_tracks:
-                    implied_detection = jpda.measurement_model.function(state).flatten()
+                    implied_detection = jpda.measurement_model.measurement_function(state).flatten()
+
+                    #convert back to 
 
                     serialized_tracks.append({
                         'TrackID': int(t['TrackID']),

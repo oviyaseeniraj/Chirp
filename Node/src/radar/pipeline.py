@@ -419,7 +419,6 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
                         #is_track_or_no
                     })
 
-
             # Format confirmed tracks for JSON serialization
             serialized_tracks = []
             if confirmed_tracks:
@@ -427,7 +426,6 @@ def processing_process(raw_queue, processed_queue, node_id, device=None, save_ca
                     implied_detection = jpda.measurement_model.measurement_function(state).flatten()
 
                     #convert back to 
-
                     serialized_tracks.append({
                         'TrackID': int(t['TrackID']),
                         'State': np.array(t['State']).flatten().tolist(),

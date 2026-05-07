@@ -1169,7 +1169,7 @@ class JPDATracker:
                         #innov[2] = np.arctan2(np.sin(innov[2]), np.cos(innov[2]))
                         
                         delta_y += beta_i * innov
-                        spread_innov_sum += beta_i * (innov @ innov.T)
+                        spread_innov_sum += beta_i * np.outer(innov, innov)
                 
                 # Add missed detection expected measurement expectation
                 if beta_0 > 0:
@@ -1182,7 +1182,10 @@ class JPDATracker:
                 x_plus = x_minus + K @ delta_y
                 
                 # 2. Covariance Update Spread Term: P_c = K_k * [Sum(...) - δy * δy^T] * K_k^T
-                P_c = K @ (spread_innov_sum - delta_y @ delta_y.T) @ K.T
+                P_c = K @ (spread_innov_sum - np.outer(delta_y,delta_y) ) @ K.T
+
+                #print(np.shape(K @ np.outer(delta_y, delta_y) @ K.T))
+                #print(np.shape(P_c))
                 
                 # 3. Final Covariance: P_k+ = P_k- - (1 - β_0) * K_k * S_k * K_k^T + P_c
                 P_plus = P_minus - (1 - beta_0) * (K @ S @ K.T) + P_c

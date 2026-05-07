@@ -212,7 +212,8 @@ def process_frame(data):
     """CPU-bound processing logic separated from the event loop"""
     start_time = time.time()
     
-    #print("bruh")
+    print("bruh")
+
     # 1. Parse array
     try:
         array_data = np.frombuffer(data["array"], dtype=np.float32)
@@ -236,6 +237,7 @@ def process_frame(data):
     elif data.get("angles") is not None:
         try:
             angles_array = np.frombuffer(data["angles"], dtype=np.float32).reshape(64, 512)
+            # Robust fallback: create CFAR-like detection map from RDM data
             threshold = np.mean(array_data) + 2 * np.std(array_data)
             cfar_detections = (array_data > threshold).astype(np.uint8)
             detections = extract_detections(cfar_detections, angles_array, array_data)
@@ -335,14 +337,14 @@ def process_frame(data):
     payload = {
         "image": image_data, 
         "detections": detections,
-        "confirmed_tracks": confirmed_tracks,
         "cluster_count": data.get("cluster_count", 0),
         "clusters": data.get("clusters", []),
         "mime": "image/jpeg"
     }
-
+ 
     #print("BRH ==============")
     #print(confirmed_tracks)
+
 
     return payload, proc_time
 
@@ -379,7 +381,7 @@ async def index_handler(request):
         max_velocity=config.MAX_VELOCITY,
         max_range=config.MAX_RANGE,
         range_res=config.RANGE_RES,
-        velocity_res=config.DOPPLER_RES,
+        velocity_res=config.VELOCITY_RES,
         slow_time=config.SLOW_TIME,
         fast_time=config.FAST_TIME
     )

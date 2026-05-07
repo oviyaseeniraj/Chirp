@@ -1,0 +1,13 @@
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2.0 # prebuilt template for Mosquitto environment from the Eclipse Foundation on Docker Hub
+    container_name: chirp-mosquitto # process created from the image
+    restart: unless-stopped
+    ports:
+      - "1883:1883" # syntax is "host_port:container port"; MQTT broker needs to bind/listen to this port to receive and send MQTT traffic across the network
+    volumes: # syntax is "host_path:container_path"; contains files stored on local device that are "mounted" onto this Docker container (important for information to persist on the container)
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf
+      - ./acl:/mosquitto/config/acl
+      - ./passwords:/mosquitto/config/passwords
+      - ./data:/mosquitto/data
+      - ./log:/mosquitto/log

@@ -99,10 +99,6 @@
                 <input type="checkbox" id="show-clusters" checked style="width: 16px; height: 16px;">
                 <span style="color: #00ffff;">Show 3D Clusters</span>
             </label>
-            <label style="cursor: pointer; display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
-                <input type="checkbox" id="show-tracks" checked style="width: 16px; height: 16px;">
-                <span style="color: #ffa500;">Show Confirmed Tracks</span>
-            </label>
         </div>
     </div>
 
@@ -213,51 +209,28 @@
         function drawRangeAnglePlot(detections, tracks) {
             if (!rangeAngleCtx) return;
 
+            const canvas = rangeAngleCanvas;
             const ctx = rangeAngleCtx;
-            const width = rangeAngleCanvas.width;
-            const height = rangeAngleCanvas.height;
+            const width = canvas.width;
+            const height = canvas.height;
             const margin = 40;
             const plotWidth = width - 2 * margin;
             const plotHeight = height - 2 * margin;
 
-            // 1. Setup Canvas & Background
+            // Clear canvas
             ctx.fillStyle = '#1a1a1a';
             ctx.fillRect(0, 0, width, height);
-            
-            // 2. Draw Grid & Axes
-            ctx.strokeStyle = '#333';
-            ctx.lineWidth = 0.5;
-            ctx.fillStyle = '#888';
-            ctx.font = '10px Courier New';
 
-            // Vertical lines & Angle labels
-            ctx.textAlign = 'center';
-            for (let angle = -90; angle <= 90; angle += 30) {
-                const x = margin + ((angle + 90) / 180) * plotWidth;
-                ctx.beginPath();
-                ctx.moveTo(x, margin);
-                ctx.lineTo(x, height - margin);
-                ctx.stroke();
-                ctx.fillText(angle + '°', x, height - margin + 15);
-            }
-
-            // Horizontal lines & Range labels
-            ctx.textAlign = 'right';
-            for (let i = 0; i <= 5; i++) {
-                const y = margin + (i / 5) * plotHeight;
-                ctx.beginPath();
-                ctx.moveTo(margin, y);
-                ctx.lineTo(width - margin, y);
-                ctx.stroke();
-                ctx.fillText(((1 - i / 5) * MAX_RANGE).toFixed(1), margin - 5, y + 4);
-            }
-
-            // Main Axes lines
+            // Draw axes
             ctx.strokeStyle = '#555';
             ctx.lineWidth = 1;
-            ctx.strokeRect(margin, margin, plotWidth, plotHeight);
+            ctx.beginPath();
+            ctx.moveTo(margin, margin);
+            ctx.lineTo(margin, height - margin);
+            ctx.lineTo(width - margin, height - margin);
+            ctx.stroke();
 
-            // Title Labels
+            // Labels
             ctx.fillStyle = '#aaa';
             ctx.font = '12px Courier New';
             ctx.textAlign = 'center';
@@ -269,68 +242,87 @@
             ctx.fillText('Range (m)', 0, 0);
             ctx.restore();
 
-            // 3. Plot Detections
-            if (detections && detections.length) {
-                let maxVelocity = Math.max(...detections.map(d => Math.abs(d.velocity || 0)));
+            // Draw grid
+            ctx.strokeStyle = '#333';
+            ctx.lineWidth = 0.5;
 
-                detections.forEach(({ angle, range_idx, velocity }) => {
-                    if (angle == null || !velocity) return;
+            // Vertical grid lines (angle)
+            for (let angle = -90; angle <= 90; angle += 30) {
+                const x = margin + ((angle + 90) / 180) * plotWidth;
+                ctx.beginPath();
+                ctx.moveTo(x, margin);
+                ctx.lineTo(x, height - margin);
+                ctx.stroke();
 
-                    const x = margin + ((angle + 90) / 180) * plotWidth;
-                    const y = margin + (1 - range_idx / FAST_TIME) * plotHeight;
-                    const vMag = Math.abs(velocity);
-                    const size = maxVelocity > 0 ? 3 + (vMag / maxVelocity) * 10 : 5;
-
-                    ctx.fillStyle = velocity > 0 ? '#00ff00' : '#ff0000';
-                    
-                    ctx.beginPath();
-                    ctx.arc(x, y, size, 0, 2 * Math.PI);
-                    ctx.fill();
-
-                    ctx.strokeStyle = '#fff';
-                    ctx.lineWidth = 1;
-                    ctx.stroke();
-                });
+                ctx.fillStyle = '#888';
+                ctx.font = '10px Courier New';
+                ctx.textAlign = 'center';
+                ctx.fillText(angle + '°', x, height - margin + 15);
             }
 
-            // 4. Plot Confirmed Tracks
+            for (let i = 0; i <= 5; i++) {
+                const y = margin + (i / 5) * plotHeight;
+                const rangeVal = ((1 - i / 5) * MAX_RANGE).toFixed(1);
+                ctx.beginPath();
+                ctx.moveTo(margin, y);
+                ctx.lineTo(width - margin, y);
+                ctx.stroke();
 
-            if (document.getElementById('show-tracks') !== null && !document.getElementById('show-tracks').checked) return;
-            
-            console.log("there exist tracks");
-
-            if (tracks && tracks.length) {
-                const TRACK_COLOR = '#ffa500';
-                const OUTLINE_COLOR = '#c8c800';
-
-                console.log("there exist tracks")
-
-                tracks.forEach(track => {
-                    const { track_id, angle, range_bin } = track;
-                    
-                    if (angle === null || angle === undefined || range_bin === undefined) {
-                        console.log("bruh")
-                        return;
-                    }
-
-                    const x = margin + ((angle + 90) / 180) * plotWidth;
-                    const y = margin + (1 - range_bin / FAST_TIME) * plotHeight;
-
-                    ctx.fillStyle = TRACK_COLOR;
-                    ctx.beginPath();
-                    ctx.arc(x, y, 6, 0, 2 * Math.PI);
-                    ctx.fill();
-
-                    ctx.strokeStyle = OUTLINE_COLOR;
-                    ctx.lineWidth = 1.5;
-                    ctx.stroke();
-
-                    ctx.fillStyle = OUTLINE_COLOR;
-                    ctx.font = 'bold 11px Courier New';
-                    ctx.textAlign = 'left';
-                    ctx.fillText(`T${track_id}`, x + 8, y - 8);
-                });
+                ctx.fillStyle = '#888';
+                ctx.font = '10px Courier New';
+                ctx.textAlign = 'right';
+                ctx.fillText(rangeVal.toString(), margin - 5, y + 4);
             }
+
+            // Plot detections
+            if (!detections || detections.length === 0) return;
+
+            // Find max velocity for normalization
+            let maxVelocity = 0;
+            detections.forEach(det => {
+                if (det.velocity !== undefined) {
+                    maxVelocity = Math.max(maxVelocity, Math.abs(det.velocity));
+                }
+            });
+
+            detections.forEach(detection => {
+                const { angle, range_idx, velocity } = detection;
+
+                // Only plot if we have angle information
+                if (angle === null || angle === undefined) return;
+
+                //nuts!
+                if (velocity == 0) return;
+
+                // Map angle to x coordinate (-90 to 90 -> 0 to plotWidth)
+                const x = margin + ((angle + 90) / 180) * plotWidth;
+
+                // Map range to y coordinate (0 to FAST_TIME -> height to 0)
+                const y = margin + (1 - range_idx / FAST_TIME) * plotHeight;
+
+                // Size based on velocity magnitude
+                const velocityMag = Math.abs(velocity || 0);
+                const size = maxVelocity > 0 ? 3 + (velocityMag / maxVelocity) * 10 : 5;
+
+                // Color based on velocity direction
+                if (velocity > 0) {
+                    ctx.fillStyle = '#00ff00';  // Green for positive (approaching)
+                } else if (velocity < 0) {
+                    ctx.fillStyle = '#ff0000';  // Red for negative (receding)
+                } else {
+                    ctx.fillStyle = '#ffff00';  // Yellow for zero
+                }
+
+                // Draw detection point
+                ctx.beginPath();
+                ctx.arc(x, y, size, 0, 2 * Math.PI);
+                ctx.fill();
+
+                // Add outline
+                ctx.strokeStyle = '#fff';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+            });
         }
 
         function drawRDMGrid() {
@@ -339,6 +331,7 @@
             ctx.lineWidth = 1;
 
             // Vertical grid lines (Doppler)
+            // 8 vertical sections
             for (let i = 0; i <= 8; i++) {
                 const x = i * 64;
                 ctx.beginPath();
@@ -348,6 +341,7 @@
             }
 
             // Horizontal grid lines (Range)
+            // 8 horizontal sections
             for (let i = 0; i <= 8; i++) {
                 const y = i * 64;
                 ctx.beginPath();
@@ -506,8 +500,13 @@
             });
         }
         function drawDetections(detections) {
+            // Clear overlay
+            overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+
             if (!document.getElementById('show-detections').checked) return;
-            if (!detections || detections.length === 0) return;
+
+            // Draw grid first
+            drawRDMGrid();
 
             detectionCount = detections.length;
 
@@ -537,12 +536,15 @@
                     overlayCtx.textAlign = 'left';
                     overlayCtx.textBaseline = 'top';
 
+                    // Position text to the right and slightly below the detection
                     const textX = x + 8;
                     const textY = y + 2;
 
+                    // Add black outline for better visibility
                     overlayCtx.strokeStyle = '#000000';
                     overlayCtx.lineWidth = 3;
                     overlayCtx.strokeText(angle.toFixed(1) + '°', textX, textY);
+
                     overlayCtx.fillText(angle.toFixed(1) + '°', textX, textY);
                 }
             });
@@ -583,17 +585,37 @@
 
             plotCtx.clearRect(0, 0, plotCanvas.width, plotCanvas.height);
 
+            // 1. Update RDM Image
             if (data.image && document.getElementById('show-rdm').checked) {
                 const img = new Image();
                 img.onload = function () {
                     plotCtx.drawImage(img, 0, 0, plotCanvas.width, plotCanvas.height);
-                    renderOverlays();
+                    // Overlay data
+                    if (data.detections) {
+                        drawDetections(data.detections);
+                        drawRangeAnglePlot(data.detections);
+                    }
+                    if (data.clusters) {
+                        drawClusters(data.clusters);
+                    }
                 };
                 img.src = 'data:' + data.mime + ';base64,' + data.image;
             } else {
+                // Background is hidden, but we still want to draw overlays on a black canvas
                 plotCtx.fillStyle = 'black';
                 plotCtx.fillRect(0, 0, plotCanvas.width, plotCanvas.height);
-                renderOverlays();
+
+                if (data.detections) {
+                    drawDetections(data.detections);
+                    drawRangeAnglePlot(data.detections);
+                }
+                if (data.clusters) {
+                    drawClusters(data.clusters);
+                }
+            }
+
+            if (data.cluster_count !== undefined) {
+                clusterCount = data.cluster_count;
             }
 
             frameCount++;
@@ -603,7 +625,7 @@
         socket.on('connect', function () {
             console.log('Connected to server');
         });
-        
+
         socket.on('disconnect', function () {
             console.log('Disconnected from server');
         });

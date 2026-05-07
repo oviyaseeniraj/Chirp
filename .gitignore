@@ -7,4 +7,14 @@ Node/test/data/
 Node/DCA1000/SourceCode/Release/CLI_LogFile.txt
 Node/src/hardware_trigger/local_trigger
 Node/src/hardware_trigger/networked_trigger
+*_log.txt
+
+# Files related to MQTT broker
 .env
+log
+passwords
+
+# Local broker IP hint (optional; chirp_bootstrap_all_orins.sh refreshes from Fusion-Center/.env)
+.chirp_broker_ip
+# Radar MQTT shared password for Orin bootstrap (written by chirp_write_orin_bootstrap_secrets.sh)
+.chirp_radar_mqtt_password

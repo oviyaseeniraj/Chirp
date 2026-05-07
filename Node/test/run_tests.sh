@@ -52,6 +52,17 @@ else
     PYTHON_EXEC="python3"
 fi
 
+# Load Node/.env into current shell if present.
+load_node_env() {
+    local env_file="$NODE_DIR/.env"
+    if [ -f "$env_file" ]; then
+        # shellcheck disable=SC1090
+        set -a
+        source "$env_file"
+        set +a
+    fi
+}
+
 # Ensure setup_radar build directory and executable exist
 ensure_setup_radar_built() {
     local setup_radar_dir="$NODE_DIR/setup_radar"
@@ -81,6 +92,103 @@ ensure_setup_radar_built() {
     fi
 }
 
+# Ensure selected hardware trigger executable exists (build on demand)
+ensure_hardware_trigger_built() {
+    local trigger_exe="$1"
+    local trigger_dir="$NODE_DIR/src/hardware_trigger"
+
+    if [ -z "$trigger_exe" ]; then
+        echo "Error: No trigger executable path provided."
+        return 1
+    fi
+
+    if [ -x "$trigger_exe" ]; then
+        return 0
+    fi
+
+    if [ ! -d "$trigger_dir" ]; then
+        echo "Error: Hardware trigger directory not found at: $trigger_dir"
+        return 1
+    fi
+
+    echo "Hardware trigger executable not found at: $trigger_exe"
+    echo "Attempting to build hardware triggers with Makefile..."
+    if ! make -C "$trigger_dir"; then
+        echo "Error: Failed to build hardware triggers in $trigger_dir"
+        return 1
+    fi
+
+    if [ ! -x "$trigger_exe" ]; then
+        echo "Error: Hardware trigger executable still missing after build: $trigger_exe"
+        return 1
+    fi
+}
+
+# Ensure MQTT trigger stack is ready for distributed mode.
+ensure_mqtt_trigger_ready() {
+    local mqtt_dir="$NODE_DIR/src/hardware_trigger_mqtt"
+    local mqtt_client_py="$mqtt_dir/mqtt_trigger_client.py"
+    local trigger_worker_bin="$mqtt_dir/trigger_worker"
+    local missing_vars=()
+
+    if [ ! -d "$mqtt_dir" ]; then
+        echo "Error: MQTT trigger directory not found at $mqtt_dir"
+        echo "Action: Create/build Phase 1-3 artifacts under src/hardware_trigger_mqtt first."
+        return 1
+    fi
+
+    if [ ! -f "$mqtt_client_py" ]; then
+        echo "Error: MQTT trigger client not found at $mqtt_client_py"
+        echo "Action: Ensure Phase 2 created mqtt_trigger_client.py."
+        return 1
+    fi
+
+    if [ ! -x "$trigger_worker_bin" ]; then
+        echo "MQTT trigger worker missing at $trigger_worker_bin"
+        echo "Attempting build with: make -C $mqtt_dir"
+        if ! make -C "$mqtt_dir"; then
+            echo "Error: Failed to build trigger_worker in $mqtt_dir"
+            return 1
+        fi
+    fi
+
+    if [ ! -x "$trigger_worker_bin" ]; then
+        echo "Error: trigger_worker still missing after build: $trigger_worker_bin"
+        return 1
+    fi
+
+    if [ -z "$MQTT_HOST" ]; then missing_vars+=("MQTT_HOST"); fi
+    if [ -z "$MQTT_PORT" ]; then missing_vars+=("MQTT_PORT"); fi
+    if [ -z "$NODE_ID" ]; then missing_vars+=("NODE_ID"); fi
+    if [ -z "$GROUP_ID" ]; then missing_vars+=("GROUP_ID"); fi
+
+    if [ ${#missing_vars[@]} -gt 0 ]; then
+        echo "Error: Missing required environment variables for distributed MQTT trigger:"
+        printf '  - %s\n' "${missing_vars[@]}"
+        echo "Action: define them in $NODE_DIR/.env or export them before running this script."
+        echo "Example:"
+        echo "  export MQTT_HOST=127.0.0.1 MQTT_PORT=1883 NODE_ID=radar-orin-01 GROUP_ID=default"
+        return 1
+    fi
+
+    if ! "$PYTHON_EXEC" -c "import paho.mqtt.client" >/dev/null 2>&1; then
+        echo "Error: Python dependency missing: paho-mqtt"
+        echo "Action: install dependencies with:"
+        echo "  $PYTHON_EXEC -m pip install -r $NODE_DIR/requirements.txt"
+        return 1
+    fi
+
+    if ! (echo >/dev/tcp/"$MQTT_HOST"/"$MQTT_PORT") 2>/dev/null; then
+        echo "Warning: Cannot reach broker at $MQTT_HOST:$MQTT_PORT right now."
+        echo "Action: verify broker is running and network/firewall allows TCP $MQTT_PORT."
+        echo "Continuing anyway; mqtt_trigger_client.py will retry based on broker/client behavior."
+    fi
+
+    return 0
+}
+
+load_node_env
+
 case $test_choice in
     1|2)
         # 1. Check/Start Radar Hardware/FPGA
@@ -106,18 +214,23 @@ case $test_choice in
         echo ""
         echo ">>> Select Hardware Triggering Mode:"
         echo "1) Local Triggering (local_trigger)"
-        echo "2) Distributed Triggering (networked_trigger)"
-        echo "3) Skip Hardware Triggering"
+        echo "2) Distributed Triggering (networked_trigger - legacy)"
+        echo "3) Distributed Triggering (MQTT trigger client)"
+        echo "4) Skip Hardware Triggering"
         echo "------------------------------------------"
-        read -p "Choice [1-3]: " trigger_choice
+        read -p "Choice [1-4]: " trigger_choice
 
         TRIGGER_EXE=""
+        MQTT_TRIGGER_CLIENT=""
         case $trigger_choice in
             1)
                 TRIGGER_EXE="$NODE_DIR/src/hardware_trigger/local_trigger"
                 ;;
             2)
                 TRIGGER_EXE="$NODE_DIR/src/hardware_trigger/networked_trigger"
+                ;;
+            3)
+                MQTT_TRIGGER_CLIENT="$NODE_DIR/src/hardware_trigger_mqtt/mqtt_trigger_client.py"
                 ;;
             *)
                 echo "Skipping hardware trigger."
@@ -126,16 +239,29 @@ case $test_choice in
 
         # Start hardware trigger in background if selected
         if [ ! -z "$TRIGGER_EXE" ]; then
-            if [ ! -f "$TRIGGER_EXE" ]; then
-                echo "Error: Hardware trigger executable not found at: $TRIGGER_EXE"
-                echo "Please compile it first: (cd $NODE_DIR/src/hardware_trigger && make)"
-                exit 1
-            fi
+            ensure_hardware_trigger_built "$TRIGGER_EXE" || exit 1
 
             echo "Starting hardware trigger in background..."
             # Launch without sudo since script is already root
             "$TRIGGER_EXE" > /dev/null 2>&1 &
             TRIGGER_PID=$!
+        fi
+
+        # Start MQTT distributed trigger client in background if selected
+        if [ ! -z "$MQTT_TRIGGER_CLIENT" ]; then
+            ensure_mqtt_trigger_ready || exit 1
+
+            echo "Starting MQTT trigger client in background..."
+            "$PYTHON_EXEC" "$MQTT_TRIGGER_CLIENT" &
+            TRIGGER_PID=$!
+            sleep 2
+            if ! kill -0 "$TRIGGER_PID" 2>/dev/null; then
+                echo "Error: MQTT trigger client exited immediately (PID: $TRIGGER_PID)."
+                echo "Action: run this command manually to inspect logs:"
+                echo "  $PYTHON_EXEC $MQTT_TRIGGER_CLIENT"
+                exit 1
+            fi
+            echo "MQTT trigger client is running (PID: $TRIGGER_PID)."
         fi
 
         # 3. Run selected test
@@ -178,7 +304,7 @@ case $test_choice in
 
     3)
         echo ">>> Starting UI server (Node/src/ui/server.py) in background:"
-        $PYTHON_EXEC -u "$NODE_DIR/src/ui/server.py" & 
+        $PYTHON_EXEC "$NODE_DIR/src/ui/server.py" > /dev/null 2>&1 &
         SERVER_PID=$!
         echo "Waiting for server on port 5001..."
         for _ in $(seq 1 15); do

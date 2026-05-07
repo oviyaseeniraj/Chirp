@@ -4,7 +4,6 @@ import time
 import numpy as np
 from . import config
 
-
 class DataAcquisition:
     def __init__(self, debug_level=1):
         """

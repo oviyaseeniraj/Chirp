@@ -103,9 +103,6 @@ class RangeDoppler:
         self.plan()
         rdm = self.fftw_out
 
-        rdm = np.fft.fftshift(rdm, axes=(1))
-
-
         t2 = time.perf_counter()
 
         # Apply IIR filter on complex data
@@ -123,6 +120,7 @@ class RangeDoppler:
         t4 = time.perf_counter()
 
         avg = avg.reshape((config.SLOW_TIME, config.FAST_TIME))
+        avg = np.fft.fftshift(avg, axes=(0))
         t5 = time.perf_counter()
 
         return avg.ravel()
@@ -151,7 +149,7 @@ class RangeDoppler:
         mag2 = rdm.real * rdm.real + rdm.imag * rdm.imag
         mag = np.log2(mag2) * 0.5
 
-        avg = mag.reshape((config.TX * config.RX, config.SLOW_TIME * config.FAST_TIME).mean(axis=0))
+        avg = mag.reshape((config.TX * config.RX, config.SLOW_TIME * config.FAST_TIME)).mean(axis=0)
 
         mn = avg.min()
         mx = avg.max()

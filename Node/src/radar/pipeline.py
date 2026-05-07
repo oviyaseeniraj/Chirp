@@ -250,6 +250,7 @@ def processing_process(raw_queue, processed_queue, node_id, calib_queue=None, de
             rdm.set_buffer(np.array(frame_data, dtype=np.int16))
             rdm_mag = rdm.process().reshape(config.SLOW_TIME, config.FAST_TIME)
             clean_rdm = rdm.get_clean_rdm()
+            
             t2 = time.perf_counter_ns()
             frame_num += 1
 
@@ -275,7 +276,7 @@ def processing_process(raw_queue, processed_queue, node_id, calib_queue=None, de
 
             # 5. 3D DBSCAN - produce centroids with (range, doppler, angle) information
             dbscan_data_2d, dbscan_angles, centroids = dbscan_process(detection_coords_3d, cfar_data.shape)
-            t4c = time.perf_counter_ns()
+            t5 = time.perf_counter_ns()
 
             # 6. Centroid Processing
             centroids_map, centroids_angles = centroid_process(centroids, cfar_data.shape)
@@ -406,6 +407,7 @@ def processing_process(raw_queue, processed_queue, node_id, calib_queue=None, de
 
                 print(f"Track {tid} {confirmed} at x={state[0]:.2f}, y={state[3]:.2f}, misses={misses}, avg det={detection}, implied det after correction = {implied_detection}, Distance: {jpda.detection_maha_sq_distance(detection, implied_detection,S)}")
 
+            t8 = time.perf_counter_ns()
             #print(np.sum(confirmed_tracks_map))
             #print(np.sum(confirmed_tracks_angles))
 
@@ -507,6 +509,7 @@ def processing_process(raw_queue, processed_queue, node_id, calib_queue=None, de
                 except Full:
                     pass
 
+            #print(serialized_tracks)
             output_data = {
                 "node_id": node_id,
                 "timestamp": frame_timestamp_ms,
@@ -529,7 +532,7 @@ def processing_process(raw_queue, processed_queue, node_id, calib_queue=None, de
             except Full:
                 pass
 
-            t6 = time.perf_counter_ns()
+            t9 = time.perf_counter_ns()
 
             # Print timing every 10 frames with FPS
             frame_count += 1
@@ -539,8 +542,8 @@ def processing_process(raw_queue, processed_queue, node_id, calib_queue=None, de
                 print(
                     f"[PROCESSING] FPS: {fps:.2f} | Avg: {avg_interval * 1000:.1f}ms | "
                     f"Total: {(t6 - t0) // 1_000}us, RDM: {(t2 - t1) // 1_000}us, CFAR: {(t3 - t2) // 1_000}us, "
-                    f"ANGLE: {(t4 - t3) // 1_000}us, 3D_MAP: {(t4b - t4) // 1_000}us, DBSCAN3D: {(t4c - t4b) // 1_000}us, "
-                    f"CENTROID: {(t5 - t4c) // 1_000}us"
+                    f"ANGLE: {(t4 - t3) // 1_000}us, DBSCAN3D: {(t5 - t4) // 1_000}us, CENTROID: {(t6 - t5) // 1_000}us, "
+                    f"JPDA: {(t7 - t6) // 1_000}us"
                 )
                 print(
                     f"CFAR Detections: {np.sum(cfar_data > 0)} | 3D Clusters: {len(centroids) if centroids else 0}"

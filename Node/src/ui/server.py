@@ -333,10 +333,11 @@ def process_frame(data):
     proc_time = (time.time() - start_time) * 1000
 
     
-    print(confirmed_tracks)
+    #print(confirmed_tracks)
     payload = {
         "image": image_data, 
         "detections": detections,
+        "confirmed_tracks": confirmed_tracks,
         "cluster_count": data.get("cluster_count", 0),
         "clusters": data.get("clusters", []),
         "mime": "image/jpeg"

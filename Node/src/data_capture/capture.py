@@ -123,29 +123,25 @@ class CaptureSession:
         # If our `rdm.get_clean_rdm()` ALREADY returns (SLOW, RX, TX, FAST), 
         # then we just need to stack them.
 
+        if data_type == "raw":
+            from ..radar.processing.rdm import RangeDoppler
+            rdm_processor = RangeDoppler()
+
         for filename in npy_files:
             file_path = os.path.join(input_dir, filename)
             data = np.load(file_path)
             
             if data_type == "raw":
-                # Raw data from the radar is interleaved IQ, usually uint16 in the buffer
-                # but physically represents signed values. View as int16.
-                data_int = data.view(np.int16)
-                # Convert to complex: I + jQ (interleaved)
-                # We use float32 for the complex components.
-                data = data_int[0::2].astype(np.float32) + 1j * data_int[1::2].astype(np.float32)
-            
-            # TFG.py Re-shaping logic check:
-            # TFG.py: 
-            #   frame_data = daq.process_v6().copy()
-            #   rdm.set_buffer(np.array(frame_data, dtype=np.float32))
-            #   cube = rdm.shape_cube_vect()  <-- This was used in TFG!
-            # 
-            # In our new `rdm.py`, `get_clean_rdm()` is likely the equivalent or better.
-            # Let's assume `get_clean_rdm()` returns the correct final shape.
+                # Use RangeDoppler to correctly reshape the interleaved ADC data
+                rdm_processor.set_buffer(data)
+                cube = rdm_processor.shape_cube_vect()  # Returns (TX * RX, SLOW, FAST)
+                
+                # Reshape and transpose to match (SLOW, RX, TX, FAST)
+                from ..radar import config
+                cube = cube.reshape((config.TX, config.RX, config.SLOW_TIME, config.FAST_TIME))
+                data = cube.transpose(2, 1, 0, 3)
             
             all_frames.append(data)
-            # print(f"Processed {filename} shape: {data.shape}")
 
         if not all_frames:
             print("No valid frames processed.")

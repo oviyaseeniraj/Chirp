@@ -166,7 +166,10 @@ def rd_bin_to_val(range_bin,vel_bin):
 
 
 current_frame_time = datetime.now()
+previous_frame_time = datetime.now()
 def processing_process(raw_queue, processed_queue, node_id, calib_queue=None, device=None, save_calibration=True, visualize_clusters_only=False, **cfar_kwargs):
+    global current_frame_time, previous_frame_time
+    
     """
     Signal processing pipeline: RDM -> CFAR -> Angle -> 3D Mapping -> DBSCAN -> Centroids.
     """
@@ -194,7 +197,8 @@ def processing_process(raw_queue, processed_queue, node_id, calib_queue=None, de
     #multi-track parameters
     threshold_init = config.THRESHOLD_INIT,
     threshold_hit_miss = config.THRESHOLD_HIT_MISS,
-    threshold_merge = config.THRESHOLD_MERGE
+    threshold_merge = config.THRESHOLD_MERGE,
+    process_noise = config.PROCESS_NOISE
     )
 
     last_frame_time = None
@@ -228,6 +232,7 @@ def processing_process(raw_queue, processed_queue, node_id, calib_queue=None, de
             # Non-blocking get with timeout to minimize wait time
             try:
                 frame_data = raw_queue.get(timeout=1.0)
+                previous_frame_time = current_frame_time
                 current_frame_time = datetime.now()
 
             except Empty:
@@ -356,7 +361,9 @@ def processing_process(raw_queue, processed_queue, node_id, calib_queue=None, de
 
             all_tracks = (confirmed_tracks or []) + (tentative_tracks or [])
 
+            print("Frame Time Difference:", current_frame_time - previous_frame_time)
             print(f"Time: {current_frame_time} Confirmed: {len(confirmed_tracks)} | Tentative: {len(tentative_tracks)}")
+            
             for track in all_tracks:
                 tid = track['TrackID']
                 state = track['State'] # [x, vx, y, vy]

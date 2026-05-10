@@ -22,13 +22,14 @@ from stonesoup.types.detection import Detection
 
 from stonesoup.types.hypothesis import SingleHypothesis
 
-
 class RDAConstantVelocityTransitionModel(LinearGaussianTransitionModel):
 
     #def __init__(self, process_noise):
     #    super().__init__()
     #    self.process_noise = CovarianceMatrix(process_noise)
-    process_noise: np.ndarray = Property(doc="Process noise covariance matrix")
+    process_noise_matrix: np.ndarray = Property(doc="Process noise covariance matrix")
+
+    sigma_a: float = Property(default = 0.1, doc="Acceleration noise standard deviation")
 
     @property
     def ndim_state(self):
@@ -47,9 +48,35 @@ class RDAConstantVelocityTransitionModel(LinearGaussianTransitionModel):
             [0.0, 0.0, 0.0, 1.0],
         ])
 
+    #def process_noise(self,sigma_a, dt):
+    #    """
+    #    Continuous white-noise acceleration model.
+    #
+    #    State ordering:
+    #        [x, vx, y, vy]
+    #    """
+
+    #    q2 = sigma_a ** 2
+
+    #    Q = q2 * np.array([
+    #        [dt**4 / 4, dt**3 / 2, 0.0,         0.0],
+    #        [dt**3 / 2, dt**2,     0.0,         0.0],
+    #        [0.0,       0.0,       dt**4 / 4,  dt**3 / 2],
+    #        [0.0,       0.0,       dt**3 / 2,  dt**2]
+    #    ])
+    #
+    #    return Q
 
     def covar(self, time_interval=None, **kwargs):
-        return self.process_noise
+        if hasattr(time_interval, "total_seconds"):
+            dt = time_interval.total_seconds()
+        else:
+            dt = float(time_interval)
+
+        return self.process_noise_matrix
+        #return CovarianceMatrix(
+        #    self.process_noise(self.sigma_a, dt)
+        #)
 
 class RDANonLinearMeasurementModel(NonLinearGaussianMeasurement):
     """
@@ -80,7 +107,7 @@ class RDANonLinearMeasurementModel(NonLinearGaussianMeasurement):
         r,d,a = self.measurement_function(state, noise = False, **kwargs).reshape(-1)
         
         u = np.pi* np.sin(a) 
-        print("angle (rad):",a,"spatial:",u)
+        #print("angle (rad):",a,"spatial:",u)
 
         z = np.array([ r, d, u ])
         if noise:
@@ -196,7 +223,9 @@ class JPDATracker:
 
         #use equal noise for all state quantities
         process_noise = kwargs.get("process_noise", np.eye(4) * 0.10)
-        self.transition_model = RDAConstantVelocityTransitionModel(process_noise=process_noise)
+        self.transition_model = RDAConstantVelocityTransitionModel(
+            process_noise_matrix=process_noise, 
+            sigma_a=sigma_a)
 
         #self.transition_model = CombinedLinearGaussianTransitionModel([
         #    ConstantVelocity(sigma_a**2),
@@ -679,7 +708,7 @@ class JPDATracker:
             
             # Get covariance - handle both GaussianState (.covariance) and GaussianStatePrediction (.covar)
             state_covar = getattr(state, 'covariance', None) or getattr(state, 'covar', None)
-            print(state_covar)
+            #print(state_covar)
             if state_covar is None:
                 print(f"Warning: Could not get covariance from state of type {type(state)}")
                 continue
@@ -693,7 +722,7 @@ class JPDATracker:
 
                 # Innovation: [range, doppler, u]
                 squared_distance = self.detection_maha_sq_distance(det_meas, meas_pred,S)
-                print("Squared Distance:", squared_distance)
+                #print("Squared Distance:", squared_distance)
                 #innovation = det_meas - meas_pred
                 
                 # Normalize angle difference to [-pi, pi]
@@ -711,7 +740,7 @@ class JPDATracker:
                 if squared_distance > gating_threshold:
                     self.distance_matrix[trk_idx,det_idx] = np.inf
                     
-                    print("set inf")
+                    #print("set inf")
                     #print(self.distance_matrix)
                 else:
                     self.distance_matrix[trk_idx,det_idx] = normalized_maha_distance
@@ -1185,11 +1214,11 @@ class JPDATracker:
                 x_minus = predicted_state.state_vector.reshape(-1, 1).flatten()
                 P_minus = predicted_state.covar
 
-                print("predicted state covariance:",P_minus)
+                #print("predicted state covariance:",P_minus)
                 
                 # EKF Matrices
                 z_minus = self.measurement_model.measurement_function_spatial(predicted_state).flatten()
-                print("prior_predicted_meas (spatial):",z_minus.flatten())
+                #print("prior_predicted_meas (spatial):",z_minus.flatten())
 
                 H = self.measurement_model.measurement_jacobian_spatial(predicted_state)
                 R = self.measurement_model.noise_covar
@@ -1201,7 +1230,7 @@ class JPDATracker:
                     S_inv = np.linalg.pinv(S)
                     
                 K = P_minus @ H.T @ S_inv
-                print("Kalman gain:",K)
+                #print("Kalman gain:",K)
 
                 beta_0 = track_probs[-1]
                 

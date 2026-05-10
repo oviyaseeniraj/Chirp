@@ -285,34 +285,12 @@ def processing_process(raw_queue, processed_queue, node_id, calib_queue=None, de
 
             # 6. Centroid Processing
             centroids_map, centroids_angles = centroid_process(centroids, cfar_data.shape)
-            
+                        
+            eps = 0.4
             rda_centroids = {}
-            #print('measurements bin:', " ")
             for label,data in centroids.items():
                 meas = data[0]
                 range_bin, vel_bin = meas[0], meas[1]
-                #print(meas[0], meas[1])
-                #print(range_bin,vel_bin)
-                angle = meas[2]
-
-                range_val, vel_val = rd_bin_to_val(range_bin, vel_bin)
-
-                #print(range_val,vel_val)
-                num_points = data[1]
-
-                rda_centroids[label] = (torch.tensor([range_val, vel_val, angle]), num_points)
-            print("")
-            print("")
-
-            print("centroids:",rda_centroids)
-            #print( [detection[1] for (detection,p) in rda_centroids.values()])
-            """
-            #Zero bin removal for centroids
-            eps = 0.2
-            rda_centroids = {}
-            for label,data in centroids.items():
-                meas = data[0]
-                vel_bin, range_bin = meas[0], meas[1]
 
                 #get rid of reflections
                 #if (range_bin > 256):
@@ -322,6 +300,7 @@ def processing_process(raw_queue, processed_queue, node_id, calib_queue=None, de
 
                 range_val, vel_val = rd_bin_to_val(range_bin, vel_bin)
                 
+                #Zero bin removal for centroids
                 if abs(vel_bin - 32) > eps: #keep moving targets
                     rda_centroids[label] = (torch.tensor([range_val, vel_val, angle]), num_points)
                 else:
@@ -342,7 +321,6 @@ def processing_process(raw_queue, processed_queue, node_id, calib_queue=None, de
                 if 0 <= range_bin < config.RANGE_BINS and 0 <= doppler_bin < config.DOPPLER_BINS:
                     filtered_centroids_map[doppler_bin, range_bin] = 1.0  # Mark the spot
                     filtered_centroids_angles[doppler_bin, range_bin] = np.rad2deg(angle_rad)
-        """
                     
             t6 = time.perf_counter_ns()
 
@@ -435,9 +413,9 @@ def processing_process(raw_queue, processed_queue, node_id, calib_queue=None, de
             # Pack output
             # If visualize_clusters_only is True, we overwrite regular RDM and CFAR 
             # with the centroids data to match the shim's visualization style.
-            final_array = centroids_map if visualize_clusters_only else rdm_mag
-            final_cfar = centroids_map if visualize_clusters_only else cfar_data
-            final_angles = centroids_angles if visualize_clusters_only else angle_data
+            final_array = filtered_centroids_map if visualize_clusters_only else rdm_mag
+            final_cfar = filtered_centroids_map if visualize_clusters_only else cfar_data
+            final_angles = filtered_centroids_angles if visualize_clusters_only else angle_data
 
             # Prepare cluster metadata for the visualizer
             clusters_meta = []

@@ -46,10 +46,15 @@ class RangeDoppler:
 
         if self.window_type == "blackman":
             self.window = np.blackman(config.FAST_TIME).astype(np.float32)
+            self.window_slow = np.blackman(config.SLOW_TIME).astype(np.float32)
+
         elif self.window_type == "hann":
             self.window = np.hanning(config.FAST_TIME).astype(np.float32)
+            self.window_slow = np.hanning(config.SLOW_TIME).astype(np.float32)
         else:
             self.window = np.ones(config.FAST_TIME, dtype=np.float32)
+            self.window_slow = np.ones(config.SLOW_TIME).astype(np.float32)
+
 
         # FFTW setup
         self.fftw_in = pyfftw.empty_aligned(
@@ -79,7 +84,8 @@ class RangeDoppler:
     def shape_cube_vect(self):
         # Fill mid vectorized
         self.mid.fill(0.0)
-        np.put(self.mid, self.mid_idx, self.adc_data_flat * self.window[self.fast])
+        windowed_data = self.adc_data_flat * self.window[self.fast] * self.window_slow[self.slow]
+        np.put(self.mid, self.mid_idx, windowed_data)
 
         # Form complex AFTER reorder
         self.adc_complex.real = self.mid[0::2]

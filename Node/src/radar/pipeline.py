@@ -198,7 +198,7 @@ def processing_process(raw_queue, processed_queue, node_id, calib_queue=None, de
     threshold_init = config.THRESHOLD_INIT,
     threshold_hit_miss = config.THRESHOLD_HIT_MISS,
     threshold_merge = config.THRESHOLD_MERGE,
-    process_noise = config.PROCESS_NOISE
+    #process_noise = config.PROCESS_NOISE
     )
 
     last_frame_time = None

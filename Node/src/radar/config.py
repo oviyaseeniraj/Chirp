@@ -93,7 +93,7 @@ MEASUREMENT_NOISE = np.array(
 )
 
 #
-SIGMA_A = 5
+SIGMA_A = 0.1
 
 PROCESS_NOISE = np.eye(4) * SIGMA_A
 #PROCESS_NOISE = 

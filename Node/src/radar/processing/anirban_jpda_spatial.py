@@ -27,7 +27,7 @@ class RDAConstantVelocityTransitionModel(LinearGaussianTransitionModel):
     #def __init__(self, process_noise):
     #    super().__init__()
     #    self.process_noise = CovarianceMatrix(process_noise)
-    process_noise_matrix: np.ndarray = Property(doc="Process noise covariance matrix")
+    #process_noise_matrix: np.ndarray = Property(doc="Process noise covariance matrix")
 
     sigma_a: float = Property(default = 0.1, doc="Acceleration noise standard deviation")
 
@@ -48,24 +48,26 @@ class RDAConstantVelocityTransitionModel(LinearGaussianTransitionModel):
             [0.0, 0.0, 0.0, 1.0],
         ])
 
-    #def process_noise(self,sigma_a, dt):
-    #    """
-    #    Continuous white-noise acceleration model.
-    #
-    #    State ordering:
-    #        [x, vx, y, vy]
-    #    """
+    def process_noise(self,sigma_a, dt):
+        """
+        Continuous white-noise acceleration model.
+    
+        State ordering:
+            [x, vx, y, vy]
+        """
 
-    #    q2 = sigma_a ** 2
+        return np.eye(4) * sigma_a
 
-    #    Q = q2 * np.array([
-    #        [dt**4 / 4, dt**3 / 2, 0.0,         0.0],
-    #        [dt**3 / 2, dt**2,     0.0,         0.0],
-    #        [0.0,       0.0,       dt**4 / 4,  dt**3 / 2],
-    #        [0.0,       0.0,       dt**3 / 2,  dt**2]
-    #    ])
-    #
-    #    return Q
+        #q2 = sigma_a ** 2
+        #print("Time interval:",dt)
+        #Q = q2 * np.array([
+        #    [dt**4 / 4, dt**3 / 2, 0.0,         0.0],
+        #    [dt**3 / 2, dt**2,     0.0,         0.0],
+        #    [0.0,       0.0,       dt**4 / 4,  dt**3 / 2],
+        #    [0.0,       0.0,       dt**3 / 2,  dt**2]
+        #])
+    
+        #return Q
 
     def covar(self, time_interval=None, **kwargs):
         if hasattr(time_interval, "total_seconds"):
@@ -73,10 +75,10 @@ class RDAConstantVelocityTransitionModel(LinearGaussianTransitionModel):
         else:
             dt = float(time_interval)
 
-        return self.process_noise_matrix
-        #return CovarianceMatrix(
-        #    self.process_noise(self.sigma_a, dt)
-        #)
+        #return self.process_noise_matrix
+        return CovarianceMatrix(
+            self.process_noise(self.sigma_a, dt)
+        )
 
 class RDANonLinearMeasurementModel(NonLinearGaussianMeasurement):
     """
@@ -222,9 +224,9 @@ class JPDATracker:
         # State vector: [x, vx, y, vy]
 
         #use equal noise for all state quantities
-        process_noise = kwargs.get("process_noise", np.eye(4) * 0.10)
+        #process_noise = kwargs.get("process_noise", np.eye(4) * 0.10)
         self.transition_model = RDAConstantVelocityTransitionModel(
-            process_noise_matrix=process_noise, 
+            #process_noise_matrix=process_noise, 
             sigma_a=sigma_a)
 
         #self.transition_model = CombinedLinearGaussianTransitionModel([
@@ -241,7 +243,7 @@ class JPDATracker:
         
         # Predictor and updater (use Extended Kalman for nonlinear measurement)
         self.predictor = ExtendedKalmanPredictor(self.transition_model)
-        self.updater = ExtendedKalmanUpdater(self.measurement_model)
+        #self.updater = ExtendedKalmanUpdater(self.measurement_model)
         
         # Track management
         self.next_track_id = 1
@@ -1230,7 +1232,7 @@ class JPDATracker:
                     S_inv = np.linalg.pinv(S)
                     
                 K = P_minus @ H.T @ S_inv
-                #print("Kalman gain:",K)
+                print("Kalman gain:",K)
 
                 beta_0 = track_probs[-1]
                 

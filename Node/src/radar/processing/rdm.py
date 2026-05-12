@@ -102,6 +102,8 @@ class RangeDoppler:
         np.copyto(self.fftw_in, cube)
         self.plan()
         rdm = self.fftw_out
+        
+        rdm = np.fft.fftshift(rdm, axes=(1))
 
         t2 = time.perf_counter()
 
@@ -120,7 +122,6 @@ class RangeDoppler:
         t4 = time.perf_counter()
 
         avg = avg.reshape((config.SLOW_TIME, config.FAST_TIME))
-        avg = np.fft.fftshift(avg, axes=(0))
         t5 = time.perf_counter()
 
         return avg.ravel()

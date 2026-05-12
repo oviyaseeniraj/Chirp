@@ -6,7 +6,7 @@ from multiprocessing import Process, Queue
 
 # Local imports
 from .radar import config
-from .radar.daq import DataAcquisition
+from .radar.daq_new import DataAcquisition
 from .radar.pipeline import daq_process, processing_process, socket_process, calibration_mqtt_process
 
 # ================= CONFIG =================

@@ -3,7 +3,7 @@ import time
 import numpy as np
 import scipy.io as sio
 import logging
-from ..radar.daq import DataAcquisition
+from ..radar.daq_new import DataAcquisition
 from ..radar.processing.rdm import RangeDoppler
 from ..radar import config
 

@@ -419,23 +419,23 @@ def processing_process(raw_queue, processed_queue, node_id, calib_queue=None, de
 
             # Prepare cluster metadata for the visualizer
             clusters_meta = []
-            if centroids:
-                for label, (centroid_vec, mass) in centroids.items():
+            if rda_centroids:
+                for label, (centroid_vec, mass) in rda_centroids.items():
                     c = centroid_vec.cpu().numpy()
 
-                    range_idx = float(c[0])
-                    doppler_idx = float(c[1])
+                    # rda_centroids contains physical values [range_m, doppler_mps, angle_rad]
+                    range_meters = float(c[0])
+                    doppler_meters_per_sec = float(c[1])
                     angle_rad = float(c[2])
 
-                    # multiply by range/velocity resolution, because each idx/bin of the RDM corresponds to a physical value
-                    range_meters = range_idx * config.RANGE_RES
-                    # subtract SLOW_TIME / 2 to remove the zero-centering from doppler_idx
-                    doppler_meters_per_sec = (doppler_idx - (config.SLOW_TIME / 2.0)) * config.VELOCITY_RES 
+                    # Calculate idx from physical values
+                    range_idx = range_meters / config.RANGE_RES
+                    doppler_idx = (doppler_meters_per_sec / config.VELOCITY_RES) + (config.SLOW_TIME / 2.0)
 
                     clusters_meta.append({
                         "id": int(label),
-                        "range_idx": range_idx,
-                        "doppler_idx": doppler_idx,
+                        "range_idx": float(range_idx),
+                        "doppler_idx": float(doppler_idx),
 
                         "range_m": float(range_meters),
                         "doppler_mps": float(doppler_meters_per_sec),
@@ -502,7 +502,7 @@ def processing_process(raw_queue, processed_queue, node_id, calib_queue=None, de
                 "array": final_array.astype(np.float32).tobytes(),
                 "angles": final_angles.astype(np.float32).tobytes() if final_angles is not None else b"",
                 "cfar": final_cfar.astype(np.float32).tobytes() if final_cfar is not None else b"",
-                "cluster_count": len(centroids) if centroids else 0,
+                "cluster_count": len(rda_centroids) if rda_centroids else 0,
                 "clusters": clusters_meta,
                 # Additional keys for internal tracking or alternative consumers
                 "rdm_centroids": centroids_map,

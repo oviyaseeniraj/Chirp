@@ -625,7 +625,7 @@ class ServerController:
                 "reason": "insufficient_common_frames",
                 "nodeIds": sorted(frame_data_snapshot.keys()),
             }
-            self.client.publish(result_topic, payload=json.dumps(result_payload), qos=1, retain=True)
+            self.client.publish(result_topic, payload=json.dumps(result_payload), qos=1, retain=False)
             logging.warning("[CALIB] Calibration failed commandId=%s", command_id)
             artifact_payload.update(
                 {
@@ -652,7 +652,7 @@ class ServerController:
                 "P_opt": _serialize_complex(P_opt),
                 "theta_opt": theta_opt.tolist(),
             }
-            self.client.publish(result_topic, payload=json.dumps(result_payload), qos=1, retain=True)
+            self.client.publish(result_topic, payload=json.dumps(result_payload), qos=1, retain=False)
             logging.info(
                 "[CALIB] Result published commandId=%s nodes=%s topic=%s",
                 command_id,

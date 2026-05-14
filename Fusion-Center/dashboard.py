@@ -125,6 +125,13 @@ class DashboardState:
                     payload.get("commandId"),
                     payload.get("nodeIds"),
                 )
+            else:
+                self.calibration = None
+                logging.info(
+                    "[DASHBOARD] Calibration cleared (ok=false) commandId=%s reason=%s",
+                    payload.get("commandId"),
+                    payload.get("reason"),
+                )
 
     def update_presence(self, node_id: str, payload: Dict) -> None:
         with self._lock:
@@ -259,6 +266,10 @@ def _build_mqtt_client() -> mqtt.Client:
             STATE.update_frame(node_id, payload)
 
         elif "/calibration/result" in topic:
+            # Broker replays retained messages with retain=1 on new subscriptions; those
+            # are from past runs and would falsely show "Calibrated" + stale node poses.
+            if getattr(msg, "retain", False):
+                return
             STATE.update_calibration(payload)
 
         elif topic.startswith(f"{TOPIC_PREFIX}/presence/"):

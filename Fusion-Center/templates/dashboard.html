@@ -490,9 +490,13 @@ function updateSidebar(data) {
 
   if (data.calibration_command_id) {
     cmdTag.textContent = 'cmd: ' + data.calibration_command_id.slice(0, 14) + '…';
+  } else {
+    cmdTag.textContent = 'cmd: —';
   }
   if (data.node_ids && data.node_ids.length) {
     groupTag.textContent = 'nodes: ' + data.node_ids.length;
+  } else {
+    groupTag.textContent = 'group: —';
   }
 
   // node cards

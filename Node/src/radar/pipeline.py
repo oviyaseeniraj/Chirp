@@ -453,6 +453,7 @@ def processing_process(raw_queue, processed_queue, node_id, calib_queue=None, de
 
             # Format confirmed tracks for JSON serialization
             serialized_tracks = []
+            tracks_for_calibration = []
             if confirmed_tracks:
                 for t in confirmed_tracks:
                     implied_detection = jpda.measurement_model.measurement_function(state).flatten()
@@ -470,6 +471,8 @@ def processing_process(raw_queue, processed_queue, node_id, calib_queue=None, de
                         'Last Detection': np.array(t['Detection']).flatten().tolist() if t['Detection'] is not None else [],
                         'Implied Detection': np.array(implied_detection).flatten().tolist()
                     })
+
+                    tracks_for_calibration.append( float(implied_detection) )
                     
 
             # Calibration Hook — use DBSCAN centroids instead of raw CFAR detections.
@@ -490,6 +493,7 @@ def processing_process(raw_queue, processed_queue, node_id, calib_queue=None, de
                             ]
                             for c in clusters_meta
                         ],
+                        "tracks": tracks_for_calibration
                     })
                 except Full:
                     pass

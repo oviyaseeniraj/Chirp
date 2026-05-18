@@ -44,12 +44,21 @@ class RangeDoppler:
 
         self.alpha = alpha
 
+        # Initialize background and background power
+        self.background = np.zeros((config.TX * config.RX, config.SLOW_TIME, config.FAST_TIME), dtype=np.complex64)
+        self.background_power = np.zeros((config.TX * config.RX, config.SLOW_TIME, config.FAST_TIME), dtype=np.float32)
+
         if self.window_type == "blackman":
             self.window = np.blackman(config.FAST_TIME).astype(np.float32)
+            self.window_slow = np.blackman(config.SLOW_TIME).astype(np.float32)
+
         elif self.window_type == "hann":
             self.window = np.hanning(config.FAST_TIME).astype(np.float32)
+            self.window_slow = np.hanning(config.SLOW_TIME).astype(np.float32)
         else:
             self.window = np.ones(config.FAST_TIME, dtype=np.float32)
+            self.window_slow = np.ones(config.SLOW_TIME).astype(np.float32)
+
 
         # FFTW setup
         self.fftw_in = pyfftw.empty_aligned(
@@ -79,7 +88,8 @@ class RangeDoppler:
     def shape_cube_vect(self):
         # Fill mid vectorized
         self.mid.fill(0.0)
-        np.put(self.mid, self.mid_idx, self.adc_data_flat * self.window[self.fast])
+        windowed_data = self.adc_data_flat * self.window[self.fast] * self.window_slow[self.slow]
+        np.put(self.mid, self.mid_idx, windowed_data)
 
         # Form complex AFTER reorder
         self.adc_complex.real = self.mid[0::2]
@@ -88,9 +98,46 @@ class RangeDoppler:
         return self.adc_complex.reshape((config.TX * config.RX, config.SLOW_TIME, config.FAST_TIME))
 
     def iir_filter(self, rdm_complex):
-        self.background = self.alpha * rdm_complex + (1 - self.alpha) * self.background
         clean_rdm = rdm_complex - self.background
+        self.background = self.alpha * rdm_complex + (1 - self.alpha) * self.background
         return clean_rdm
+
+    def background_subtraction(self, rdm, alpha=0.005):
+        """
+        Simple adaptive background subtraction.
+
+        rdm shape:
+            (channels, doppler_bins, range_bins)
+        """
+
+        power = np.abs(rdm) ** 2
+
+        # Initialize background on first frame
+        if not hasattr(self, "background"):
+            self.background = rdm.copy()
+            self.background_power = power.copy()
+            return np.zeros_like(rdm)
+
+        # Detect cells that changed significantly
+        diff = power - self.background_power
+        threshold = 3 * diff.std()
+
+        # True where likely target exists
+        target_mask = diff > threshold
+
+        # Update only stable/background cells
+        self.background[~target_mask] = (
+            (1 - alpha) * self.background[~target_mask]
+            + alpha * rdm[~target_mask]
+        )
+
+        self.background_power[~target_mask] = (
+            (1 - alpha) * self.background_power[~target_mask]
+            + alpha * power[~target_mask]
+        )
+
+        # Remove learned background
+        return rdm - self.background
 
     def process(self):
         t0 = time.perf_counter()
@@ -105,11 +152,11 @@ class RangeDoppler:
 
         rdm = np.fft.fftshift(rdm, axes=(1))
 
-
         t2 = time.perf_counter()
 
         # Apply IIR filter on complex data
         # rdm = self.iir_filter(rdm)
+        rdm = self.background_subtraction(rdm)
 
         # Now compute magnitude squared
         mag2 = rdm.real * rdm.real + rdm.imag * rdm.imag
@@ -119,6 +166,8 @@ class RangeDoppler:
 
         avg = self.norm.reshape(config.RX * config.TX, config.SLOW_TIME * config.FAST_TIME).mean(axis=0)
         avg = (avg - avg.min()) / (avg.max() - avg.min()) * 255.0
+
+        # 
 
         t4 = time.perf_counter()
 

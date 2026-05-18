@@ -23,7 +23,7 @@ class DataAcquisition:
         
         # Allocate buffers
         # uint16_t equivalent - use numpy for better performance and matching C behavior
-        self.frame_data = np.zeros(config.BYTES_IN_FRAME // 2, dtype=np.int16) # Size in uint16
+        self.frame_data = np.zeros(config.BYTES_IN_FRAME // 2, dtype=np.int16) # Size in int16
         self.buffer = bytearray(config.BUFFER_SIZE)
         
         self.sockfd = None

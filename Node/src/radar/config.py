@@ -4,7 +4,7 @@ Radar System Configuration
 
 import numpy as np
 
-USE_CUDA = True
+USE_CUDA = False
 
 # Dimension Parameters
 FAST_TIME = 512
@@ -14,8 +14,6 @@ TX = 3  # Number of transmit antennas
 IQ = 2  # I and Q channels
 IQ_BYTES = 2  # Bytes per IQ sample
 BUFFER_SIZE = 2048
-
-
 
 # Physical Parameters (from MATLAB)
 SPEED_OF_LIGHT = 3e8
@@ -34,9 +32,17 @@ T_CHIRP_RAMP_END_TIME = 60e-6
 T_CHIRP_RAMP = FAST_TIME/FS 
 
 
+T_IDLE = 7e-6 
+T_CHIRP_RAMP_END_TIME = 60e-6 
+
+#T_SAMPLING = 
+
+T_CHIRP_RAMP_DURATION = FAST_TIME/FS 
+
+
 # Derived Parameters
 #BW = 4.2492e9          # Bandwidth
-BW = S * T_CHIRP_RAMP
+BW = S * T_CHIRP_RAMP_DURATION
 LAMBDA = SPEED_OF_LIGHT / CARRIER_FREQ
 #T_CHIRP_RAMP = BW / S  # MATLAB: T_chirp_ramp
 
@@ -78,12 +84,20 @@ RANGE_ANGLE_PLOT_HEIGHT = 300
 
 # Measurement Noise Parameters (for Mahalanobis distance)
 SIGMA_RANGE = 0.035
-SIGMA_DOPPLER = 0.2
+SIGMA_DOPPLER = 0.1534
+#SIGMA_AZIMUTH = np.pi / 4
 SIGMA_AZIMUTH = np.pi / 4
 
 MEASUREMENT_NOISE = np.array(
     [[SIGMA_RANGE**2, 0, 0], [0, SIGMA_DOPPLER**2, 0], [0, 0, SIGMA_AZIMUTH**2]]
 )
+
+#
+SIGMA_A = 0.1
+
+PROCESS_NOISE = np.eye(4) * SIGMA_A
+#PROCESS_NOISE = 
+
 
 #JPDA Parameters
 AZIMUTH_SPAN = 2 * np.pi 
@@ -92,6 +106,7 @@ DOPPLER_SPAN = MAX_VELOCITY
 MEASUREMENT_VOLUME = RANGE_SPAN * DOPPLER_SPAN * AZIMUTH_SPAN
 CLUTTER_DENSITY = 5 / MEASUREMENT_VOLUME
 DETECTION_PROBABILITY = 0.9
+#GATING_THRESHOLD = 12
 GATING_THRESHOLD = 12
 MAX_NUM_FEASIBLE_JOINT_EVENTS = 3
 

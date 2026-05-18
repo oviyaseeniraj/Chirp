@@ -66,11 +66,6 @@ INTERFACE=$(nmcli device status | grep ethernet | awk '{print $1}' | head -n 1)
 sudo ip addr add dev $INTERFACE 192.168.33.30/24
 sudo nmcli con mod $INTERFACE ipv4.addresses 192.168.33.30/24
 
-pushd ../setup_radar
-cmake -S . -B build
-cmake --build build
-popd
-
 echo "Please reboot the system to apply all changes."
 # Radar Permissions
 # Chrony setup

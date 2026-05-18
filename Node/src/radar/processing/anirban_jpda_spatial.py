@@ -1,16 +1,18 @@
 import numpy as np
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional
 from datetime import datetime, timedelta
 
 from dataclasses import dataclass, field
 
-from stonesoup.models.transition.linear import CombinedLinearGaussianTransitionModel, ConstantVelocity
+from stonesoup.models.transition.linear import CombinedLinearGaussianTransitionModel, ConstantVelocity, LinearGaussianTransitionModel
 from stonesoup.models.measurement.nonlinear import NonLinearGaussianMeasurement
 from stonesoup.predictor.kalman import ExtendedKalmanPredictor
 from stonesoup.updater.kalman import ExtendedKalmanUpdater
 from stonesoup.hypothesiser.probability import PDAHypothesiser
 from stonesoup.dataassociator.probability import JPDA
 from stonesoup.types.detection import Detection, MissedDetection
+
+from stonesoup.base import Property
 
 from stonesoup.types.state import (
     State, GaussianState, StateVector, CovarianceMatrix
@@ -19,6 +21,64 @@ from stonesoup.types.track import Track
 from stonesoup.types.detection import Detection
 
 from stonesoup.types.hypothesis import SingleHypothesis
+
+class RDAConstantVelocityTransitionModel(LinearGaussianTransitionModel):
+
+    #def __init__(self, process_noise):
+    #    super().__init__()
+    #    self.process_noise = CovarianceMatrix(process_noise)
+    #process_noise_matrix: np.ndarray = Property(doc="Process noise covariance matrix")
+
+    sigma_a: float = Property(default = 0.1, doc="Acceleration noise standard deviation")
+
+    @property
+    def ndim_state(self):
+        return 4
+
+    def matrix(self, time_interval, **kwargs):
+        if hasattr(time_interval, "total_seconds"):
+            dt = time_interval.total_seconds()
+        else:
+            dt = float(time_interval)
+
+        return np.array([
+            [1.0, dt,  0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, dt ],
+            [0.0, 0.0, 0.0, 1.0],
+        ])
+
+    def process_noise(self,sigma_a, dt):
+        """
+        Continuous white-noise acceleration model.
+    
+        State ordering:
+            [x, vx, y, vy]
+        """
+
+        return np.eye(4) * sigma_a
+
+        #q2 = sigma_a ** 2
+        #print("Time interval:",dt)
+        #Q = q2 * np.array([
+        #    [dt**4 / 4, dt**3 / 2, 0.0,         0.0],
+        #    [dt**3 / 2, dt**2,     0.0,         0.0],
+        #    [0.0,       0.0,       dt**4 / 4,  dt**3 / 2],
+        #    [0.0,       0.0,       dt**3 / 2,  dt**2]
+        #])
+    
+        #return Q
+
+    def covar(self, time_interval=None, **kwargs):
+        if hasattr(time_interval, "total_seconds"):
+            dt = time_interval.total_seconds()
+        else:
+            dt = float(time_interval)
+
+        #return self.process_noise_matrix
+        return CovarianceMatrix(
+            self.process_noise(self.sigma_a, dt)
+        )
 
 class RDANonLinearMeasurementModel(NonLinearGaussianMeasurement):
     """
@@ -33,20 +93,32 @@ class RDANonLinearMeasurementModel(NonLinearGaussianMeasurement):
 
     def measurement_function(self, state, noise=False, **kwargs) -> np.ndarray:
         state_vec = state.state_vector if hasattr(state, 'state_vector') else state
-        x, vx, y, vy = state_vec.flat  # <-- fixed order
+        x, vx, y, vy = np.asarray(state_vec).reshape(-1)  # <-- fixed order
 
         r = np.sqrt(x**2 + y**2)
         d = (x * vx + y * vy) / r if r > 1e-6 else 0.0
         a = np.arctan2(y, x)
 
-        z = np.array([ [r], [d], [a] ])
+        z = np.array([ r, d, a ])
+        if noise:
+            z += np.random.multivariate_normal(np.zeros(3), self.noise_covar)
+            
+        return z
+    
+    def measurement_function_spatial(self, state, noise=False, **kwargs) -> np.ndarray:
+        r,d,a = self.measurement_function(state, noise = False, **kwargs).reshape(-1)
+        
+        u = np.pi* np.sin(a) 
+        #print("angle (rad):",a,"spatial:",u)
+
+        z = np.array([ r, d, u ])
         if noise:
             z += np.random.multivariate_normal(np.zeros(3), self.noise_covar)
             
         return z
     
     def function(self, state, noise=False, **kwargs):
-        return self.measurement_function(state, noise=False, **kwargs)
+        return self.measurement_function_spatial(state, noise=False, **kwargs)
 
 
     def measurement_jacobian(self, state, **kwargs) -> np.ndarray:
@@ -70,8 +142,29 @@ class RDANonLinearMeasurementModel(NonLinearGaussianMeasurement):
         ])
         return H
     
+    def measurement_jacobian_spatial(self, state, **kwargs) -> np.ndarray:
+        H = self.measurement_jacobian(state,**kwargs)
+        
+        r,d,a = self.measurement_function(state,noise=False,**kwargs)
+
+        Hu = H.copy()
+        #print(H)
+        #print(H[2,:])
+
+        Hu[2,:] = np.pi*np.cos(a)*H[2,:]
+        
+        #print(a)
+        #print(Hu[2,:])
+
+        #print(a)
+        #print(H)
+        #print(Hu[2,:])
+        #print(Hu)
+
+        return Hu
+    
     def jacobian(self, state, noise=False, **kwargs):
-        return self.measurement_jacobian(state, noise=False, **kwargs)
+        return self.measurement_jacobian_spatial(state, **kwargs)
     
     def _measurement_to_state(self, z: np.ndarray) -> np.ndarray:
         # z = [range, doppler, angle]
@@ -108,13 +201,15 @@ class JPDATracker:
 
         self.detections = None
         self.time_interval = 0.1
-
+        
         #other parameters
         threshold_init = kwargs.get('threshold_init', 0.05)
         threshold_hit_miss = kwargs.get('threshold_hit_miss', 0.3)
         threshold_merge = kwargs.get('threshold_merge', 7)
 
         self.distance_matrix_before_threshold = None
+
+        self.distance_matrix = None
 
         self.threshold_init = threshold_init
         self.threshold_hit_miss = threshold_hit_miss
@@ -127,10 +222,17 @@ class JPDATracker:
         #Stone Soup initialization
         # Transition model: Combined Constant Velocity in 2D
         # State vector: [x, vx, y, vy]
-        self.transition_model = CombinedLinearGaussianTransitionModel([
-            ConstantVelocity(sigma_a**2),
-            ConstantVelocity(sigma_a**2)
-        ])
+
+        #use equal noise for all state quantities
+        #process_noise = kwargs.get("process_noise", np.eye(4) * 0.10)
+        self.transition_model = RDAConstantVelocityTransitionModel(
+            #process_noise_matrix=process_noise, 
+            sigma_a=sigma_a)
+
+        #self.transition_model = CombinedLinearGaussianTransitionModel([
+        #    ConstantVelocity(sigma_a**2),
+        #    ConstantVelocity(sigma_a**2)
+        #])
 
         # Initialize Stone Soup measurement model
         self.measurement_model = RDANonLinearMeasurementModel(
@@ -141,7 +243,7 @@ class JPDATracker:
         
         # Predictor and updater (use Extended Kalman for nonlinear measurement)
         self.predictor = ExtendedKalmanPredictor(self.transition_model)
-        self.updater = ExtendedKalmanUpdater(self.measurement_model)
+        #self.updater = ExtendedKalmanUpdater(self.measurement_model)
         
         # Track management
         self.next_track_id = 1
@@ -201,6 +303,23 @@ class JPDATracker:
             for label, (centroid, num_point) in detection_centroids.items()
         ]
 
+        detections_spatial = []
+        for label, (centroid, num_point) in detection_centroids.items():
+            # centroid is typically [range, doppler, angle]
+            converted_centroid = np.array([
+                centroid[0],               # range
+                centroid[1],               # doppler
+                np.pi* np.sin(centroid[2])        # angle -> spatial frequency
+            ])
+            detections_spatial.append(
+                Detection(
+                    StateVector(converted_centroid.reshape(-1, 1)),
+                    timestamp=timestamp
+                )
+            )
+
+        self.detections_spatial = detections_spatial
+        #use to display tracker info
         self.detections = detections
         
         # Step 1: Predict all existing tracks
@@ -218,14 +337,13 @@ class JPDATracker:
             # Pass the pre-computed associations to avoid re-calculating inside update
             
             #3 lists, of size n, where n is the number of tracks
-            associations = self.get_soft_associations_and_marginals(detections,
+            associations = self.get_soft_associations_and_marginals(detections_spatial,
                                                                     self.tracks,
                                                                     self.prob_detect,
                                                                     self.clutter_density,
                                                                     self.gating_threshold
                                                                     )
-            
-            self.update(detections, timestamp, associations=associations)
+            self.update(detections_spatial, timestamp, associations=associations)
         
         # Step 3: Initialize new tracks from same associations
         if detections:
@@ -419,6 +537,7 @@ class JPDATracker:
         # Step 1: Convert distances to likelihoods
         likelihood_matrix = self.get_likelihood_matrix(distance_matrix, detection_probability, clutter_density)
         
+        #print("Likelihood matrix:",likelihood_matrix)
         # Step 2: Generate feasible joint events (enforces mutual exclusion)
        
         #if relaxed:
@@ -427,6 +546,9 @@ class JPDATracker:
         #else:
         
         FJE, FJE_Probs = self.jpda_events(likelihood_matrix, max_num_feasible_joint_events)
+
+        #print("FJE:",FJE)
+        #print("FJE_Probs:", FJE_Probs)
         # Step 3: Marginalize to get association probabilities
         probabilities_tracks_detections, probabilities_detections_clutter, probabilities_effective_track_hit = \
             self.compute_marginal_probabilities_from_events(
@@ -520,6 +642,7 @@ class JPDATracker:
         
         likelihood_matrix = np.zeros((n_trk + 1, n_det + 1))
         
+        print(distance_matrix)
         # Column 0: missed detection, Row 0: clutter
         likelihood_matrix[:,0] = 1 - detection_probability
         likelihood_matrix[0,:] = clutter_density
@@ -535,8 +658,8 @@ class JPDATracker:
     def detection_maha_sq_distance(self,det1,det2, S):
         innovation = det1 - det2
         
-        # Normalize angle difference to [-pi, pi]
-        innovation[2] = np.arctan2(np.sin(innovation[2]), np.cos(innovation[2]))
+        # Normalize spatial frequency difference to [-pi, pi]
+        #innovation[2] = np.arctan2(np.sin(innovation[2]), np.cos(innovation[2]))
         
         try:
             squared_distance = innovation @ np.linalg.solve(S, innovation)
@@ -568,11 +691,10 @@ class JPDATracker:
         n_det = len(detection_centroids)
         n_trk = len(track_ids_list)
         
-        distance_matrix = np.zeros((n_trk, n_det))
+        self.distance_matrix = np.zeros((n_trk, n_det))
 
-        self.distance_matrix_before_threshold = distance_matrix
+        self.distance_matrix_before_threshold = self.distance_matrix.copy()
 
-        
         for trk_idx, track_id in enumerate(track_ids_list):
             track_info = track_dict[track_id]
             
@@ -580,14 +702,15 @@ class JPDATracker:
             state = track_info[-1]  # GaussianState
             state_vec = state.state_vector.flatten()  # [x, vx, y, vy]
             
-            # Predicted measurement: [range, doppler, angle]
-            meas_pred = model.measurement_function(state).flatten()
+            # Predicted measurement (in spatial frequency): [range, doppler, u]
+            meas_pred = model.measurement_function_spatial(state).flatten()
             
             # Measurement Jacobian
-            H = model.measurement_jacobian(state)
+            H = model.measurement_jacobian_spatial(state)
             
             # Get covariance - handle both GaussianState (.covariance) and GaussianStatePrediction (.covar)
             state_covar = getattr(state, 'covariance', None) or getattr(state, 'covar', None)
+            #print(state_covar)
             if state_covar is None:
                 print(f"Warning: Could not get covariance from state of type {type(state)}")
                 continue
@@ -599,8 +722,9 @@ class JPDATracker:
                 # Extract measurement vector from Detection object
                 det_meas = detection_centroids[det_idx].state_vector.flatten()
 
-                # Innovation: [range, doppler, angle]
+                # Innovation: [range, doppler, u]
                 squared_distance = self.detection_maha_sq_distance(det_meas, meas_pred,S)
+                #print("Squared Distance:", squared_distance)
                 #innovation = det_meas - meas_pred
                 
                 # Normalize angle difference to [-pi, pi]
@@ -616,17 +740,19 @@ class JPDATracker:
                 #print(S, np.linalg.det(S))
 
                 if squared_distance > gating_threshold:
-                    distance_matrix[trk_idx,det_idx] = np.inf
+                    self.distance_matrix[trk_idx,det_idx] = np.inf
+                    
                     #print("set inf")
+                    #print(self.distance_matrix)
                 else:
-                    distance_matrix[trk_idx,det_idx] = normalized_maha_distance
+                    self.distance_matrix[trk_idx,det_idx] = normalized_maha_distance
         
 
                 #use for selecting threshold
                 self.distance_matrix_before_threshold[trk_idx,det_idx] = normalized_maha_distance
 
-        
-        return distance_matrix
+        #print(self.distance_matrix)
+        return self.distance_matrix
 
     def jpda_events(self,likelihood_matrix: np.ndarray, 
                     max_events: int) -> Tuple[np.ndarray, np.ndarray]:
@@ -799,6 +925,9 @@ class JPDATracker:
     def _create_new_track_object(self, detection: Detection, track_id: int) -> Track:
         """Helper to convert detection to initial state and Track object."""
         z = np.asarray(detection.state_vector).flatten()
+        #x_init = [0 ,0 ,0 ,0]
+
+        
         x_init = self.measurement_model._measurement_to_state(z)
         
         initial_state = GaussianState(
@@ -1065,32 +1194,35 @@ class JPDATracker:
             prob_hit = associations.probabilities_effective_track_hit[track_idx]
             
             print(f"prob_hit: {prob_hit}")
+            print("probs:",track_probs)
             # MATLAB threshold_hit_miss = 0.3
             if prob_hit < self.threshold_hit_miss:
                 self._register_miss(track_id)
-                print("missed",prob_hit)
-                print("probs:",track_probs)
+                #print("hit",prob_hit)
+                #print("probs:",track_probs)
                 # Keep the predicted state (already appended by predict())
                 predicted_state = track[-1]
-                expected_z = self.measurement_model.measurement_function(predicted_state)
+                expected_z = self.measurement_model.measurement_function_spatial(predicted_state)
                 self.track_metadata[track_id]['last_weighted_meas'] = expected_z.flatten()
                 self.track_metadata[track_id]['last_predicted_meas'] = expected_z.flatten()
 
-                print(self.measurement_model.measurement_function(track[-1]))
-                print(self.measurement_model.measurement_function(self.predictor.predict(track[-1],timestamp).state_vector).flatten())
+                #print(self.measurement_model.measurement_function(predicted_state))
+                #print(self.measurement_model.measurement_function(self.predictor.predict(track[-1],timestamp).state_vector).flatten())
                 continue
             
             # Soft Update: Moment Matching (True JPDA EKF Math)
             try:
                 predicted_state = track[-1]
-                x_minus = predicted_state.state_vector.reshape(-1, 1)
+                x_minus = predicted_state.state_vector.reshape(-1, 1).flatten()
                 P_minus = predicted_state.covar
+
+                #print("predicted state covariance:",P_minus)
                 
                 # EKF Matrices
-                z_minus = self.measurement_model.measurement_function(predicted_state)
-                print("prior_predicted_meas:",z_minus.flatten())
+                z_minus = self.measurement_model.measurement_function_spatial(predicted_state).flatten()
+                #print("prior_predicted_meas (spatial):",z_minus.flatten())
 
-                H = self.measurement_model.measurement_jacobian(predicted_state)
+                H = self.measurement_model.measurement_jacobian_spatial(predicted_state)
                 R = self.measurement_model.noise_covar
                 
                 S = H @ P_minus @ H.T + R
@@ -1100,7 +1232,8 @@ class JPDATracker:
                     S_inv = np.linalg.pinv(S)
                     
                 K = P_minus @ H.T @ S_inv
-                
+                print("Kalman gain:",K)
+
                 beta_0 = track_probs[-1]
                 
                 # Accumulators for standard JPDA formulas
@@ -1108,36 +1241,45 @@ class JPDATracker:
                 spread_innov_sum = np.zeros_like(S) # Sum of β_i * (y_i - h(x_k^-))(y_i - h(x_k^-))^T
                 weighted_meas = np.zeros(3)
 
+                #print("weighting")
                 for det_idx in range(n_det):
                     beta_i = track_probs[det_idx]
                     if beta_i > 0:
-                        y_i = detections[det_idx].state_vector
+                        y_i = detections[det_idx].state_vector.flatten()
                         weighted_meas += beta_i * y_i.flatten()
                         
                         innov = y_i - z_minus
-                        # Normalize angle wrapping
-                        innov[2, 0] = np.arctan2(np.sin(innov[2, 0]), np.cos(innov[2, 0]))
+                        # Normalize wrapping (but not for spatial frequency)
+                        #innov[2] = np.arctan2(np.sin(innov[2]), np.cos(innov[2]))
                         
                         delta_y += beta_i * innov
-                        spread_innov_sum += beta_i * (innov @ innov.T)
+                        spread_innov_sum += beta_i * np.outer(innov, innov)
                 
                 # Add missed detection expected measurement expectation
-                if beta_0 > 0:
-                    weighted_meas += beta_0 * z_minus.flatten()
-                else:
-                    print("beta_0: {beta_0}")
+                #if beta_0 > 0:
+                #    weighted_meas += beta_0 * z_minus.flatten()
+                #else:
+                #    print("beta_0: {beta_0}")
                 
+                #print("huh")
                 # 1. State Update: x_k+ = x_k- + K_k * δy
                 x_plus = x_minus + K @ delta_y
                 
                 # 2. Covariance Update Spread Term: P_c = K_k * [Sum(...) - δy * δy^T] * K_k^T
-                P_c = K @ (spread_innov_sum - delta_y @ delta_y.T) @ K.T
+                P_c = K @ (spread_innov_sum - np.outer(delta_y,delta_y) ) @ K.T
+
+                #print(np.shape(K @ np.outer(delta_y, delta_y) @ K.T))
+                #print(np.shape(P_c))
                 
                 # 3. Final Covariance: P_k+ = P_k- - (1 - β_0) * K_k * S_k * K_k^T + P_c
                 P_plus = P_minus - (1 - beta_0) * (K @ S @ K.T) + P_c
                 
+                print("posterior state covariance:",P_plus)
+
                 # Enforce symmetry constraints on covariance matrix just to be safe
                 P_plus = (P_plus + P_plus.T) / 2.0
+
+                #print("symmetric process covariance:",P_plus)
                 
                 # REPLACE the predicted state with the fused state
                 track[-1] = GaussianState(
@@ -1147,10 +1289,10 @@ class JPDATracker:
                 )
 
                 self.track_metadata[track_id]['last_weighted_meas'] = weighted_meas
-                self.track_metadata[track_id]['last_implied_meas'] = self.measurement_model.measurement_function(track[-1])
-                print("last_weighted_meas:",weighted_meas)
-                print("last_implied_meas",self.track_metadata[track_id]['last_implied_meas'].flatten() )
-                print("delta y:",delta_y.flatten())
+                self.track_metadata[track_id]['last_implied_meas'] = self.measurement_model.measurement_function_spatial(track[-1])
+                print("last_weighted_meas (spatial):",weighted_meas)
+                print("last_implied_meas (spatial)",self.track_metadata[track_id]['last_implied_meas'].flatten() )
+                print("delta y (spatial):",delta_y.flatten())
 
 
                 self._register_hit(track_id, prob_hit)
@@ -1252,6 +1394,10 @@ class JPDATracker:
             metadata = self.track_metadata[track_id]
             state = track[-1]
             
+            z = metadata.get('last_weighted_meas', np.array([0,0,0])); 
+            z[2] = np.arcsin(np.clip( z[2]/np.pi, -1.0 ,1.0) );  #convert back to spatial frequency
+
+
             track_dict = {
                 'TrackID': track_id,
                 'State': state.state_vector.flatten(),
@@ -1260,7 +1406,7 @@ class JPDATracker:
                 'Status': metadata['status'],
                 'Hits': metadata['hits'],
                 'ConsecutiveMisses': metadata['consecutive_misses'],
-                'Detection':  metadata.get('last_weighted_meas', np.array([0, 0, 0])) #weighted average of all associated detections
+                'Detection': z #weighted average of all associated detections
             }
             
             if metadata['status'] == 'Confirmed':

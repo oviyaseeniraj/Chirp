@@ -6,8 +6,9 @@
 user laptop-control
 topic write chirp/v1/server/start/request
 topic read chirp/v1/server/start/result
+topic read chirp/v1/group/+/calibration/result
 
-# xavier controller account
+# xavier controller account (server-xavier used by server_controller.py AND dashboard.py)
 user server-xavier
 topic read chirp/v1/server/start/request
 topic write chirp/v1/server/start/result
@@ -16,6 +17,10 @@ topic write chirp/v1/group/+/capture/resync
 topic read chirp/v1/group/+/capture/ack/+
 topic read chirp/v1/group/+/capture/state/+
 topic read chirp/v1/presence/+
+topic read chirp/v1/group/+/calibration/frame/+
+topic read chirp/v1/group/+/calibration/done/+
+topic write chirp/v1/group/+/calibration/result
+topic read chirp/v1/group/+/frames/+
 
 # per-radar account pattern:
 # create usernames that exactly match nodeId (for example, radar-orin-01)
@@ -24,3 +29,7 @@ pattern write chirp/v1/group/+/capture/ack/%u
 pattern write chirp/v1/group/+/capture/state/%u
 pattern read chirp/v1/group/+/capture/start
 pattern read chirp/v1/group/+/capture/resync
+pattern write chirp/v1/group/+/calibration/frame/%u
+pattern write chirp/v1/group/+/calibration/done/%u
+pattern read chirp/v1/group/+/calibration/result
+pattern write chirp/v1/group/+/frames/%u

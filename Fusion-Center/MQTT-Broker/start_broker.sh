@@ -16,7 +16,7 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 if [[ ! -f "${SCRIPT_DIR}/passwords" ]]; then
-  echo "Missing passwords file. Run ./bootstrap_passwords.sh first."
+  echo "Missing passwords file. Run ./set_mqttbroker_passwords.sh first."
   exit 1
 fi
 

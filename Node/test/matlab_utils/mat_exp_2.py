@@ -11,7 +11,7 @@ import scipy.io as sio
 import os
 import sys
 # Add parent directory (Node) to python path
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 from src.radar.processing.rdm import RangeDoppler
 
 
@@ -24,10 +24,10 @@ def main():
     SLOW_TIME = 64
     FAST_TIME = 512
 
-    data_dir = os.path.join(os.path.dirname(__file__), "data")
+    data_dir = os.path.join(os.path.dirname(__file__), "../data")
     os.makedirs(data_dir, exist_ok=True)
     
-    raw_dir = os.path.join(os.path.dirname(__file__), "tien3", "data", "raw")
+    raw_dir = os.path.join(os.path.dirname(__file__), "../data", "raw")
 
     all_frames = []
 

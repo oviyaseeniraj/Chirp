@@ -213,7 +213,7 @@ class DBSCAN3D:
 
 
             cluster_range_m = torch.median(cluster_points[:, 0])
-            range_bonus_db = 5.0 * torch.log10(torch.clamp(cluster_range_m, min=1.0)) # 5.0 -> We can tune it upwards if needed
+            range_bonus_db = 10 * torch.log10(torch.clamp(cluster_range_m, min=1.0)) # 5.0 -> We can tune it upwards if needed
 
             effective_power_db = cluster_max_power_db + range_bonus_db
 

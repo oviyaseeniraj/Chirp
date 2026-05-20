@@ -89,12 +89,19 @@ if [[ "${MONITOR_CALIB_STREAM}" -eq 1 ]]; then
 
     SERVER_USER="${MQTT_SERVER_USER:-${MQTT_USERNAME:-server-xavier}}"
     SERVER_PASS="${MQTT_SERVER_PASS:-${MQTT_PASSWORD:-}}"
+    DATA_DIR="${SCRIPT_DIR}/data"
+
     if [[ -n "${SERVER_PASS}" ]]; then
+      mkdir -p "${DATA_DIR}"
+      TIMESTAMP="$(date +"%Y%m%d_%H%M%S")"
+      DATA_FILE="${DATA_DIR}/mqtt_server_tap_${GROUP_ID_FOR_TOPICS}_${TIMESTAMP}.txt"
+      echo "Writing [mqtt server] tap to ${DATA_FILE}"
+
       mosquitto_sub -h "${MQTT_HOST}" -p "${MQTT_PORT}" \
         -u "${SERVER_USER}" -P "${SERVER_PASS}" \
         -t "${TOPIC_PREFIX}/group/${GROUP_ID_FOR_TOPICS}/calibration/frame/+" \
         -t "${TOPIC_PREFIX}/group/${GROUP_ID_FOR_TOPICS}/calibration/done/+" \
-        -v 2>&1 | awk '{ print "[mqtt server] " $0; fflush() }' &
+        -v 2>&1 | awk '{ print "[mqtt server] " $0; fflush() }' | tee -a "${DATA_FILE}" &
       MQTT_TAP_PIDS+=($!)
     else
       echo "Note: set MQTT_SERVER_PASS or MQTT_PASSWORD in ${FC_ENV} to tap calibration/frame and calibration/done (laptop ACL cannot subscribe to those)."

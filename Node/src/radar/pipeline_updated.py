@@ -703,6 +703,7 @@ def calibration_mqtt_process(
                 # the small (<3 ms) wall-clock differences between nodes.
                 "frameNum": frame_count,
                 "detections": item["detections"],
+                "tracks": item.get("tracks", [])
             }
             client.publish(frame_pub_topic, payload=json.dumps(frame_payload), qos=1, retain=False)
             logging.info(

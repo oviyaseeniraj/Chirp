@@ -456,7 +456,10 @@ def processing_process(raw_queue, processed_queue, node_id, calib_queue=None, de
             tracks_for_calibration = []
             if confirmed_tracks:
                 for t in confirmed_tracks:
-                    implied_detection = jpda.measurement_model.measurement_function(state).flatten()
+                    implied_detection = np.asarray(
+                        jpda.measurement_model.measurement_function(state),
+                        dtype=float
+                    ).flatten()
 
                     #convert back to 
                     serialized_tracks.append({
@@ -469,10 +472,10 @@ def processing_process(raw_queue, processed_queue, node_id, calib_queue=None, de
                         'ConsecutiveMisses': int(t['ConsecutiveMisses']),
                         # Detection might be None if missed, handle safely
                         'Last Detection': np.array(t['Detection']).flatten().tolist() if t['Detection'] is not None else [],
-                        'Implied Detection': np.array(implied_detection).flatten().tolist()
+                        'Implied Detection': implied_detection.tolist()
                     })
 
-                    tracks_for_calibration.append( float(implied_detection) )
+                    tracks_for_calibration.append(implied_detection.tolist())
                     
 
             # Calibration Hook — use DBSCAN centroids instead of raw CFAR detections.

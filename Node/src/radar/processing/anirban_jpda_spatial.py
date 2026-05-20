@@ -148,18 +148,10 @@ class RDANonLinearMeasurementModel(NonLinearGaussianMeasurement):
         r,d,a = self.measurement_function(state,noise=False,**kwargs)
 
         Hu = H.copy()
-        #print(H)
-        #print(H[2,:])
+ 
 
         Hu[2,:] = np.pi*np.cos(a)*H[2,:]
         
-        #print(a)
-        #print(Hu[2,:])
-
-        #print(a)
-        #print(H)
-        #print(Hu[2,:])
-        #print(Hu)
 
         return Hu
     
@@ -642,7 +634,7 @@ class JPDATracker:
         
         likelihood_matrix = np.zeros((n_trk + 1, n_det + 1))
         
-        print(distance_matrix)
+        #print(distance_matrix)
         # Column 0: missed detection, Row 0: clutter
         likelihood_matrix[:,0] = 1 - detection_probability
         likelihood_matrix[0,:] = clutter_density
@@ -1193,8 +1185,8 @@ class JPDATracker:
             track_probs = associations.probabilities_tracks_detections[track_idx, :]
             prob_hit = associations.probabilities_effective_track_hit[track_idx]
             
-            print(f"prob_hit: {prob_hit}")
-            print("probs:",track_probs)
+            #print(f"prob_hit: {prob_hit}")
+            #print("probs:",track_probs)
             # MATLAB threshold_hit_miss = 0.3
             if prob_hit < self.threshold_hit_miss:
                 self._register_miss(track_id)
@@ -1232,7 +1224,7 @@ class JPDATracker:
                     S_inv = np.linalg.pinv(S)
                     
                 K = P_minus @ H.T @ S_inv
-                print("Kalman gain:",K)
+                #print("Kalman gain:",K)
 
                 beta_0 = track_probs[-1]
                 
@@ -1274,7 +1266,7 @@ class JPDATracker:
                 # 3. Final Covariance: P_k+ = P_k- - (1 - β_0) * K_k * S_k * K_k^T + P_c
                 P_plus = P_minus - (1 - beta_0) * (K @ S @ K.T) + P_c
                 
-                print("posterior state covariance:",P_plus)
+                #print("posterior state covariance:",P_plus)
 
                 # Enforce symmetry constraints on covariance matrix just to be safe
                 P_plus = (P_plus + P_plus.T) / 2.0
@@ -1290,9 +1282,9 @@ class JPDATracker:
 
                 self.track_metadata[track_id]['last_weighted_meas'] = weighted_meas
                 self.track_metadata[track_id]['last_implied_meas'] = self.measurement_model.measurement_function_spatial(track[-1])
-                print("last_weighted_meas (spatial):",weighted_meas)
-                print("last_implied_meas (spatial)",self.track_metadata[track_id]['last_implied_meas'].flatten() )
-                print("delta y (spatial):",delta_y.flatten())
+                #print("last_weighted_meas (spatial):",weighted_meas)
+                #print("last_implied_meas (spatial)",self.track_metadata[track_id]['last_implied_meas'].flatten() )
+                #print("delta y (spatial):",delta_y.flatten())
 
 
                 self._register_hit(track_id, prob_hit)

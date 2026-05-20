@@ -193,8 +193,11 @@ class DBSCAN3D:
 
         self.cluster_centroids_ = {}
 
+        temp = []
+
         for cluster_id in range(1, current_cluster):
             cluster_mask = labels == cluster_id
+            # print("cluster_mask: ", cluster_mask)
             cluster_points = detection_coords[cluster_mask]
 
             if len(cluster_points) == 0:
@@ -206,10 +209,14 @@ class DBSCAN3D:
             # Use linear power only for max-power thresholding
             cluster_power_linear = torch.pow(10.0, cluster_power_db / 10.0)
             cluster_max_power = torch.max(cluster_power_linear)
+            cluster_max_power_db = torch.max(cluster_power_db)
 
-            if cluster_max_power < power_threshold:
+
+            if cluster_max_power_db < power_threshold:
                 labels[cluster_mask] = -1
                 continue
+
+            # print("labels[cluster_mask]: ", labels[cluster_mask])
 
             # Use dB power directly for centroid weighting
             cluster_power = cluster_power_db
@@ -231,24 +238,32 @@ class DBSCAN3D:
             weighted_freq = torch.sum(w * frequencies)
             angle_centroid = torch.arcsin(torch.clamp(weighted_freq / np.pi, -1.0, 1.0))
 
-            self.cluster_centroids_[cluster_id] = (
-                torch.tensor(
-                    [
-                        range_centroid.item(),
-                        doppler_centroid.item(),
-                        angle_centroid.item(),
-                    ],
-                    device=self.device,
-                ),
-                len(cluster_points),
-            )
-
+            if abs(doppler_centroid.item()) > 0:  # Example threshold, adjust as needed
+                self.cluster_centroids_[cluster_id] = (
+                    torch.tensor(
+                        [
+                            range_centroid.item(),
+                            doppler_centroid.item(),
+                            angle_centroid.item(),
+                        ],
+                        device=self.device,
+                    ),
+                    len(cluster_points),
+                )   
+    
+                # print("labels[cluster_id]: ", labels[cluster_id])
+                if labels[cluster_mask][0].item() != -1:
+                    temp.append((cluster_id, range_centroid.item(), doppler_centroid.item(), angle_centroid.item(), cluster_max_power_db.item(), len(cluster_points)))
         self.labels_ = labels
 
         # Count only clusters that survived power-threshold filtering.
         # Labels may have gaps because rejected clusters are set back to -1.
         self.n_clusters_ = len(self.cluster_centroids_)
-
+        if self.n_clusters_ > 1:
+            for thing in temp:
+                print("cluster_id: {}, range_centroid: {:.2f} m, doppler_centroid: {:.2f} m/s, angle_centroid: {:.2f} deg, max_power_db: {:.2f} dB, num_points: {}".format(
+                    thing[0], thing[1], thing[2], np.rad2deg(thing[3]), thing[4], thing[5]
+                ))
         return self
 
     def fit_predict(
@@ -321,7 +336,7 @@ def dbscan_process(detection_coords, shape, detection_power=None):
         cluster_labels_3d, n_clusters, centroids = dbscan_cluster_3d(
             detection_coords,
             eps=3.0,
-            min_samples=10,
+            min_samples=15,
             metric="mahalanobis",
             scale_coords=True,
             x_weight=config.SIGMA_RANGE,
@@ -330,8 +345,9 @@ def dbscan_process(detection_coords, shape, detection_power=None):
             measurement_noise_matrix=config.MEASUREMENT_NOISE,
             device="cpu",
             detection_power=detection_power,
-            power_threshold=getattr(config, "CLUSTER_MAX_POWER_THRESHOLD", 0.0),
+            power_threshold=getattr(config, "CLUSTER_MAX_POWER_THRESHOLD", 100),
         )
+        
 
         dbscan_data_2d = np.zeros(shape, dtype=np.int32)
         dbscan_angles = np.zeros(shape, dtype=np.float32)

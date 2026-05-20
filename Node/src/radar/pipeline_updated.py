@@ -226,7 +226,7 @@ def processing_process(raw_queue, processed_queue, node_id, calib_queue=None, de
         'guard_cells_range': 16,
         'training_cells_doppler': 6,
         'training_cells_range': 24,
-        'threshold_factor': 2,
+        'threshold_factor': 10,
         'pad_doppler': 18,
         'pad_range': 50
     }
@@ -312,7 +312,8 @@ def processing_process(raw_queue, processed_queue, node_id, calib_queue=None, de
                 num_points = data[1]
 
                 # Zero-Doppler removal in physical velocity units.
-                if abs(float(vel_val)) > config.DOPPLER_RES:
+                if True:
+                # if abs(float(vel_val)) > config.DOPPLER_RES:
                     rda_centroids[label] = (
                         torch.tensor([range_val, vel_val, angle]),
                         num_points,
@@ -350,8 +351,8 @@ def processing_process(raw_queue, processed_queue, node_id, calib_queue=None, de
 
             all_tracks = (confirmed_tracks or []) + (tentative_tracks or [])
 
-            print("Frame Time Difference:", current_frame_time - previous_frame_time)
-            print(f"Time: {current_frame_time} Confirmed: {len(confirmed_tracks)} | Tentative: {len(tentative_tracks)}")
+            # print("Frame Time Difference:", current_frame_time - previous_frame_time)
+            # print(f"Time: {current_frame_time} Confirmed: {len(confirmed_tracks)} | Tentative: {len(tentative_tracks)}")
             
             for track in all_tracks:
                 tid = track['TrackID']
@@ -401,7 +402,7 @@ def processing_process(raw_queue, processed_queue, node_id, calib_queue=None, de
                 # Innovation covariance
                 S = model.noise_covar + H @ state_covar @ H.T
 
-                print(f"Track {tid} {confirmed} at x={state[0]:.2f}, y={state[3]:.2f}, misses={misses}, avg det={detection}, implied det after correction = {implied_detection}, Distance: {jpda.detection_maha_sq_distance(detection, implied_detection,S)}")
+                # print(f"Track {tid} {confirmed} at x={state[0]:.2f}, y={state[3]:.2f}, misses={misses}, avg det={detection}, implied det after correction = {implied_detection}, Distance: {jpda.detection_maha_sq_distance(detection, implied_detection,S)}")
 
             t8 = time.perf_counter_ns()
             #print(np.sum(confirmed_tracks_map))

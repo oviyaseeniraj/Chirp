@@ -8,7 +8,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
     from src.radar.daq_new import DataAcquisition
-    from src.radar.pipeline import (
+    from src.radar.pipeline_updated import (
         calibration_mqtt_process,
         daq_process,
         processing_process,
@@ -16,7 +16,7 @@ try:
     )
 except ImportError:
     from ..src.radar.daq_new import DataAcquisition
-    from ..src.radar.pipeline import (
+    from ..src.radar.pipeline_updated import (
         calibration_mqtt_process,
         daq_process,
         processing_process,

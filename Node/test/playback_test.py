@@ -8,7 +8,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
     from src.data_capture.playback import PlaybackDAQ
-    from src.radar.pipeline import daq_process, processing_process, socket_process
+    from src.radar.pipeline_updated import daq_process, processing_process, socket_process
 except ImportError:
     from ..src.data_capture.playback import PlaybackDAQ
     from ..src.radar.pipeline import daq_process, processing_process, socket_process

@@ -554,8 +554,8 @@ class ServerController:
         with session.lock:
             if node_id not in session.frame_data:
                 session.frame_data[node_id] = {}
-            # session.frame_data[node_id][frame_key] = detections
-            session.frame_data[node_id][frame_key] = tracks
+            session.frame_data[node_id][frame_key] = detections
+            # session.frame_data[node_id][frame_key] = tracks
 
 
     def _handle_calib_done(self, topic: str, payload: Dict[str, Any]) -> None:

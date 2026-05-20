@@ -212,10 +212,14 @@ class DBSCAN3D:
             cluster_max_power_db = torch.max(cluster_power_db)
 
 
-            if cluster_max_power_db < power_threshold:
+            cluster_range_m = torch.median(cluster_points[:, 0])
+            range_bonus_db = 5.0 * torch.log10(torch.clamp(cluster_range_m, min=1.0)) # 5.0 -> We can tune it upwards if needed
+
+            effective_power_db = cluster_max_power_db + range_bonus_db
+
+            if effective_power_db < power_threshold:
                 labels[cluster_mask] = -1
                 continue
-
             # print("labels[cluster_mask]: ", labels[cluster_mask])
 
             # Use dB power directly for centroid weighting

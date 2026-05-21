@@ -34,7 +34,7 @@ else:
     from .processing.angle_cpu import angle_cpu as angle_func
     from .processing.cfar_cpu import cfar_cpu as cfar_func
     from .processing.clustering_v3 import centroid_process, dbscan_process
-    from .processing.rdm_updated import RangeDoppler
+    from .processing.rdm_v3 import RangeDoppler
 
 node_root_dir = Path(__file__).resolve().parents[2]  # returns path to 'Node' directory
 load_dotenv(node_root_dir / ".env", override=False)

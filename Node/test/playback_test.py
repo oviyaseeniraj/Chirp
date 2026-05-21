@@ -39,7 +39,7 @@ def main():
         "--loop", action="store_true", help="Loop playback indefinitely"
     )
     parser.add_argument(
-        "--delay", type=float, default=0.03, help="Delay between frames (seconds)"
+        "--delay", type=float, default=0.05, help="Delay between frames (seconds)"
     )
     parser.add_argument(
         "--clusters-only",

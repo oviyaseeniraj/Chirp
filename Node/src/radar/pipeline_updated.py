@@ -4,40 +4,41 @@ import os
 import sys
 import threading
 import time
+from datetime import datetime
+from pathlib import Path
+from queue import Empty, Full
+
 import numpy as np
+import paho.mqtt.client as mqtt_lib
 import psutil
 import socketio
 import torch
-from datetime import datetime 
-from queue import Empty, Full
-from supabase import create_client
 from dotenv import load_dotenv
-from pathlib import Path
-
-import paho.mqtt.client as mqtt_lib
+from supabase import create_client
 
 from . import config
-
 from .processing.anirban_jpda_spatial import JPDATracker
-#from .processing.anirban_jpda import JPDATracker
 
-#from .processing.anirban_jpda import 
+# from .processing.anirban_jpda import JPDATracker
+
+# from .processing.anirban_jpda import
 
 # Hardware acceleration check: Choose between GPU (PyTorch) and optimized CPU (NumPy/OpenCV)
 # if torch.cuda.is_available():
 if config.USE_CUDA:
-    from .processing.rdm import RangeDoppler
-    from .processing.cfar import cfar_pytorch as cfar_func
     from .processing.angle import angle_fft as angle_func
-    from .processing.clustering import dbscan_process, centroid_process
+    from .processing.cfar import cfar_pytorch as cfar_func
+    from .processing.clustering import centroid_process, dbscan_process
+    from .processing.rdm import RangeDoppler
 else:
-    from .processing.rdm_updated import RangeDoppler
-    from .processing.cfar_cpu import cfar_cpu as cfar_func
     from .processing.angle_cpu import angle_cpu as angle_func
-    from .processing.clustering_updated import dbscan_process, centroid_process
+    from .processing.cfar_cpu import cfar_cpu as cfar_func
+    from .processing.clustering_v3 import centroid_process, dbscan_process
+    from .processing.rdm_updated import RangeDoppler
 
 node_root_dir = Path(__file__).resolve().parents[2]  # returns path to 'Node' directory
 load_dotenv(node_root_dir / ".env", override=False)
+
 
 def init_supabase_client():
     """
@@ -64,6 +65,7 @@ def init_supabase_client():
         print(f"[DB] Supabase client initialization failed: {e}")
         return None, False
 
+
 def reconnect_socketio(server_url):
     """Helper to reconnect to the Socket.IO server."""
     sio = socketio.Client()
@@ -73,6 +75,7 @@ def reconnect_socketio(server_url):
         return sio
     except Exception:
         return None
+
 
 def create_3d_detection_map_spatial(cfar_data, angle_data, rdm_power):
     """
@@ -100,7 +103,7 @@ def create_3d_detection_map_spatial(cfar_data, angle_data, rdm_power):
     return detection_coords, detection_power
 
 
-#average_frame_time = 0.1 #estimated frame time
+# average_frame_time = 0.1 #estimated frame time
 def daq_process(raw_queue, daq_class, **daq_kwargs):
     """
     Generic DAQ process that handles frame capture and pushing to queue.
@@ -110,7 +113,7 @@ def daq_process(raw_queue, daq_class, **daq_kwargs):
         psutil.Process(os.getpid()).cpu_affinity([1])
     except Exception as e:
         print(f"[DAQ] Affinity failed: {e}")
-    
+
     print(f"[DAQ] Started on core 1 using {daq_class.__name__}")
 
     with daq_class(**daq_kwargs) as daq:
@@ -123,7 +126,7 @@ def daq_process(raw_queue, daq_class, **daq_kwargs):
         while True:
             try:
                 frame_data = daq.capture()
-                
+
                 current_time = time.time()
                 if last_frame_time is not None:
                     frame_interval = current_time - last_frame_time
@@ -135,7 +138,9 @@ def daq_process(raw_queue, daq_class, **daq_kwargs):
                     if frame_count % frame_rpl == 0:
                         avg_interval = sum(frame_times) / len(frame_times)
                         fps = 1.0 / avg_interval if avg_interval > 0 else 0
-                        print(f"[DAQ] FPS: {fps:.2f} | Avg: {avg_interval * 1000:.1f}ms")
+                        print(
+                            f"[DAQ] FPS: {fps:.2f} | Avg: {avg_interval * 1000:.1f}ms"
+                        )
 
                 last_frame_time = current_time
 
@@ -152,20 +157,21 @@ def daq_process(raw_queue, daq_class, **daq_kwargs):
                 time.sleep(0.1)
 
 
-def rd_val_to_bin(range_val,vel_val):
+def rd_val_to_bin(range_val, vel_val):
     # 1. Convert range (m) to range bin
     range_bin = int(round(range_val / config.RANGE_RES))
-    #range_bin = np.clip(range_bin, 0, config.RANGE_BINS-1)
-    
+    # range_bin = np.clip(range_bin, 0, config.RANGE_BINS-1)
+
     # 2. Convert velocity (m/s) to Doppler bin
     # The zero-velocity bin is at DOPPLER_BINS / 2 = 32
     doppler_bin = int(round((vel_val / config.DOPPLER_RES) + (config.DOPPLER_BINS / 2)))
-    #doppler_bin = np.clip(doppler_bin, 0, config.DOPPLER_BINS-1)
+    # doppler_bin = np.clip(doppler_bin, 0, config.DOPPLER_BINS-1)
 
     return range_bin, doppler_bin
 
-def rd_bin_to_val(range_bin,vel_bin):
-    vel_val = (vel_bin - config.DOPPLER_BINS/2) * config.DOPPLER_RES
+
+def rd_bin_to_val(range_bin, vel_bin):
+    vel_val = (vel_bin - config.DOPPLER_BINS / 2) * config.DOPPLER_RES
     range_val = range_bin * config.RANGE_RES
 
     return range_val, vel_val
@@ -173,39 +179,26 @@ def rd_bin_to_val(range_bin,vel_bin):
 
 current_frame_time = datetime.now()
 previous_frame_time = datetime.now()
-def processing_process(raw_queue, processed_queue, node_id, calib_queue=None, device=None, save_calibration=True, visualize_clusters_only=False, **cfar_kwargs):
+
+
+def processing_process(raw_queue, dbscan_queue, node_id, device=None, **cfar_kwargs):
     global current_frame_time, previous_frame_time
-    
+
     """
-    Signal processing pipeline: RDM -> CFAR -> Angle -> 3D Mapping -> DBSCAN -> Centroids.
+    Signal processing pipeline: RDM -> CFAR -> Angle -> 3D Mapping -> DBSCAN.
+    Outputs intermediate results to dbscan_queue for post-processing on another core.
     """
     try:
         psutil.Process(os.getpid()).cpu_affinity([2])
     except Exception as e:
         print(f"[PROCESSING] Affinity failed: {e}")
-        
+
     print("[PROCESSING] Started on core 2")
 
     rdm = RangeDoppler(window="blackman", alpha=0.1)
     if device is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"[PROCESSING] Using device: {device}")
-
-    #assume sampling at 15 HZ
-    jpda = JPDATracker(
-    dt=0.1,                          # 10Hz sampling #unused
-    detection_probability=config.DETECTION_PROBABILITY,       # MATLAB Pd
-    clutter_density=config.CLUTTER_DENSITY,            # Clutter model
-    gating_threshold=config.GATING_THRESHOLD,           # Gating
-    measurement_noise_covariance=config.MEASUREMENT_NOISE, #measurement noise covariance matrix (range, doppler, angle noise)
-    sigma_a=config.SIGMA_A,                     # Process noise #variance of human acceleration
-    max_feasible_events=config.MAX_NUM_FEASIBLE_JOINT_EVENTS,
-    #multi-track parameters
-    threshold_init = config.THRESHOLD_INIT,
-    threshold_hit_miss = config.THRESHOLD_HIT_MISS,
-    threshold_merge = config.THRESHOLD_MERGE,
-    #process_noise = config.PROCESS_NOISE
-    )
 
     last_frame_time = None
     frame_times = []
@@ -222,13 +215,13 @@ def processing_process(raw_queue, processed_queue, node_id, calib_queue=None, de
 
     # Default CFAR parameters if not provided
     cfar_params = {
-        'guard_cells_doppler': 4,
-        'guard_cells_range': 16,
-        'training_cells_doppler': 6,
-        'training_cells_range': 24,
-        'threshold_factor': 10,
-        'pad_doppler': 18,
-        'pad_range': 50
+        "guard_cells_doppler": 4,
+        "guard_cells_range": 16,
+        "training_cells_doppler": 6,
+        "training_cells_range": 24,
+        "threshold_factor": 10,
+        "pad_doppler": 18,
+        "pad_range": 50,
     }
     cfar_params.update(cfar_kwargs)
 
@@ -263,7 +256,7 @@ def processing_process(raw_queue, processed_queue, node_id, calib_queue=None, de
             rdm_display = rdm.get_display_map()
             rdm_power_db = rdm.get_power_db_map()
             clean_rdm = rdm.get_clean_rdm()
-            
+
             t2 = time.perf_counter_ns()
             frame_num += 1
 
@@ -287,255 +280,25 @@ def processing_process(raw_queue, processed_queue, node_id, calib_queue=None, de
                 rdm_power_db,
             )
 
-            #print(detection_coords_3d)
+            # print(detection_coords_3d)
 
-            # 5. 3D DBSCAN - produce centroids with [range_m, doppler_mps, angle_rad]
-            dbscan_data_2d, dbscan_angles, centroids = dbscan_process(
-                detection_coords_3d,
-                cfar_data.shape,
-                detection_power,
-            )
-            t5 = time.perf_counter_ns()
-
-            # 6. Centroid Processing
-            centroids_map, centroids_angles = centroid_process(centroids, cfar_data.shape)
-                        
-            rda_centroids = {}
-            for label, data in centroids.items():
-                meas = data[0]
-
-                # Centroids are already physical values:
-                # [range_m, doppler_mps, angle_rad]
-                range_val = meas[0]
-                vel_val = meas[1]
-                angle = meas[2]
-                num_points = data[1]
-
-                # Zero-Doppler removal in physical velocity units.
-                if True:
-                # if abs(float(vel_val)) > config.DOPPLER_RES:
-                    rda_centroids[label] = (
-                        torch.tensor([range_val, vel_val, angle]),
-                        num_points,
-                    )
-            filtered_centroids_map = np.zeros_like(centroids_map)
-            filtered_centroids_angles = np.zeros_like(centroids_angles)
-            for label, (tensor,num_points) in rda_centroids.items():
-                range_val, vel_val, angle_rad = tensor.cpu().numpy()
-                
-                try:
-                    range_bin, doppler_bin = rd_val_to_bin(range_val, vel_val)
-                except TypeError:
-                    print("TYPE ERROR OCCURRED =====================================")
-                    print(range_val)
-
-                # 3. Populate the visualization maps
-                if 0 <= range_bin < config.RANGE_BINS and 0 <= doppler_bin < config.DOPPLER_BINS:
-                    filtered_centroids_map[doppler_bin, range_bin] = 1.0  # Mark the spot
-                    filtered_centroids_angles[doppler_bin, range_bin] = np.rad2deg(angle_rad)
-                    
-            t6 = time.perf_counter_ns()
-
-            #6. =============================== JPDA Multi-Target Tracking ===========================================
-            #current_timestamp = datetime.now()
-            #print(f"# of prefiltered detections: {len(rda_centroids)}")
-            confirmed_tracks, tentative_tracks = jpda.process(rda_centroids, current_frame_time)
-
-            t7 = time.perf_counter_ns()
-
-            # Create visualization maps for confirmed tracks
-            confirmed_tracks_map = np.zeros_like(rdm_display, dtype=np.float32)
-            confirmed_tracks_angles = np.zeros_like(rdm_display, dtype=np.float32)
-
-            #jpda.print_tracker_status()
-
-            all_tracks = (confirmed_tracks or []) + (tentative_tracks or [])
-
-            # print("Frame Time Difference:", current_frame_time - previous_frame_time)
-            # print(f"Time: {current_frame_time} Confirmed: {len(confirmed_tracks)} | Tentative: {len(tentative_tracks)}")
-            
-            for track in all_tracks:
-                tid = track['TrackID']
-                state = track['State'] # [x, vx, y, vy]
-                misses = track['ConsecutiveMisses']
-                detection = track['Detection'] # [range (m), velocity (m/s), angle (rad)]
-                confirmed = track['Status']
-
-                #TODO: Convert the state to the 
-                implied_detection = jpda.measurement_model.measurement_function(state).flatten()
-
-                #print(implied_detection)
-                #print(detection)
-
-                # --- Convert physical units back to RDM bins ---
-                range_val, vel_val, angle_rad = implied_detection
-
-                #print("Difference")
-                #print(maha_distance(np.array([range_val, vel_val, angle_rad]), detection, jpda.measurement_model.noise_covar))
-
-                #try: 
-                range_bin, doppler_bin = rd_val_to_bin(range_val, vel_val)
-                #print(range_bin)
-                #print(doppler_bin)
-                #except TypeError:
-                #    print("TYPE ERROR OCCURRED =====================================")
-                #    print(range_val)
-                #    print(implied_detection)
-
-                # 3. Populate the visualization maps
-                if 0 <= range_bin < config.RANGE_BINS and 0 <= doppler_bin < config.DOPPLER_BINS:
-                    confirmed_tracks_map[doppler_bin, range_bin] = 1.0  # Mark the spot
-                    confirmed_tracks_angles[doppler_bin, range_bin] = np.rad2deg(angle_rad)
-                    #print("marked")
-                    # Measurement Jacobian
-
-                model = jpda.measurement_model
-                H = model.jacobian(state)
-                
-                # Get covariance - handle both GaussianState (.covariance) and GaussianStatePrediction (.covar)
-                track_dict = jpda.tracks
-                gauss_state = track_dict[tid][-1]
-                state_covar = getattr(gauss_state, 'covariance', None) or getattr(gauss_state, 'covar', None)
-                if state_covar is None:
-                    print(f"Warning: Could not get covariance from state of type {type(gauss_state)}")
-                    continue
-                # Innovation covariance
-                S = model.noise_covar + H @ state_covar @ H.T
-
-                # print(f"Track {tid} {confirmed} at x={state[0]:.2f}, y={state[3]:.2f}, misses={misses}, avg det={detection}, implied det after correction = {implied_detection}, Distance: {jpda.detection_maha_sq_distance(detection, implied_detection,S)}")
-
-            t8 = time.perf_counter_ns()
-            #print(np.sum(confirmed_tracks_map))
-            #print(np.sum(confirmed_tracks_angles))
-
-            # ====================================================
-
-            # Calibration Hook
-            # if save_calibration and centroids and len(centroids) > 0:
-            #     centroid_values = [v[0].cpu().numpy() for v in centroids.values()]
-            #     calibration_data_dict[frame_num] = np.array(centroid_values)
-
-            #     if frame_num % save_interval == 0:
-            #         try:
-            #             with open(calibration_save_file, 'wb') as f:
-            #                 pickle.dump(calibration_data_dict, f)
-            #         except Exception as e:
-            #             print(f"[PROCESSING] Save failed: {e}")
-
-            # Pack output
-            # If visualize_clusters_only is True, we overwrite regular RDM and CFAR 
-            # with the centroids data to match the shim's visualization style.
-            final_array = filtered_centroids_map if visualize_clusters_only else rdm_display
-            final_cfar = filtered_centroids_map if visualize_clusters_only else cfar_data
-            final_angles = filtered_centroids_angles if visualize_clusters_only else angle_data
-
-            # Prepare cluster metadata for the visualizer
-            clusters_meta = []
-            if rda_centroids:
-                for label, (centroid_vec, mass) in rda_centroids.items():
-                    c = centroid_vec.cpu().numpy()
-
-                    # rda_centroids contains physical values [range_m, doppler_mps, angle_rad]
-                    range_meters = float(c[0])
-                    doppler_meters_per_sec = float(c[1])
-                    angle_rad = float(c[2])
-
-                    # Calculate idx from physical values
-                    range_idx = range_meters / config.RANGE_RES
-                    doppler_idx = (
-                        doppler_meters_per_sec / config.DOPPLER_RES
-                    ) + (config.DOPPLER_BINS / 2.0)
-
-                    clusters_meta.append({
-                        "id": int(label),
-                        "range_idx": float(range_idx),
-                        "doppler_idx": float(doppler_idx),
-
-                        "range_m": float(range_meters),
-                        "doppler_mps": float(doppler_meters_per_sec),
-
-                        "angle_rad": angle_rad,
-                        "angle_deg": float(np.rad2deg(angle_rad)),
-                        "mass": int(mass)
-
-                        #TODO: add track data to output
-                        #
-                        #x,y,vx,vy 
-                        #
-                        #is_track_or_no
-                    })
-
-            # Format confirmed tracks for JSON serialization
-            serialized_tracks = []
-            tracks_for_calibration = []
-            if confirmed_tracks:
-                for t in confirmed_tracks:
-                    implied_detection = jpda.measurement_model.measurement_function(state).flatten()
-
-                    #convert back to 
-                    serialized_tracks.append({
-                        'TrackID': int(t['TrackID']),
-                        'State': np.array(t['State']).flatten().tolist(),
-                        'StateCovariance': np.array(t['StateCovariance']).tolist(),
-                        'Age': int(t['Age']),
-                        'Status': str(t['Status']),
-                        'Hits': int(t['Hits']),
-                        'ConsecutiveMisses': int(t['ConsecutiveMisses']),
-                        # Detection might be None if missed, handle safely
-                        'Last Detection': np.array(t['Detection']).flatten().tolist() if t['Detection'] is not None else [],
-                        'Implied Detection': np.array(implied_detection).flatten().tolist()
-                    })
-
-                    tracks_for_calibration.append(np.array(implied_detection).flatten().tolist())
-                    
-
-            # Calibration Hook — use DBSCAN centroids instead of raw CFAR detections.
-            # Raw detections include heavy static clutter and can bias spatial
-            # calibration away from the true target overlap between nodes.
-            frame_timestamp_ms = int(time.time() * 1000)
-            if calib_queue is not None and clusters_meta:
-                try:
-                    calib_queue.put_nowait({
-                        "frame_num": frame_num,
-                        "timestamp_ms": frame_timestamp_ms,
-                        "detections": [
-                            [
-                                float(c["range_m"]),
-                                # float(c["doppler_idx"]), # we believe doppler_idx is bin number, not the actual value
-                                float(c["doppler_mps"]),
-                                float(c["angle_rad"]),
-                            ]
-                            for c in clusters_meta
-                        ],
-                        "tracks": tracks_for_calibration
-                    })
-                except Full:
-                    pass
-
-            #print(serialized_tracks)
-            output_data = {
+            # 5. Send pre-DBSCAN results to post-DBSCAN process
+            # DBSCAN is executed on core 3 alongside centroid processing and JPDA
+            dbscan_result = {
+                "rdm_display": rdm_display,
+                "cfar_data": cfar_data,
+                "angle_data": angle_data,
+                "detection_coords_3d": detection_coords_3d,
+                "detection_power": detection_power,
+                "cfar_shape": cfar_data.shape,
+                "frame_num": frame_num,
+                "current_frame_time": current_frame_time,
                 "node_id": node_id,
-                "timestamp": frame_timestamp_ms,
-                "centroids": detection_coords_3d.astype(np.float32).tobytes() if len(detection_coords_3d) > 0 else b"",
-                "array": final_array.astype(np.float32).tobytes(),
-                "angles": final_angles.astype(np.float32).tobytes() if final_angles is not None else b"",
-                "cfar": final_cfar.astype(np.float32).tobytes() if final_cfar is not None else b"",
-                "cluster_count": len(rda_centroids) if rda_centroids else 0,
-                "clusters": clusters_meta,
-                # Additional keys for internal tracking or alternative consumers
-                "rdm_centroids": centroids_map,
-                "dbscan_2d": dbscan_data_2d,
-                "confirmed_tracks": serialized_tracks,
-                "confirmed_tracks_rd": confirmed_tracks_map.astype(np.float32).tobytes() if confirmed_tracks_map is not None else b"",
-                "confirmed_tracks_angles": confirmed_tracks_angles.astype(np.float32).tobytes() if confirmed_tracks_angles is not None else b""
             }
-
             try:
-                processed_queue.put_nowait(output_data)
+                dbscan_queue.put_nowait(dbscan_result)
             except Full:
                 pass
-
-            t9 = time.perf_counter_ns()
 
             # Print timing every 10 frames with FPS
             frame_count += 1
@@ -544,18 +307,17 @@ def processing_process(raw_queue, processed_queue, node_id, calib_queue=None, de
                 fps = 1.0 / avg_interval if avg_interval > 0 else 0
                 print(
                     f"[PROCESSING] FPS: {fps:.2f} | Avg: {avg_interval * 1000:.1f}ms | "
-                    f"Total: {(t6 - t0) // 1_000}us, RDM: {(t2 - t1) // 1_000}us, CFAR: {(t3 - t2) // 1_000}us, "
-                    f"ANGLE: {(t4 - t3) // 1_000}us, DBSCAN3D: {(t5 - t4) // 1_000}us, CENTROID: {(t6 - t5) // 1_000}us, "
-                    f"JPDA: {(t7 - t6) // 1_000}us"
+                    f"RDM: {(t2 - t1) // 1_000}us, CFAR: {(t3 - t2) // 1_000}us, "
+                    f"ANGLE: {(t4 - t3) // 1_000}us"
                 )
-                print(
-                    f"CFAR Detections: {np.sum(cfar_data > 0)} | 3D Clusters: {len(centroids) if centroids else 0}"
-                )
+                print(f"CFAR Detections: {np.sum(cfar_data > 0)}")
 
         except Exception as e:
             print(f"[PROCESSING] Error: {e}")
             import traceback
+
             traceback.print_exc()
+
 
 def calibration_mqtt_process(
     calib_queue,
@@ -703,9 +465,11 @@ def calibration_mqtt_process(
                 # the small (<3 ms) wall-clock differences between nodes.
                 "frameNum": frame_count,
                 "detections": item["detections"],
-                "tracks": item.get("tracks", [])
+                "tracks": item.get("tracks", []),
             }
-            client.publish(frame_pub_topic, payload=json.dumps(frame_payload), qos=1, retain=False)
+            client.publish(
+                frame_pub_topic, payload=json.dumps(frame_payload), qos=1, retain=False
+            )
             logging.info(
                 "Published calibration frame topic=%s payload=%s",
                 frame_pub_topic,
@@ -721,15 +485,343 @@ def calibration_mqtt_process(
             "commandId": cmd_id,
             "totalFrames": frame_count,
         }
-        client.publish(done_pub_topic, payload=json.dumps(done_payload), qos=1, retain=False)
+        client.publish(
+            done_pub_topic, payload=json.dumps(done_payload), qos=1, retain=False
+        )
         logging.info(
             "Published calibration done topic=%s payload=%s",
             done_pub_topic,
             json.dumps(done_payload, separators=(",", ":")),
         )
         logging.info(
-            "Calibration done: published %d frames for commandId=%s", frame_count, cmd_id
+            "Calibration done: published %d frames for commandId=%s",
+            frame_count,
+            cmd_id,
         )
+
+
+def post_dbscan_process(
+    dbscan_queue,
+    processed_queue,
+    node_id,
+    calib_queue=None,
+    visualize_clusters_only=False,
+):
+    global current_frame_time, previous_frame_time
+
+    """
+    Post-DBSCAN processing: Centroid Processing -> JPDA -> Output Packing.
+    Runs on core 3.
+    """
+    try:
+        psutil.Process(os.getpid()).cpu_affinity([3])
+    except Exception as e:
+        print(f"[POST-DBSCAN] Affinity failed: {e}")
+
+    print("[POST-DBSCAN] Started on core 3")
+
+    jpda = JPDATracker(
+        dt=0.1,
+        detection_probability=config.DETECTION_PROBABILITY,
+        clutter_density=config.CLUTTER_DENSITY,
+        gating_threshold=config.GATING_THRESHOLD,
+        measurement_noise_covariance=config.MEASUREMENT_NOISE,
+        sigma_a=config.SIGMA_A,
+        max_feasible_events=config.MAX_NUM_FEASIBLE_JOINT_EVENTS,
+        threshold_init=config.THRESHOLD_INIT,
+        threshold_hit_miss=config.THRESHOLD_HIT_MISS,
+        threshold_merge=config.THRESHOLD_MERGE,
+    )
+
+    last_frame_time = None
+    frame_times = []
+    frame_count = 0
+    frame_avg = 100
+    frame_rpl = 20
+
+    while True:
+        try:
+            t0 = time.perf_counter_ns()
+            try:
+                data = dbscan_queue.get(timeout=1.0)
+            except Empty:
+                time.sleep(0.001)
+                continue
+
+            # Unpack intermediate results from processing_process
+            rdm_display = data["rdm_display"]
+            cfar_data = data["cfar_data"]
+            angle_data = data["angle_data"]
+            detection_coords_3d = data["detection_coords_3d"]
+            detection_power = data["detection_power"]
+            cfar_shape = data["cfar_shape"]
+            frame_num = data["frame_num"]
+            current_frame_time = data["current_frame_time"]
+            node_id = data["node_id"]
+
+            # Track frame processing time for FPS calculation
+            current_time = time.time()
+            if last_frame_time is not None:
+                frame_interval = current_time - last_frame_time
+                frame_times.append(frame_interval)
+                if len(frame_times) > frame_avg:
+                    frame_times.pop(0)
+
+            last_frame_time = current_time
+
+            t1 = time.perf_counter_ns()
+
+            # 5. 3D DBSCAN - produce centroids with [range_m, doppler_mps, angle_rad]
+            dbscan_data_2d, dbscan_angles, centroids = dbscan_process(
+                detection_coords_3d,
+                cfar_shape,
+                detection_power,
+            )
+
+            # 6. Centroid Processing
+            centroids_map, centroids_angles = centroid_process(centroids, cfar_shape)
+
+            rda_centroids = {}
+            for label, cdata in centroids.items():
+                meas = cdata[0]
+
+                # Centroids are already physical values:
+                # [range_m, doppler_mps, angle_rad]
+                range_val = meas[0]
+                vel_val = meas[1]
+                angle = meas[2]
+                num_points = cdata[1]
+
+                # Zero-Doppler removal in physical velocity units.
+                if True:
+                    # if abs(float(vel_val)) > config.DOPPLER_RES:
+                    rda_centroids[label] = (
+                        torch.tensor([range_val, vel_val, angle]),
+                        num_points,
+                    )
+            filtered_centroids_map = np.zeros_like(centroids_map)
+            filtered_centroids_angles = np.zeros_like(centroids_angles)
+            for label, (tensor, num_points) in rda_centroids.items():
+                range_val, vel_val, angle_rad = tensor.cpu().numpy()
+
+                try:
+                    range_bin, doppler_bin = rd_val_to_bin(range_val, vel_val)
+                except TypeError:
+                    print("TYPE ERROR OCCURRED =====================================")
+                    print(range_val)
+
+                # 3. Populate the visualization maps
+                if (
+                    0 <= range_bin < config.RANGE_BINS
+                    and 0 <= doppler_bin < config.DOPPLER_BINS
+                ):
+                    filtered_centroids_map[doppler_bin, range_bin] = (
+                        1.0  # Mark the spot
+                    )
+                    filtered_centroids_angles[doppler_bin, range_bin] = np.rad2deg(
+                        angle_rad
+                    )
+
+            t2 = time.perf_counter_ns()
+
+            # 7. JPDA Multi-Target Tracking
+            confirmed_tracks, tentative_tracks = jpda.process(
+                rda_centroids, current_frame_time
+            )
+
+            t3 = time.perf_counter_ns()
+
+            # Create visualization maps for confirmed tracks
+            confirmed_tracks_map = np.zeros_like(rdm_display, dtype=np.float32)
+            confirmed_tracks_angles = np.zeros_like(rdm_display, dtype=np.float32)
+
+            all_tracks = (confirmed_tracks or []) + (tentative_tracks or [])
+
+            for track in all_tracks:
+                tid = track["TrackID"]
+                state = track["State"]
+                detection = track["Detection"]
+
+                implied_detection = jpda.measurement_model.measurement_function(
+                    state
+                ).flatten()
+
+                range_val, vel_val, angle_rad = implied_detection
+
+                range_bin, doppler_bin = rd_val_to_bin(range_val, vel_val)
+
+                if (
+                    0 <= range_bin < config.RANGE_BINS
+                    and 0 <= doppler_bin < config.DOPPLER_BINS
+                ):
+                    confirmed_tracks_map[doppler_bin, range_bin] = 1.0
+                    confirmed_tracks_angles[doppler_bin, range_bin] = np.rad2deg(
+                        angle_rad
+                    )
+
+                model = jpda.measurement_model
+                H = model.jacobian(state)
+
+                track_dict = jpda.tracks
+                gauss_state = track_dict[tid][-1]
+                state_covar = getattr(gauss_state, "covariance", None) or getattr(
+                    gauss_state, "covar", None
+                )
+                if state_covar is None:
+                    print(
+                        f"Warning: Could not get covariance from state of type {type(gauss_state)}"
+                    )
+                    continue
+                S = model.noise_covar + H @ state_covar @ H.T
+
+            t4 = time.perf_counter_ns()
+
+            # 8. Output Packing
+            final_array = (
+                filtered_centroids_map if visualize_clusters_only else rdm_display
+            )
+            final_cfar = (
+                filtered_centroids_map if visualize_clusters_only else cfar_data
+            )
+            final_angles = (
+                filtered_centroids_angles if visualize_clusters_only else angle_data
+            )
+
+            # Prepare cluster metadata for the visualizer
+            clusters_meta = []
+            if rda_centroids:
+                for label, (centroid_vec, mass) in rda_centroids.items():
+                    c = centroid_vec.cpu().numpy()
+
+                    range_meters = float(c[0])
+                    doppler_meters_per_sec = float(c[1])
+                    angle_rad = float(c[2])
+
+                    range_idx = range_meters / config.RANGE_RES
+                    doppler_idx = (doppler_meters_per_sec / config.DOPPLER_RES) + (
+                        config.DOPPLER_BINS / 2.0
+                    )
+
+                    clusters_meta.append(
+                        {
+                            "id": int(label),
+                            "range_idx": float(range_idx),
+                            "doppler_idx": float(doppler_idx),
+                            "range_m": float(range_meters),
+                            "doppler_mps": float(doppler_meters_per_sec),
+                            "angle_rad": angle_rad,
+                            "angle_deg": float(np.rad2deg(angle_rad)),
+                            "mass": int(mass),
+                        }
+                    )
+
+            # Format confirmed tracks for JSON serialization
+            serialized_tracks = []
+            tracks_for_calibration = []
+            if confirmed_tracks:
+                for t in confirmed_tracks:
+                    state = t["State"]
+                    implied_detection = jpda.measurement_model.measurement_function(
+                        state
+                    ).flatten()
+
+                    serialized_tracks.append(
+                        {
+                            "TrackID": int(t["TrackID"]),
+                            "State": np.array(t["State"]).flatten().tolist(),
+                            "StateCovariance": np.array(t["StateCovariance"]).tolist(),
+                            "Age": int(t["Age"]),
+                            "Status": str(t["Status"]),
+                            "Hits": int(t["Hits"]),
+                            "ConsecutiveMisses": int(t["ConsecutiveMisses"]),
+                            "Last Detection": np.array(t["Detection"])
+                            .flatten()
+                            .tolist()
+                            if t["Detection"] is not None
+                            else [],
+                            "Implied Detection": np.array(implied_detection)
+                            .flatten()
+                            .tolist(),
+                        }
+                    )
+
+                    tracks_for_calibration.append(
+                        np.array(implied_detection).flatten().tolist()
+                    )
+
+            # Calibration Hook
+            frame_timestamp_ms = int(time.time() * 1000)
+            if calib_queue is not None and clusters_meta:
+                try:
+                    calib_queue.put_nowait(
+                        {
+                            "frame_num": frame_num,
+                            "timestamp_ms": frame_timestamp_ms,
+                            "detections": [
+                                [
+                                    float(c["range_m"]),
+                                    float(c["doppler_mps"]),
+                                    float(c["angle_rad"]),
+                                ]
+                                for c in clusters_meta
+                            ],
+                            "tracks": tracks_for_calibration,
+                        }
+                    )
+                except Full:
+                    pass
+
+            output_data = {
+                "node_id": node_id,
+                "timestamp": frame_timestamp_ms,
+                "centroids": detection_coords_3d.astype(np.float32).tobytes()
+                if len(detection_coords_3d) > 0
+                else b"",
+                "array": final_array.astype(np.float32).tobytes(),
+                "angles": final_angles.astype(np.float32).tobytes()
+                if final_angles is not None
+                else b"",
+                "cfar": final_cfar.astype(np.float32).tobytes()
+                if final_cfar is not None
+                else b"",
+                "cluster_count": len(rda_centroids) if rda_centroids else 0,
+                "clusters": clusters_meta,
+                "rdm_centroids": centroids_map,
+                "dbscan_2d": dbscan_data_2d,
+                "confirmed_tracks": serialized_tracks,
+                "confirmed_tracks_rd": confirmed_tracks_map.astype(np.float32).tobytes()
+                if confirmed_tracks_map is not None
+                else b"",
+                "confirmed_tracks_angles": confirmed_tracks_angles.astype(
+                    np.float32
+                ).tobytes()
+                if confirmed_tracks_angles is not None
+                else b"",
+            }
+
+            try:
+                processed_queue.put_nowait(output_data)
+            except Full:
+                pass
+
+            t5 = time.perf_counter_ns()
+
+            # Print timing every 10 frames with FPS
+            frame_count += 1
+            if frame_count % frame_rpl == 0 and len(frame_times) > 0:
+                avg_interval = sum(frame_times) / len(frame_times)
+                fps = 1.0 / avg_interval if avg_interval > 0 else 0
+                print(
+                    f"[POST-DBSCAN] FPS: {fps:.2f} | Avg: {avg_interval * 1000:.1f}ms | "
+                    f"Total: {(t5 - t0) // 1_000}us, CENTROID: {(t2 - t1) // 1_000}us, "
+                    f"JPDA: {(t3 - t2) // 1_000}us, PACK: {(t5 - t4) // 1_000}us"
+                )
+
+        except Exception as e:
+            print(f"[POST-DBSCAN] Error: {e}")
+            import traceback
+
+            traceback.print_exc()
 
 
 def socket_process(
@@ -748,13 +840,14 @@ def socket_process(
     to chirp/v1/group/<groupId>/frames/<nodeId> for the bird's-eye dashboard.
     """
     try:
-        psutil.Process(os.getpid()).cpu_affinity([3])
+        psutil.Process(os.getpid()).cpu_affinity([4])
     except Exception:
         pass
 
-    print(f"[SOCKET] Started on core 3, target: {server_url}")
+    print(f"[SOCKET] Started on core 4, target: {server_url}")
     sio = None
-    db_client, db_enabled = init_supabase_client()
+    db_client = None
+    db_enabled = None
 
     # MQTT frame publisher (optional)
     frame_topic = f"chirp/v1/group/{group_id}/frames/{node_id}"
@@ -791,22 +884,25 @@ def socket_process(
 
         try:
             # Emit data payload combining base requirements and shim enhancements
-            sio.emit("send_frame", {
-                "node_id": node_id,
-                "timestamp_ms": data.get("timestamp", int(time.time() * 1000)),
-                "array": data.get("array", b""),
-                "angles": data.get("angles", b""),
-                "cfar": data.get("cfar", b""),
-                "cluster_count": data.get("cluster_count", 0),
-                "clusters": data.get("clusters", b""),
-                "confirmed_tracks": data.get("confirmed_tracks",b""),
-                "confirmed_tracks_rd": data.get("confirmed_tracks_rd",b""),
-                "confirmed_tracks_angles": data.get("confirmed_tracks_angles",b"")
-            })
+            sio.emit(
+                "send_frame",
+                {
+                    "node_id": node_id,
+                    "timestamp_ms": data.get("timestamp", int(time.time() * 1000)),
+                    "array": data.get("array", b""),
+                    "angles": data.get("angles", b""),
+                    "cfar": data.get("cfar", b""),
+                    "cluster_count": data.get("cluster_count", 0),
+                    "clusters": data.get("clusters", b""),
+                    "confirmed_tracks": data.get("confirmed_tracks", b""),
+                    "confirmed_tracks_rd": data.get("confirmed_tracks_rd", b""),
+                    "confirmed_tracks_angles": data.get("confirmed_tracks_angles", b""),
+                },
+            )
         except Exception as e:
             print(f"[SOCKET] Send error: {e}")
             sio = None
-        
+
         if db_enabled and db_client is not None:
             try:
                 db_row = {

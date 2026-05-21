@@ -266,7 +266,7 @@ class JPDATracker:
             x, vx, y, vy = sv[0], sv[1], sv[2], sv[3]
 
             track_dict = {
-                'TrackID': track_id,
+                'TrackID': track_id, 
                 # expose as [x, y, vx, vy] to keep test code unchanged
                 'State': np.array([x, y, vx, vy]),
                 'StateCovariance': state.covariance,
@@ -298,6 +298,8 @@ class JPDATracker:
         detections_spatial = []
         for label, (centroid, num_point) in detection_centroids.items():
             # centroid is typically [range, doppler, angle]
+
+            #print(centroid)
             converted_centroid = np.array([
                 centroid[0],               # range
                 centroid[1],               # doppler
@@ -896,6 +898,7 @@ class JPDATracker:
                 claim = 0.0
             
             # If no existing track strongly claims this detection, spawn a new one
+            print(claim)
             if claim < threshold_init:
                 track_id = self.next_track_id
                 self.next_track_id += 1

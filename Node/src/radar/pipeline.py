@@ -646,7 +646,7 @@ def calibration_mqtt_process(
 
     while True:
 
-        #print("entered calibration")
+        print("entered")
 
         calibration_event.wait()
         calibration_event.clear()

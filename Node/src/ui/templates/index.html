@@ -103,6 +103,10 @@
                 <input type="checkbox" id="show-tracks" checked style="width: 16px; height: 16px;">
                 <span style="color: #ffa500;">Show Confirmed Tracks</span>
             </label>
+            <label style="cursor: pointer; display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+                <input type="checkbox" id="show-ra-detections" checked style="width: 16px; height: 16px;">
+                <span style="color: #669158;">Show Range-Angle Detections</span>
+            </label>
         </div>
     </div>
 
@@ -506,7 +510,7 @@
             });
         }
         function drawDetections(detections) {
-            if (!document.getElementById('show-detections').checked) return;
+            if (!document.getElementById('show-ra-detections').checked) return;
             if (!detections || detections.length === 0) return;
 
             detectionCount = detections.length;
@@ -564,7 +568,7 @@
 
                 console.log(data.confirmed_tracks)
 
-                if (data.detections) {
+                if (data.detections && document.getElementById('show-ra-detections').checked) {
                     drawDetections(data.detections);
                 }
 

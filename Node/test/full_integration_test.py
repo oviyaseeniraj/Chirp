@@ -6,6 +6,7 @@ import socket
 # Add parent directory to path to import src modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+
 try:
     from src.radar.daq_new import DataAcquisition
     from src.radar.pipeline_updated import (
@@ -51,6 +52,13 @@ def main():
         kwargs={"calib_queue": calib_queue},
         name="Processing"
     )
+
+    p_post_dbscan = mp.Process(
+        target=post_dbscan_process,
+        args=(dbscan_queue, processed_queue, NODE_ID),
+        kwargs={"visualize_clusters_only": args.clusters_only},
+        name="PostDBSCAN",
+    )
     
     p_sock = mp.Process(
         target=socket_process, 
@@ -82,6 +90,7 @@ def main():
     # Start processes
     p_daq.start()
     p_proc.start()
+    p_post_dbscan.start()
     p_sock.start()
     p_calib.start()
 

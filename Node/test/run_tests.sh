@@ -320,8 +320,13 @@ case $test_choice in
             echo "Error: $DATA_DIR/raw is empty. Run Data Capture first."
             exit 1
         fi
-        
-        $PYTHON_EXEC "$NODE_DIR/test/playback_test.py" --input-dir "$DATA_DIR/raw" --loop
+
+        read -p "Enter frame delay in ms [50]: " frame_delay_ms
+        frame_delay_ms=${frame_delay_ms:-50}
+        frame_delay_s=$(awk "BEGIN { printf \"%.3f\", $frame_delay_ms/1000 }")
+
+        #echo ${frame_delay_s}
+        $PYTHON_EXEC "$NODE_DIR/test/playback_test.py" --input-dir "$DATA_DIR/raw" --loop --delay "$frame_delay_s"
         ;;
     4)
         echo ""

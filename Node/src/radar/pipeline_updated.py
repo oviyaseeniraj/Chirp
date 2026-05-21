@@ -640,7 +640,9 @@ def post_dbscan_process(
             for track in all_tracks:
                 tid = track["TrackID"]
                 state = track["State"]
+                misses = track["ConsecutiveMisses"]
                 detection = track["Detection"]
+                confirmed = track["Status"]
 
                 implied_detection = jpda.measurement_model.measurement_function(
                     state
@@ -673,6 +675,8 @@ def post_dbscan_process(
                     )
                     continue
                 S = model.noise_covar + H @ state_covar @ H.T
+                print(f"Track {tid} {confirmed} at x={state[0]:.2f}, y={state[3]:.2f}, misses={misses}, avg det={detection}, implied det after correction = {implied_detection}, Distance: {jpda.detection_maha_sq_distance(detection, implied_detection,S)}")
+
 
             t4 = time.perf_counter_ns()
 

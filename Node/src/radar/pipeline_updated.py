@@ -578,6 +578,8 @@ def post_dbscan_process(
                 detection_power,
             )
 
+            print(centroids)
+
             # 6. Centroid Processing
             centroids_map, centroids_angles = centroid_process(centroids, cfar_shape)
 

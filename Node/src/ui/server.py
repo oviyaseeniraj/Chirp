@@ -332,7 +332,6 @@ def process_frame(data):
         
     proc_time = (time.time() - start_time) * 1000
 
-    
     #print(confirmed_tracks)
     payload = {
         "image": image_data, 

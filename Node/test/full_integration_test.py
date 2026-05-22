@@ -1,7 +1,7 @@
 import multiprocessing as mp
 import os
-import sys
 import socket
+import sys
 
 # Add parent directory to path to import src modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -12,6 +12,7 @@ try:
     from src.radar.pipeline_updated import (
         calibration_mqtt_process,
         daq_process,
+        post_dbscan_process,
         processing_process,
         socket_process,
     )
@@ -20,6 +21,7 @@ except ImportError:
     from ..src.radar.pipeline_updated import (
         calibration_mqtt_process,
         daq_process,
+        post_dbscan_process,
         processing_process,
         socket_process,
     )
@@ -33,6 +35,7 @@ MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
 MQTT_USERNAME = os.getenv("MQTT_USERNAME", NODE_ID)
 MQTT_PASSWORD = os.getenv("MQTT_PASSWORD", "")
 
+
 def main():
     # Create queues
     raw_queue = mp.Queue(maxsize=5)
@@ -41,16 +44,14 @@ def main():
 
     # Create processes using modular components
     p_daq = mp.Process(
-        target=daq_process, 
-        args=(raw_queue, DataAcquisition), 
-        name="DAQ"
+        target=daq_process, args=(raw_queue, DataAcquisition), name="DAQ"
     )
-    
+
     p_proc = mp.Process(
-        target=processing_process, 
+        target=processing_process,
         args=(raw_queue, processed_queue, NODE_ID),
         kwargs={"calib_queue": calib_queue},
-        name="Processing"
+        name="Processing",
     )
 
     p_post_dbscan = mp.Process(
@@ -59,9 +60,9 @@ def main():
         kwargs={"visualize_clusters_only": args.clusters_only},
         name="PostDBSCAN",
     )
-    
+
     p_sock = mp.Process(
-        target=socket_process, 
+        target=socket_process,
         args=(processed_queue, SERVER_URL, NODE_ID),
         kwargs={
             "group_id": GROUP_ID,
@@ -70,7 +71,7 @@ def main():
             "mqtt_user": MQTT_USERNAME,
             "mqtt_pass": MQTT_PASSWORD,
         },
-        name="Socket"
+        name="Socket",
     )
 
     p_calib = mp.Process(
@@ -109,6 +110,7 @@ def main():
         p_sock.terminate()
         p_calib.terminate()
         print("Clean exit")
+
 
 if __name__ == "__main__":
     main()

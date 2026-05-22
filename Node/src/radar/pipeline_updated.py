@@ -19,6 +19,15 @@ from supabase import create_client
 from . import config
 from .processing.anirban_jpda_spatial import JPDATracker
 
+# Debug level: 0 = quiet (only errors), 1 = all prints
+DEBUG_LEVEL = 0
+
+
+def debug_print(*args):
+    if DEBUG_LEVEL >= 1:
+        print(*args)
+
+
 # from .processing.anirban_jpda import JPDATracker
 
 # from .processing.anirban_jpda import
@@ -47,22 +56,22 @@ def init_supabase_client():
     """
     db_write_enabled = os.getenv("DB_WRITE_ENABLED", "false").strip().lower() == "true"
     if db_write_enabled is False:
-        print("[DB] Writing to Supabase is disabled")
+        debug_print("[DB] Writing to Supabase is disabled")
         return None, False
 
     supabase_url = os.getenv("SUPABASE_URL")
     service_role_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
     if not supabase_url or not service_role_key:
-        print("[DB] Missing Supabase URL or Service Role Key in .env file")
+        debug_print("[DB] Missing Supabase URL or Service Role Key in .env file")
         return None, False
 
     try:
         client = create_client(supabase_url, service_role_key)
-        print("[DB] Supabase client initialized")
+        debug_print("[DB] Supabase client initialized")
         return client, True
 
     except Exception as e:
-        print(f"[DB] Supabase client initialization failed: {e}")
+        debug_print(f"[DB] Supabase client initialization failed: {e}")
         return None, False
 
 
@@ -71,7 +80,7 @@ def reconnect_socketio(server_url):
     sio = socketio.Client()
     try:
         sio.connect(server_url)
-        print(f"[SOCKET] Connected to {server_url}")
+        debug_print(f"[SOCKET] Connected to {server_url}")
         return sio
     except Exception:
         return None
@@ -112,9 +121,9 @@ def daq_process(raw_queue, daq_class, **daq_kwargs):
     try:
         psutil.Process(os.getpid()).cpu_affinity([1])
     except Exception as e:
-        print(f"[DAQ] Affinity failed: {e}")
+        debug_print(f"[DAQ] Affinity failed: {e}")
 
-    print(f"[DAQ] Started on core 1 using {daq_class.__name__}")
+    debug_print(f"[DAQ] Started on core 1 using {daq_class.__name__}")
 
     with daq_class(**daq_kwargs) as daq:
         last_frame_time = None
@@ -151,9 +160,9 @@ def daq_process(raw_queue, daq_class, **daq_kwargs):
             except Exception as e:
                 # Playback endings often through specialized exceptions
                 if "End of playback" in str(e):
-                    print("[DAQ] Playback finished")
+                    debug_print("[DAQ] Playback finished")
                     break
-                print(f"[DAQ] Error: {e}")
+                debug_print(f"[DAQ] Error: {e}")
                 time.sleep(0.1)
 
 
@@ -191,14 +200,14 @@ def processing_process(raw_queue, dbscan_queue, node_id, device=None, **cfar_kwa
     try:
         psutil.Process(os.getpid()).cpu_affinity([2])
     except Exception as e:
-        print(f"[PROCESSING] Affinity failed: {e}")
+        debug_print(f"[PROCESSING] Affinity failed: {e}")
 
-    print("[PROCESSING] Started on core 2")
+    debug_print("[PROCESSING] Started on core 2")
 
     rdm = RangeDoppler(window="blackman", alpha=0.1)
     if device is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"[PROCESSING] Using device: {device}")
+    debug_print(f"[PROCESSING] Using device: {device}")
 
     last_frame_time = None
     frame_times = []
@@ -311,10 +320,10 @@ def processing_process(raw_queue, dbscan_queue, node_id, device=None, **cfar_kwa
                     f"RDM: {(t2 - t1) // 1_000}us, CFAR: {(t3 - t2) // 1_000}us, "
                     f"ANGLE: {(t4 - t3) // 1_000}us"
                 )
-                print(f"CFAR Detections: {np.sum(cfar_data > 0)}")
+                debug_print(f"CFAR Detections: {np.sum(cfar_data > 0)}")
 
         except Exception as e:
-            print(f"[PROCESSING] Error: {e}")
+            debug_print(f"[PROCESSING] Error: {e}")
             import traceback
 
             traceback.print_exc()
@@ -500,8 +509,6 @@ def calibration_mqtt_process(
         )
 
 
-
-
 def post_dbscan_process(
     dbscan_queue,
     processed_queue,
@@ -518,9 +525,9 @@ def post_dbscan_process(
     try:
         psutil.Process(os.getpid()).cpu_affinity([3])
     except Exception as e:
-        print(f"[POST-DBSCAN] Affinity failed: {e}")
+        debug_print(f"[POST-DBSCAN] Affinity failed: {e}")
 
-    print("[POST-DBSCAN] Started on core 3")
+    debug_print("[POST-DBSCAN] Started on core 3")
 
     jpda = JPDATracker(
         dt=0.1,
@@ -581,7 +588,7 @@ def post_dbscan_process(
                 detection_power,
             )
 
-            print(centroids)
+            debug_print(centroids)
 
             # 6. Centroid Processing
             centroids_map, centroids_angles = centroid_process(centroids, cfar_shape)
@@ -612,8 +619,10 @@ def post_dbscan_process(
                 try:
                     range_bin, doppler_bin = rd_val_to_bin(range_val, vel_val)
                 except TypeError:
-                    print("TYPE ERROR OCCURRED =====================================")
-                    print(range_val)
+                    debug_print(
+                        "TYPE ERROR OCCURRED ====================================="
+                    )
+                    debug_print(range_val)
 
                 # 3. Populate the visualization maps
                 if (
@@ -637,12 +646,16 @@ def post_dbscan_process(
             t3 = time.perf_counter_ns()
 
             # Create visualization maps for confirmed tracks
-            
+
             all_tracks = (confirmed_tracks or []) + (tentative_tracks or [])
 
-            print("Frame Time Difference:", current_frame_time - previous_frame_time)
-            print(f"Time: {current_frame_time} Confirmed: {len(confirmed_tracks)} | Tentative: {len(tentative_tracks)}")
-            
+            debug_print(
+                "Frame Time Difference:", current_frame_time - previous_frame_time
+            )
+            debug_print(
+                f"Time: {current_frame_time} Confirmed: {len(confirmed_tracks)} | Tentative: {len(tentative_tracks)}"
+            )
+
             def get_tracks_map(tracks):
                 tracks_map = np.zeros_like(rdm_display, dtype=np.float32)
                 tracks_angles = np.zeros_like(rdm_display, dtype=np.float32)
@@ -658,14 +671,14 @@ def post_dbscan_process(
                         state
                     ).flatten()
 
-                    #range_val, vel_val, angle_rad = implied_detection
+                    # range_val, vel_val, angle_rad = implied_detection
 
-                    #range_bin, doppler_bin = rd_val_to_bin(range_val, vel_val)
+                    # range_bin, doppler_bin = rd_val_to_bin(range_val, vel_val)
 
-                    #if (
+                    # if (
                     #    0 <= range_bin < config.RANGE_BINS
                     #    and 0 <= doppler_bin < config.DOPPLER_BINS
-                    #):
+                    # ):
                     #    tracks_map[doppler_bin, range_bin] = 1.0
                     #    tracks_angles[doppler_bin, range_bin] = np.rad2deg(
                     #        angle_rad
@@ -680,19 +693,24 @@ def post_dbscan_process(
                         gauss_state, "covar", None
                     )
                     if state_covar is None:
-                        print(
+                        debug_print(
                             f"Warning: Could not get covariance from state of type {type(gauss_state)}"
                         )
                         continue
                     S = model.noise_covar + H @ state_covar @ H.T
-                    print(f"Track {tid} {confirmed} at x={state[0]:.2f}, y={state[3]:.2f}, misses={misses}, avg det={detection}, implied det after correction = {implied_detection}, Distance: {jpda.detection_maha_sq_distance(detection, implied_detection,S)}")
-
+                    debug_print(
+                        f"Track {tid} {confirmed} at x={state[0]:.2f}, y={state[3]:.2f}, misses={misses}, avg det={detection}, implied det after correction = {implied_detection}, Distance: {jpda.detection_maha_sq_distance(detection, implied_detection, S)}"
+                    )
 
                 return tracks_map, tracks_angles
 
-            confirmed_tracks_map,confirmed_tracks_angles = get_tracks_map(confirmed_tracks)
-            tentative_tracks_map,tentative_tracks_angles = get_tracks_map(tentative_tracks)
-            
+            confirmed_tracks_map, confirmed_tracks_angles = get_tracks_map(
+                confirmed_tracks
+            )
+            tentative_tracks_map, tentative_tracks_angles = get_tracks_map(
+                tentative_tracks
+            )
+
             t4 = time.perf_counter_ns()
 
             # 8. Output Packing
@@ -734,8 +752,6 @@ def post_dbscan_process(
                         }
                     )
 
-
-
             # Format confirmed tracks for JSON serialization
             serialized_confirmed_tracks = []
             serialized_tentative_tracks = []
@@ -745,7 +761,7 @@ def post_dbscan_process(
                 implied_detection = jpda.measurement_model.measurement_function(
                     state
                 ).flatten()
-                
+
                 track_json = {
                     "TrackID": int(t["TrackID"]),
                     "State": np.array(t["State"]).flatten().tolist(),
@@ -754,14 +770,10 @@ def post_dbscan_process(
                     "Status": str(t["Status"]),
                     "Hits": int(t["Hits"]),
                     "ConsecutiveMisses": int(t["ConsecutiveMisses"]),
-                    "Last Detection": np.array(t["Detection"])
-                    .flatten()
-                    .tolist()
+                    "Last Detection": np.array(t["Detection"]).flatten().tolist()
                     if t["Detection"] is not None
                     else [],
-                    "Implied Detection": np.array(implied_detection)
-                    .flatten()
-                    .tolist(),
+                    "Implied Detection": np.array(implied_detection).flatten().tolist(),
                 }
 
                 return track_json
@@ -769,9 +781,7 @@ def post_dbscan_process(
             tracks_for_calibration = []
             if confirmed_tracks:
                 for t in confirmed_tracks:
-                    serialized_confirmed_tracks.append(
-                        serialize_track(t)
-                    )
+                    serialized_confirmed_tracks.append(serialize_track(t))
 
                     state = t["State"]
                     implied_detection = jpda.measurement_model.measurement_function(
@@ -784,8 +794,7 @@ def post_dbscan_process(
             for t in tentative_tracks:
                 serialized_tentative_tracks.append(serialize_track(t))
 
-
-            print("tentative:",len(serialized_tentative_tracks))
+            debug_print("tentative:", len(serialized_tentative_tracks))
 
             # Calibration Hook
             frame_timestamp_ms = int(time.time() * 1000)
@@ -827,10 +836,10 @@ def post_dbscan_process(
                 "rdm_centroids": centroids_map,
                 "dbscan_2d": dbscan_data_2d,
                 "confirmed_tracks": serialized_confirmed_tracks,
-                "tentative_tracks": serialized_tentative_tracks
+                "tentative_tracks": serialized_tentative_tracks,
             }
 
-            #print(len(output_data["tentative_tracks"]))
+            # print(len(output_data["tentative_tracks"]))
 
             try:
                 processed_queue.put_nowait(output_data)
@@ -851,7 +860,7 @@ def post_dbscan_process(
                 )
 
         except Exception as e:
-            print(f"[POST-DBSCAN] Error: {e}")
+            debug_print(f"[POST-DBSCAN] Error: {e}")
             import traceback
 
             traceback.print_exc()
@@ -877,7 +886,7 @@ def socket_process(
     except Exception:
         pass
 
-    print(f"[SOCKET] Started on core 4, target: {server_url}")
+    debug_print(f"[SOCKET] Started on core 4, target: {server_url}")
     sio = None
     db_client = None
     db_enabled = None
@@ -896,9 +905,11 @@ def socket_process(
         try:
             mqtt_client.connect(mqtt_host, mqtt_port, keepalive=30)
             mqtt_client.loop_start()
-            print(f"[SOCKET] MQTT frame publisher connected → {frame_topic}")
+            debug_print(f"[SOCKET] MQTT frame publisher connected → {frame_topic}")
         except Exception as exc:
-            print(f"[SOCKET] MQTT connect failed: {exc}; frame publishing disabled")
+            debug_print(
+                f"[SOCKET] MQTT connect failed: {exc}; frame publishing disabled"
+            )
             mqtt_client = None
 
     while True:
@@ -928,13 +939,13 @@ def socket_process(
                     "cluster_count": data.get("cluster_count", 0),
                     "clusters": data.get("clusters", b""),
                     "confirmed_tracks": data.get("confirmed_tracks", b""),
-                    "tentative_tracks": data.get("tentative_tracks",b""),
+                    "tentative_tracks": data.get("tentative_tracks", b""),
                     "confirmed_tracks_rd": data.get("confirmed_tracks_rd", b""),
                     "confirmed_tracks_angles": data.get("confirmed_tracks_angles", b""),
                 },
             )
         except Exception as e:
-            print(f"[SOCKET] Send error: {e}")
+            debug_print(f"[SOCKET] Send error: {e}")
             sio = None
 
         if db_enabled and db_client is not None:
@@ -947,7 +958,7 @@ def socket_process(
                 }
                 db_client.table("radar_frame_summary").insert(db_row).execute()
             except Exception as e:
-                print(f"[DB] Insert row failed: {e}")
+                debug_print(f"[DB] Insert row failed: {e}")
 
         if mqtt_client is not None:
             clusters = data.get("clusters", [])
@@ -976,4 +987,4 @@ def socket_process(
                         retain=False,
                     )
                 except Exception as exc:
-                    print(f"[SOCKET] MQTT publish failed: {exc}")
+                    debug_print(f"[SOCKET] MQTT publish failed: {exc}")

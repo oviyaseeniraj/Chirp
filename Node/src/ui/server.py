@@ -23,6 +23,15 @@ SHOW_RANGE_ANGLE_PLOT = True
 RANGE_ANGLE_PLOT_WIDTH = 400
 RANGE_ANGLE_PLOT_HEIGHT = 300
 
+# Debug level: 0 = only 50-frame avg, 1 = all prints
+# DEBUG_LEVEL = int(os.getenv("DEBUG_LEVEL", "0"))
+DEBUG_LEVEL = 0
+
+
+def debug_print(msg):
+    if DEBUG_LEVEL >= 1:
+        print(msg)
+
 # Pre-compute RdBu colormap lookup table
 TRANSITION_MID = 128
 COLORMAP_BGR = np.zeros((256, 3), dtype=np.uint8)
@@ -41,7 +50,7 @@ for i in range(256):
 
 # Async SocketIO Server
 sio = socketio.AsyncServer(
-    async_mode='aiohttp', 
+    async_mode='aiohttp',
     cors_allowed_origins='*',
     max_http_buffer_size=10000000 # 10MB to handle large radar frames
 )
@@ -50,11 +59,11 @@ sio.attach(app)
 
 @sio.event
 async def connect(sid, environ):
-    print(f"DEBUG: Client connected: {sid}")
+    debug_print(f"DEBUG: Client connected: {sid}")
 
 @sio.event
 async def disconnect(sid):
-    print(f"DEBUG: Client disconnected: {sid}")
+    debug_print(f"DEBUG: Client disconnected: {sid}")
 
 # Jinja2 setup
 template_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), 'templates'))
@@ -81,23 +90,23 @@ def extract_detections(cfar_array, angles_array, rdm_array=None):
     detection_indices = np.where(cfar_array > 0)
     doppler_indices = detection_indices[0]
     range_indices = detection_indices[1]
-    
+
     if len(doppler_indices) == 0:
         return []
 
     angles = angles_array[doppler_indices, range_indices]
-    
+
     SLOW_TIME = config.SLOW_TIME
     VELOCITY_RES = config.VELOCITY_RES
-    
+
     doppler_offsets = doppler_indices - SLOW_TIME // 2
     velocities = doppler_offsets * VELOCITY_RES
-    
+
     magnitudes = rdm_array[doppler_indices, range_indices] if rdm_array is not None else np.zeros_like(velocities)
-    
+
     pixel_xs = doppler_indices * 8
     pixel_ys = 511 - range_indices
-    
+
     return [
         {
             "x": int(px),
@@ -115,23 +124,43 @@ class PerformanceStats:
     def __init__(self):
         self.last_arrival = 0
         self.frame_count = 0
+        self.frame_times = []  # accumulated proc times for rolling average
+        self.frame_intervals = []  # accumulated arrival intervals
 
 stats = PerformanceStats()
+
+
+def print_frame_summary():
+    """Print average frame stats over the last N frames (debug-level independent)."""
+    n = len(stats.frame_times)
+    if n == 0:
+        return
+    avg_proc = sum(stats.frame_times) / n
+    avg_interval = sum(stats.frame_intervals) / n if stats.frame_intervals else 0.0
+    print(
+        f"[AVG] Last {n} frames | "
+        f"Process: {avg_proc:.1f}ms | "
+        f"Interval: {avg_interval:.1f}ms"
+    )
+    stats.frame_times = []
+    stats.frame_intervals = []
+
+
 def overlay_confirmed_tracks(bgr_image, confirmed_tracks_map, confirmed_tracks_angles):
     """
     Overlay confirmed tracks on the BGR image with distinct coloring (Bright Blue).
-    
+
     Args:
         bgr_image: Base BGR image (512x512)
         confirmed_tracks_map: 64x512 numpy array where non-zero values are track IDs
         confirmed_tracks_angles: 64x512 numpy array containing angles
-    
+
     Returns:
         BGR image with overlaid confirmed tracks
     """
     # Create a copy to avoid modifying original
     overlay_image = bgr_image.copy()
-    
+
     if confirmed_tracks_map is None:
         return overlay_image
 
@@ -140,34 +169,34 @@ def overlay_confirmed_tracks(bgr_image, confirmed_tracks_map, confirmed_tracks_a
     TRACK_RADIUS = 20
     TRACK_THICKNESS = 2
     TEXT_COLOR = (255, 200, 100)  # Slightly lighter blue for text
-    
+
     # Find all coordinates where a track exists (value > 0)
     doppler_indices, range_indices = np.where(confirmed_tracks_map > 0)
-    
+
     for d, r in zip(doppler_indices, range_indices):
         track_id = int(confirmed_tracks_map[d, r])
-        
+
         # Convert from RDM space to image pixel space
         # Image is 512x512 after rotation
         # doppler_bin maps to x-axis (0-64 -> 0-512)
         # range_bin maps to y-axis (0-512 -> 512-0, inverted)
         pixel_x = int((d / 64.0) * 512)
         pixel_y = int(512 - (r / 512.0) * 512)
-        
+
         # Clamp to image bounds
         pixel_x = np.clip(pixel_x, 0, 511)
         pixel_y = np.clip(pixel_y, 0, 511)
-        
+
         # Draw filled circle for track position
         #cv2.circle(overlay_image, (pixel_x, pixel_y), TRACK_RADIUS, TRACK_COLOR, -1)
-        
+
         # Draw circle outline
         #cv2.circle(overlay_image, (pixel_x, pixel_y), TRACK_RADIUS, TEXT_COLOR, TRACK_THICKNESS)
-        
+
         # Draw track ID label
         #cv2.putText(overlay_image, f"T{track_id}", (pixel_x + 10, pixel_y - 10),
         #           cv2.FONT_HERSHEY_SIMPLEX, 0.5, TEXT_COLOR, 1)
-        
+
         # Optional: Draw angle indicator if available
         if confirmed_tracks_angles is not None:
             angle = float(confirmed_tracks_angles[d, r])
@@ -178,19 +207,19 @@ def overlay_confirmed_tracks(bgr_image, confirmed_tracks_map, confirmed_tracks_a
                 end_x = int(pixel_x + line_length * np.cos(angle_rad))
                 end_y = int(pixel_y - line_length * np.sin(angle_rad))
                 cv2.line(overlay_image, (pixel_x, pixel_y), (end_x, end_y), TEXT_COLOR, 2)
-    
+
     return overlay_image
 
 
 def array_to_raw_image_with_tracks(data_array, confirmed_tracks_map=None, confirmed_tracks_angles=None):
     """
     Complete pipeline: Convert 64x512 array to 512x512 BGR image with confirmed tracks overlaid.
-    
+
     Args:
         data_array: 64x512 RDM power array
         confirmed_tracks_map: Dict mapping track_id to [range_bin, doppler_bin]
         confirmed_tracks_angles: Dict mapping track_id to angle_value
-    
+
     Returns:
         512x512 BGR image with RDM data and confirmed tracks
     """
@@ -199,12 +228,12 @@ def array_to_raw_image_with_tracks(data_array, confirmed_tracks_map=None, confir
     scaled = cv2.resize(normalized, (512, 512), interpolation=cv2.INTER_NEAREST)
     rotated = cv2.rotate(scaled, cv2.ROTATE_90_COUNTERCLOCKWISE)
     bgr_image = COLORMAP_BGR[rotated]
-    
+
     # Overlay confirmed tracks if provided
     if confirmed_tracks_map is not None and len(confirmed_tracks_map) > 0:
         #pass
         bgr_image = overlay_confirmed_tracks(bgr_image, confirmed_tracks_map, confirmed_tracks_angles)
-    
+
     return bgr_image
 
 
@@ -213,7 +242,7 @@ def package_track_data(tracks):
     packaged = []
     #if not isinstance(tracks, list):
     #    return packaged
-    
+
     fast_time = getattr(config, "FAST_TIME", 512)
     slow_time = getattr(config, "SLOW_TIME", 64)
     range_res = getattr(config, "RANGE_RES", 0.05)
@@ -232,12 +261,12 @@ def package_track_data(tracks):
         if len(state) >= 4:
             # 1. State extraction [x, vx, y, vy]
             x, vx, y, vy = state[0], state[1], state[2], state[3]
-            
+
             # 2. Convert Cartesian to expected Radar values (Range, Velocity, Angle)
             #range_val = (x**2 + y**2)**0.5
             #vel_val = (x*vx + y*vy) / range_val if range_val > 0 else 0.0
             #angle_val = np.arccos(np.clip(x / range_val, -1.0, 1.0)) if range_val > 0 else 0.0
-            
+
             range_val = implied_detection[0]
             vel_val = implied_detection[1]
             angle_val = implied_detection[2]
@@ -265,14 +294,14 @@ def package_track_data(tracks):
                 "doppler_bin": int(doppler_bin),
                 "angle": float(angle_degrees)
             })
-    
+
     return packaged
 
 
 def process_frame(data):
     """CPU-bound processing logic separated from the event loop"""
     start_time = time.time()
-    
+
 
     # 1. Parse array
     try:
@@ -320,7 +349,7 @@ def process_frame(data):
         except Exception:
             # Fallback if it's sent as a dictionary instead of bytes
             confirmed_tracks_angles = data.get("confirmed_tracks_angles", {})
-    
+
     bgr_image = array_to_raw_image_with_tracks(
         array_data,
         confirmed_tracks_map,
@@ -334,10 +363,10 @@ def process_frame(data):
 
     tentative_tracks_data = data.get("tentative_tracks", [])
     tentative_tracks = []
-    
+
     try:
         if not isinstance(confirmed_tracks_data, list):
-            print("server.py: confirmed_tracks_data should be a list")
+            debug_print("server.py: confirmed_tracks_data should be a list")
             confirmed_tracks_data = []
 
         # Safely fetch resolution values from config with fallbacks
@@ -345,12 +374,12 @@ def process_frame(data):
         vel_res = getattr(config, 'VELOCITY_RES', getattr(config, 'DOPPLER_RES', 0.1))
         slow_time = getattr(config, 'SLOW_TIME', 64)
 
-        print("Server.py ==============================")
-       
+        debug_print("Server.py ==============================")
+
 
     except Exception as e:
-        print(f"DEBUG: Error parsing confirmed tracks data: {e}")
-        
+        debug_print(f"DEBUG: Error parsing confirmed tracks data: {e}")
+
     proc_time = (time.time() - start_time) * 1000
 
     #print(confirmed_tracks)
@@ -359,7 +388,7 @@ def process_frame(data):
     tentative_tracks = package_track_data(tentative_tracks_data)
 
     payload = {
-        "image": image_data, 
+        "image": image_data,
         "detections": detections,
         "confirmed_tracks": confirmed_tracks,
         "tentative_tracks": tentative_tracks,
@@ -367,7 +396,7 @@ def process_frame(data):
         "clusters": data.get("clusters", []),
         "mime": "image/jpeg"
     }
- 
+
     #print("BRH ==============")
     #print(confirmed_tracks)
 
@@ -385,21 +414,29 @@ async def handle_array(sid, data):
     try:
         # Offload CPU work to a thread
         payload, proc_time = await asyncio.to_thread(process_frame, data)
-        
+
+        # Accumulate stats for rolling average
+        stats.frame_times.append(proc_time)
+        stats.frame_intervals.append(arrival_delta)
+
         if payload:
             await sio.emit("radar_plot", payload)
-            #confirmed_count = 0
             confirmed_count = len(payload.get("confirmed_tracks", []))
             tentative_count = len(payload.get("tentative_tracks", []))
-            print(f"Frame {stats.frame_count} | Arrival: {arrival_delta:.1f}ms | Process: {proc_time:.1f}ms | Detections: {len(payload['detections'])} | Confirmed Tracks: {confirmed_count}, Tentative Tracks: {tentative_count}")
+            debug_print(f"Frame {stats.frame_count} | Arrival: {arrival_delta:.1f}ms | Process: {proc_time:.1f}ms | Detections: {len(payload['detections'])} | Confirmed Tracks: {confirmed_count}, Tentative Tracks: {tentative_count}")
         else:
-            print(f"server.py: Frame {stats.frame_count} | Arrival: {arrival_delta:.1f}ms | ERROR: process_frame returned None")
+            debug_print(f"server.py: Frame {stats.frame_count} | Arrival: {arrival_delta:.1f}ms | ERROR: process_frame returned None")
+
+        # Print rolling average every 50 frames (at any debug level)
+        if stats.frame_count % 50 == 0 and stats.frame_times:
+            print_frame_summary()
+
     except Exception as e:
-        print(f"server.py: Frame {stats.frame_count} | ERROR in handle_array: {e}")
+        debug_print(f"server.py: Frame {stats.frame_count} | ERROR in handle_array: {e}")
 
 async def index_handler(request):
     """Serve the main UI page using Jinja2"""
-    print("DEBUG: index.html requested")
+    debug_print("DEBUG: index.html requested")
     template = jinja_env.get_template('index.html')
     content = template.render(
         show_range_angle_plot=SHOW_RANGE_ANGLE_PLOT,
@@ -423,6 +460,6 @@ app.router.add_get('/', index_handler)
 app.router.add_get('/status', status_handler)
 
 if __name__ == "__main__":
-    print("Starting Optimized Asyncio/Aiohttp Radar Plotter on port 5001")
+    debug_print("Starting Optimized Asyncio/Aiohttp Radar Plotter on port 5001")
     # Disable access log for performance, but we can check manual prints
     web.run_app(app, host="0.0.0.0", port=5001, access_log=None)

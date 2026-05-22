@@ -50,7 +50,7 @@ def main():
 
     p_proc = mp.Process(
         target=processing_process,
-        args=(raw_queue, processed_queue, NODE_ID),
+        args=(raw_queue, dbscan_queue, NODE_ID),
         kwargs={"calib_queue": calib_queue},
         name="Processing",
     )

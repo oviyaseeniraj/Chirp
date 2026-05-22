@@ -358,8 +358,6 @@ def process_frame(data):
     confirmed_tracks = package_track_data(confirmed_tracks_data)
     tentative_tracks = package_track_data(tentative_tracks_data)
 
-    print("BRUH ==============", len(confirmed_tracks))
-
     payload = {
         "image": image_data, 
         "detections": detections,
@@ -395,9 +393,9 @@ async def handle_array(sid, data):
             tentative_count = len(payload.get("tentative_tracks", []))
             print(f"Frame {stats.frame_count} | Arrival: {arrival_delta:.1f}ms | Process: {proc_time:.1f}ms | Detections: {len(payload['detections'])} | Confirmed Tracks: {confirmed_count}, Tentative Tracks: {tentative_count}")
         else:
-            print(f"Frame {stats.frame_count} | Arrival: {arrival_delta:.1f}ms | ERROR: process_frame returned None")
+            print(f"server.py: Frame {stats.frame_count} | Arrival: {arrival_delta:.1f}ms | ERROR: process_frame returned None")
     except Exception as e:
-        print(f"Frame {stats.frame_count} | ERROR in handle_array: {e}")
+        print(f"server.py: Frame {stats.frame_count} | ERROR in handle_array: {e}")
 
 async def index_handler(request):
     """Serve the main UI page using Jinja2"""

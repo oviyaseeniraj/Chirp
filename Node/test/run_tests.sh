@@ -269,7 +269,9 @@ case $test_choice in
         
         if [ "$test_choice" -eq 1 ]; then
             echo ">>> Starting UI server (Node/src/ui/server.py) in background:"
-            $PYTHON_EXEC "$NODE_DIR/src/ui/server.py" > /dev/null 2>&1 &
+            #$PYTHON_EXEC "$NODE_DIR/src/ui/server.py" > /dev/null 2>&1 &
+            $PYTHON_EXEC "$NODE_DIR/src/ui/server.py" &
+            
             SERVER_PID=$!
             echo "Waiting for server on port 5001..."
             for _ in $(seq 1 15); do
@@ -304,7 +306,9 @@ case $test_choice in
 
     3)
         echo ">>> Starting UI server (Node/src/ui/server.py) in background:"
-        $PYTHON_EXEC "$NODE_DIR/src/ui/server.py" > /dev/null 2>&1 &
+        #$PYTHON_EXEC "$NODE_DIR/src/ui/server.py" > /dev/null 2>&1 &
+        $PYTHON_EXEC "$NODE_DIR/src/ui/server.py" &
+                    
         SERVER_PID=$!
         echo "Waiting for server on port 5001..."
         for _ in $(seq 1 15); do

@@ -847,7 +847,7 @@ def dbscan_process(detection_coords, shape, detection_power=None):
         cluster_labels_3d, n_clusters, centroids = dbscan_cluster_3d(
             detection_coords,
             eps=3.0,
-            min_samples=15,
+            min_samples=config.MIN_SAMPLES,
             metric="mahalanobis",
             scale_coords=True,
             x_weight=config.SIGMA_RANGE,

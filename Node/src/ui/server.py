@@ -208,11 +208,71 @@ def array_to_raw_image_with_tracks(data_array, confirmed_tracks_map=None, confir
     return bgr_image
 
 
+def package_track_data(tracks):
+
+    packaged = []
+    #if not isinstance(tracks, list):
+    #    return packaged
+    
+    fast_time = getattr(config, "FAST_TIME", 512)
+    slow_time = getattr(config, "SLOW_TIME", 64)
+    range_res = getattr(config, "RANGE_RES", 0.05)
+    vel_res = getattr(config, "VELOCITY_RES", getattr(config, "DOPPLER_RES", 0.1))
+
+    # avoid divide-by-zero in degenerate configs
+    ft_m1 = max(1, fast_time - 1)
+    st_m1 = max(1, slow_time - 1)
+
+    for track in tracks:
+        track_id = track.get('TrackID')
+        state = track.get('State', [0, 0, 0, 0])
+        implied_detection = track.get('Implied Detection', [0, 0, 0])
+
+        #print(implied_detection)
+        if len(state) >= 4:
+            # 1. State extraction [x, vx, y, vy]
+            x, vx, y, vy = state[0], state[1], state[2], state[3]
+            
+            # 2. Convert Cartesian to expected Radar values (Range, Velocity, Angle)
+            #range_val = (x**2 + y**2)**0.5
+            #vel_val = (x*vx + y*vy) / range_val if range_val > 0 else 0.0
+            #angle_val = np.arccos(np.clip(x / range_val, -1.0, 1.0)) if range_val > 0 else 0.0
+            
+            range_val = implied_detection[0]
+            vel_val = implied_detection[1]
+            angle_val = implied_detection[2]
+
+            #print(range_val - implied_detection[0])
+            #print(vel_val - implied_detection[1])
+            #print(angle_val - implied_detection[2])
+
+            # 3. Convert expected values to Bins
+            range_bin = int(np.clip(int(round(range_val / range_res)), 0, fast_time - 1))
+            doppler_bin = int(np.clip(int(round(vel_val / vel_res)) + (slow_time // 2), 0, slow_time - 1))
+
+            # Map bins to pixel coordinates (0..fast_time-1 for both axes after rotation)
+            pixel_x = int(round((doppler_bin / float(st_m1)) * ft_m1))
+            # invert range so 0 range -> bottom of image
+            pixel_y = int(round((1.0 - (range_bin / float(ft_m1))) * ft_m1))
+
+            angle_degrees = float(angle_val) * 180/np.pi
+
+            packaged.append({
+                "track_id": int(track_id),
+                "x": int(np.clip(pixel_x, 0, fast_time - 1)),
+                "y": int(np.clip(pixel_y, 0, fast_time - 1)),
+                "range_bin": int(range_bin),
+                "doppler_bin": int(doppler_bin),
+                "angle": float(angle_degrees)
+            })
+    
+    return packaged
+
+
 def process_frame(data):
     """CPU-bound processing logic separated from the event loop"""
     start_time = time.time()
     
-    print("bruh")
 
     # 1. Parse array
     try:
@@ -271,6 +331,9 @@ def process_frame(data):
     # 4. Convert confirmed tracks to pixel coordinates for frontend
     confirmed_tracks_data = data.get("confirmed_tracks", [])
     confirmed_tracks = []
+
+    tentative_tracks_data = data.get("tentative_tracks", [])
+    tentative_tracks = []
     
     try:
         if not isinstance(confirmed_tracks_data, list):
@@ -283,49 +346,7 @@ def process_frame(data):
         slow_time = getattr(config, 'SLOW_TIME', 64)
 
         print("Server.py ==============================")
-        for track in confirmed_tracks_data:
-            track_id = track.get('TrackID')
-            state = track.get('State', [0, 0, 0, 0])
-            implied_detection = track.get('Implied Detection', [0, 0, 0])
-
-            print(implied_detection)
-            if len(state) >= 4:
-                # 1. State extraction [x, vx, y, vy]
-                x, vx, y, vy = state[0], state[1], state[2], state[3]
-                
-                # 2. Convert Cartesian to expected Radar values (Range, Velocity, Angle)
-                #range_val = (x**2 + y**2)**0.5
-                #vel_val = (x*vx + y*vy) / range_val if range_val > 0 else 0.0
-                #angle_val = np.arccos(np.clip(x / range_val, -1.0, 1.0)) if range_val > 0 else 0.0
-                
-                range_val = implied_detection[0]
-                vel_val = implied_detection[1]
-                angle_val = implied_detection[2]
-
-                #print(range_val - implied_detection[0])
-                #print(vel_val - implied_detection[1])
-                #print(angle_val - implied_detection[2])
-
-                # 3. Convert expected values to Bins
-                range_bin = int(range_val / range_res)
-                doppler_bin = int(vel_val / vel_res) + (slow_time // 2)
-                
-                # 4. Convert Bins to image pixels
-                pixel_x = int((doppler_bin / 64.0) * 512)
-                pixel_y = int(512 - (range_bin / 512.0) * 512)
-                pixel_x = np.clip(pixel_x, 0, 511)
-                pixel_y = np.clip(pixel_y, 0, 511)
-                
-                angle_degrees = float(angle_val) * 180/np.pi
-
-                confirmed_tracks.append({
-                    "track_id": int(track_id),
-                    "x": int(pixel_x),
-                    "y": int(pixel_y),
-                    "range_bin": int(range_bin),
-                    "doppler_bin": int(doppler_bin),
-                    "angle": float(angle_degrees)
-                })
+       
 
     except Exception as e:
         print(f"DEBUG: Error parsing confirmed tracks data: {e}")
@@ -333,10 +354,17 @@ def process_frame(data):
     proc_time = (time.time() - start_time) * 1000
 
     #print(confirmed_tracks)
+
+    confirmed_tracks = package_track_data(confirmed_tracks_data)
+    tentative_tracks = package_track_data(tentative_tracks_data)
+
+    print("BRUH ==============", len(confirmed_tracks))
+
     payload = {
         "image": image_data, 
         "detections": detections,
         "confirmed_tracks": confirmed_tracks,
+        "tentative_tracks": tentative_tracks,
         "cluster_count": data.get("cluster_count", 0),
         "clusters": data.get("clusters", []),
         "mime": "image/jpeg"
@@ -364,7 +392,8 @@ async def handle_array(sid, data):
             await sio.emit("radar_plot", payload)
             #confirmed_count = 0
             confirmed_count = len(payload.get("confirmed_tracks", []))
-            #print(f"Frame {stats.frame_count} | Arrival: {arrival_delta:.1f}ms | Process: {proc_time:.1f}ms | Detections: {len(payload['detections'])} | Confirmed Tracks: {confirmed_count}")
+            tentative_count = len(payload.get("tentative_tracks", []))
+            print(f"Frame {stats.frame_count} | Arrival: {arrival_delta:.1f}ms | Process: {proc_time:.1f}ms | Detections: {len(payload['detections'])} | Confirmed Tracks: {confirmed_count}, Tentative Tracks: {tentative_count}")
         else:
             print(f"Frame {stats.frame_count} | Arrival: {arrival_delta:.1f}ms | ERROR: process_frame returned None")
     except Exception as e:

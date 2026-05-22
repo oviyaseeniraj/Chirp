@@ -500,6 +500,8 @@ def calibration_mqtt_process(
         )
 
 
+
+
 def post_dbscan_process(
     dbscan_queue,
     processed_queue,
@@ -634,52 +636,59 @@ def post_dbscan_process(
             t3 = time.perf_counter_ns()
 
             # Create visualization maps for confirmed tracks
-            confirmed_tracks_map = np.zeros_like(rdm_display, dtype=np.float32)
-            confirmed_tracks_angles = np.zeros_like(rdm_display, dtype=np.float32)
-
+            
             all_tracks = (confirmed_tracks or []) + (tentative_tracks or [])
 
-            for track in all_tracks:
-                tid = track["TrackID"]
-                state = track["State"]
-                misses = track["ConsecutiveMisses"]
-                detection = track["Detection"]
-                confirmed = track["Status"]
+            def get_tracks_map(tracks):
+                tracks_map = np.zeros_like(rdm_display, dtype=np.float32)
+                tracks_angles = np.zeros_like(rdm_display, dtype=np.float32)
 
-                implied_detection = jpda.measurement_model.measurement_function(
-                    state
-                ).flatten()
+                for track in tracks:
+                    tid = track["TrackID"]
+                    state = track["State"]
+                    misses = track["ConsecutiveMisses"]
+                    detection = track["Detection"]
+                    confirmed = track["Status"]
 
-                range_val, vel_val, angle_rad = implied_detection
+                    implied_detection = jpda.measurement_model.measurement_function(
+                        state
+                    ).flatten()
 
-                range_bin, doppler_bin = rd_val_to_bin(range_val, vel_val)
+                    #range_val, vel_val, angle_rad = implied_detection
 
-                if (
-                    0 <= range_bin < config.RANGE_BINS
-                    and 0 <= doppler_bin < config.DOPPLER_BINS
-                ):
-                    confirmed_tracks_map[doppler_bin, range_bin] = 1.0
-                    confirmed_tracks_angles[doppler_bin, range_bin] = np.rad2deg(
-                        angle_rad
+                    #range_bin, doppler_bin = rd_val_to_bin(range_val, vel_val)
+
+                    #if (
+                    #    0 <= range_bin < config.RANGE_BINS
+                    #    and 0 <= doppler_bin < config.DOPPLER_BINS
+                    #):
+                    #    tracks_map[doppler_bin, range_bin] = 1.0
+                    #    tracks_angles[doppler_bin, range_bin] = np.rad2deg(
+                    #        angle_rad
+                    #    )
+
+                    model = jpda.measurement_model
+                    H = model.jacobian(state)
+
+                    track_dict = jpda.tracks
+                    gauss_state = track_dict[tid][-1]
+                    state_covar = getattr(gauss_state, "covariance", None) or getattr(
+                        gauss_state, "covar", None
                     )
-
-                model = jpda.measurement_model
-                H = model.jacobian(state)
-
-                track_dict = jpda.tracks
-                gauss_state = track_dict[tid][-1]
-                state_covar = getattr(gauss_state, "covariance", None) or getattr(
-                    gauss_state, "covar", None
-                )
-                if state_covar is None:
-                    print(
-                        f"Warning: Could not get covariance from state of type {type(gauss_state)}"
-                    )
-                    continue
-                S = model.noise_covar + H @ state_covar @ H.T
-                print(f"Track {tid} {confirmed} at x={state[0]:.2f}, y={state[3]:.2f}, misses={misses}, avg det={detection}, implied det after correction = {implied_detection}, Distance: {jpda.detection_maha_sq_distance(detection, implied_detection,S)}")
+                    if state_covar is None:
+                        print(
+                            f"Warning: Could not get covariance from state of type {type(gauss_state)}"
+                        )
+                        continue
+                    S = model.noise_covar + H @ state_covar @ H.T
+                    print(f"Track {tid} {confirmed} at x={state[0]:.2f}, y={state[3]:.2f}, misses={misses}, avg det={detection}, implied det after correction = {implied_detection}, Distance: {jpda.detection_maha_sq_distance(detection, implied_detection,S)}")
 
 
+                return tracks_map, tracks_angles
+
+            confirmed_tracks_map,confirmed_tracks_angles = get_tracks_map(confirmed_tracks)
+            tentative_tracks_map,tentative_tracks_angles = get_tracks_map(tentative_tracks)
+            
             t4 = time.perf_counter_ns()
 
             # 8. Output Packing
@@ -721,39 +730,58 @@ def post_dbscan_process(
                         }
                     )
 
+
+
             # Format confirmed tracks for JSON serialization
-            serialized_tracks = []
+            serialized_confirmed_tracks = []
+            serialized_tentative_tracks = []
+
+            def serialize_track(t):
+                state = t["State"]
+                implied_detection = jpda.measurement_model.measurement_function(
+                    state
+                ).flatten()
+                
+                track_json = {
+                    "TrackID": int(t["TrackID"]),
+                    "State": np.array(t["State"]).flatten().tolist(),
+                    "StateCovariance": np.array(t["StateCovariance"]).tolist(),
+                    "Age": int(t["Age"]),
+                    "Status": str(t["Status"]),
+                    "Hits": int(t["Hits"]),
+                    "ConsecutiveMisses": int(t["ConsecutiveMisses"]),
+                    "Last Detection": np.array(t["Detection"])
+                    .flatten()
+                    .tolist()
+                    if t["Detection"] is not None
+                    else [],
+                    "Implied Detection": np.array(implied_detection)
+                    .flatten()
+                    .tolist(),
+                }
+
+                return track_json
+
             tracks_for_calibration = []
             if confirmed_tracks:
                 for t in confirmed_tracks:
+                    serialized_confirmed_tracks.append(
+                        serialize_track(t)
+                    )
+
                     state = t["State"]
                     implied_detection = jpda.measurement_model.measurement_function(
                         state
                     ).flatten()
-
-                    serialized_tracks.append(
-                        {
-                            "TrackID": int(t["TrackID"]),
-                            "State": np.array(t["State"]).flatten().tolist(),
-                            "StateCovariance": np.array(t["StateCovariance"]).tolist(),
-                            "Age": int(t["Age"]),
-                            "Status": str(t["Status"]),
-                            "Hits": int(t["Hits"]),
-                            "ConsecutiveMisses": int(t["ConsecutiveMisses"]),
-                            "Last Detection": np.array(t["Detection"])
-                            .flatten()
-                            .tolist()
-                            if t["Detection"] is not None
-                            else [],
-                            "Implied Detection": np.array(implied_detection)
-                            .flatten()
-                            .tolist(),
-                        }
-                    )
-
                     tracks_for_calibration.append(
                         np.array(implied_detection).flatten().tolist()
                     )
+
+            for t in tentative_tracks:
+                serialized_tentative_tracks.append(serialize_track(t))
+
+
+            print("tentative:",len(serialized_tentative_tracks))
 
             # Calibration Hook
             frame_timestamp_ms = int(time.time() * 1000)
@@ -794,16 +822,11 @@ def post_dbscan_process(
                 "clusters": clusters_meta,
                 "rdm_centroids": centroids_map,
                 "dbscan_2d": dbscan_data_2d,
-                "confirmed_tracks": serialized_tracks,
-                "confirmed_tracks_rd": confirmed_tracks_map.astype(np.float32).tobytes()
-                if confirmed_tracks_map is not None
-                else b"",
-                "confirmed_tracks_angles": confirmed_tracks_angles.astype(
-                    np.float32
-                ).tobytes()
-                if confirmed_tracks_angles is not None
-                else b"",
+                "confirmed_tracks": serialized_confirmed_tracks,
+                "tentative_tracks": serialized_tentative_tracks
             }
+
+            #print(len(output_data["tentative_tracks"]))
 
             try:
                 processed_queue.put_nowait(output_data)
@@ -901,6 +924,7 @@ def socket_process(
                     "cluster_count": data.get("cluster_count", 0),
                     "clusters": data.get("clusters", b""),
                     "confirmed_tracks": data.get("confirmed_tracks", b""),
+                    "tentative_tracks": data.get("tentative_tracks",b""),
                     "confirmed_tracks_rd": data.get("confirmed_tracks_rd", b""),
                     "confirmed_tracks_angles": data.get("confirmed_tracks_angles", b""),
                 },

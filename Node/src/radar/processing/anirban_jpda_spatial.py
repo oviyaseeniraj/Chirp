@@ -300,11 +300,13 @@ class JPDATracker:
             # centroid is typically [range, doppler, angle]
 
             #print(centroid)
+            angle = float(np.asarray(centroid[2]))
+
             converted_centroid = np.array([
-                centroid[0],               # range
-                centroid[1],               # doppler
-                np.pi* np.sin(centroid[2])        # angle -> spatial frequency
-            ])
+                float(np.asarray(centroid[0])),               # range
+                float(np.asarray(centroid[1])),               # doppler
+                np.pi* np.sin(float(np.asarray(centroid[2])))        # angle -> spatial frequency
+            ], dtype = float)
             detections_spatial.append(
                 Detection(
                     StateVector(converted_centroid.reshape(-1, 1)),

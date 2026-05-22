@@ -58,7 +58,6 @@ def main():
     p_post_dbscan = mp.Process(
         target=post_dbscan_process,
         args=(dbscan_queue, processed_queue, NODE_ID),
-        kwargs={"visualize_clusters_only": args.clusters_only},
         name="PostDBSCAN",
     )
 

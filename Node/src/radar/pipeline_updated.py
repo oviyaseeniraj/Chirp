@@ -293,6 +293,7 @@ def processing_process(raw_queue, dbscan_queue, node_id, device=None, **cfar_kwa
                 "cfar_shape": cfar_data.shape,
                 "frame_num": frame_num,
                 "current_frame_time": current_frame_time,
+                "previous_frame_time": previous_frame_time,
                 "node_id": node_id,
             }
             try:
@@ -391,7 +392,6 @@ def calibration_mqtt_process(
             return
 
         active_command["id"] = payload.get("commandId")
-        active_command["max_frames"] = int(capture_cfg.get("calibrationFrames", 50))
         active_command["start_epoch_ms"] = payload.get("startEpochMs")
         calibration_event.set()
         logging.info(
@@ -559,6 +559,7 @@ def post_dbscan_process(
             cfar_shape = data["cfar_shape"]
             frame_num = data["frame_num"]
             current_frame_time = data["current_frame_time"]
+            previous_frame_time = data["previous_frame_time"]
             node_id = data["node_id"]
 
             # Track frame processing time for FPS calculation
@@ -639,6 +640,9 @@ def post_dbscan_process(
             
             all_tracks = (confirmed_tracks or []) + (tentative_tracks or [])
 
+            print("Frame Time Difference:", current_frame_time - previous_frame_time)
+            print(f"Time: {current_frame_time} Confirmed: {len(confirmed_tracks)} | Tentative: {len(tentative_tracks)}")
+            
             def get_tracks_map(tracks):
                 tracks_map = np.zeros_like(rdm_display, dtype=np.float32)
                 tracks_angles = np.zeros_like(rdm_display, dtype=np.float32)

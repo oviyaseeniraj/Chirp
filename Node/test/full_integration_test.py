@@ -40,6 +40,7 @@ def main():
     # Create queues
     raw_queue = mp.Queue(maxsize=5)
     processed_queue = mp.Queue(maxsize=2)
+    dbscan_queue = mp.Queue(maxsize=2)
     calib_queue = mp.Queue(maxsize=200)
 
     # Create processes using modular components

@@ -784,13 +784,12 @@ def post_dbscan_process(
                 for t in confirmed_tracks:
                     serialized_confirmed_tracks.append(serialize_track(t))
 
-                    state = t["State"]
-                    implied_detection = jpda.measurement_model.measurement_function(
-                        state
-                    ).flatten()
-                    tracks_for_calibration.append(
-                        np.array(implied_detection).flatten().tolist()
-                    )
+                    s = np.array(t["State"]).flatten()
+                    tracks_for_calibration.append({
+                        "track_id": int(t["TrackID"]),
+                        "x": float(s[0]),
+                        "y": float(s[2]),
+                    })
 
             for t in tentative_tracks:
                 serialized_tentative_tracks.append(serialize_track(t))
@@ -978,6 +977,16 @@ def socket_process(
                             "mass": c.get("mass", 1),
                         }
                         for c in clusters
+                    ],
+                    "tracks": [
+                        {
+                            "track_id": t["TrackID"],
+                            "x": float(t["State"][0]),
+                            "y": float(t["State"][2]),
+                            "vx": float(t["State"][1]),
+                            "vy": float(t["State"][3]),
+                        }
+                        for t in data.get("confirmed_tracks", [])
                     ],
                 }
                 try:

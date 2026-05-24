@@ -401,6 +401,7 @@ def calibration_mqtt_process(
             return
 
         active_command["id"] = payload.get("commandId")
+        active_command["max_frames"] = int(capture_cfg.get("calibrationFrames", 150))
         active_command["start_epoch_ms"] = payload.get("startEpochMs")
         calibration_event.set()
         logging.info(

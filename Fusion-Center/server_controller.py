@@ -39,7 +39,7 @@ _RANSAC_SUBSET_SIZE = 10
 _RANSAC_NUM_TRIALS = 200
 _RANSAC_INLIER_THRESHOLD = 0.5   # metres
 _RANSAC_MIN_INLIER_RATIO = 0.25
-_RANSAC_RESIDUAL_WARN = 0.25     # log warning if RMSE² exceeds this
+_RANSAC_RESIDUAL_THRESHOLD = 0.25  # reject pair if RMSE² exceeds this
 
 
 def _closed_form_pair(
@@ -133,6 +133,84 @@ def _ransac_pair(
     return phi_final, P_final, rmse_sq, inlier_ratio, weight
 
 
+def _network_average(
+    P_raw: np.ndarray,
+    theta_raw: np.ndarray,
+    pair_weights: np.ndarray,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Weighted graph-style network averaging (port of get_averaged_calibration.m, robust version).
+
+    For each (ref, i) entry averages:
+      - Direct path  (k = ref): P[ref,i], weight = pair_weights[ref,i]
+      - Indirect via k:         P[ref,k] + exp(j*theta[ref,k]) * P[k,i],
+                                weight = min(pair_weights[ref,k], pair_weights[k,i])
+
+    Angle averaging uses complex exponentials to handle wrap-around correctly.
+    Paths with zero weight (unsolved pairs) are skipped.
+    Falls back to the direct estimate when no indirect paths are valid.
+
+    Returns (P_fused, theta_fused, weight_fused).
+    """
+    num_nodes = P_raw.shape[0]
+    P_fused = np.zeros((num_nodes, num_nodes), dtype=np.complex128)
+    theta_fused = np.zeros((num_nodes, num_nodes), dtype=np.float64)
+    weight_fused = np.zeros((num_nodes, num_nodes), dtype=np.float64)
+
+    for ref in range(num_nodes):
+        for i in range(num_nodes):
+            if ref == i:
+                continue
+
+            pos_num = 0.0 + 0.0j
+            theta_num = 0.0 + 0.0j
+            weight_sum = 0.0
+
+            for k in range(num_nodes):
+                if k == i:
+                    # Skipping k==i avoids double-counting the direct path
+                    continue
+
+                if k == ref:
+                    # Direct path (ref -> i)
+                    w = pair_weights[ref, i]
+                    if w <= 0.0:
+                        continue
+                    candidate_P = P_raw[ref, i]
+                    candidate_theta_rad = np.deg2rad(theta_raw[ref, i])
+                    path_weight = w
+                else:
+                    # Indirect path via k: (ref -> k -> i)
+                    w_rk = pair_weights[ref, k]
+                    w_ki = pair_weights[k, i]
+                    if w_rk <= 0.0 or w_ki <= 0.0:
+                        continue
+                    candidate_P = (
+                        P_raw[ref, k]
+                        + np.exp(1j * np.deg2rad(theta_raw[ref, k])) * P_raw[k, i]
+                    )
+                    candidate_theta_rad = np.deg2rad(
+                        theta_raw[ref, k] + theta_raw[k, i]
+                    )
+                    path_weight = min(w_rk, w_ki)
+
+                pos_num += path_weight * candidate_P
+                theta_num += path_weight * np.exp(1j * candidate_theta_rad)
+                weight_sum += path_weight
+
+            if weight_sum > 0.0:
+                P_fused[ref, i] = pos_num / weight_sum
+                theta_fused[ref, i] = float(np.rad2deg(np.angle(theta_num))) % 360.0
+                weight_fused[ref, i] = weight_sum
+            else:
+                # Fallback: use direct estimate as-is
+                P_fused[ref, i] = P_raw[ref, i]
+                theta_fused[ref, i] = float(theta_raw[ref, i]) % 360.0
+                weight_fused[ref, i] = pair_weights[ref, i]
+
+    return P_fused, theta_fused, weight_fused
+
+
 def closed_form_calibration(
     frame_data: Dict[str, Dict[int, List]],
     min_track_frames: int = CALIB_MIN_TRACK_FRAMES,
@@ -150,115 +228,155 @@ def closed_form_calibration(
     ----------
     frame_data : node_id -> frame_idx -> list of {"track_id": int, "x": float, "y": float}
 
-    Pipeline
-    --------
-    1. Common frame intersection across all nodes.
-    2. Single-target filter: keep frames where every node has exactly 1 confirmed track.
-       Frames with 0 or 2+ tracks are discarded (multi-target JPDA state is contaminated).
-    3. Track lifetime filter: a track_id must appear in >= min_track_frames single-target
-       frames per node before its positions are used. Removes short-lived noise tracks.
-    4. Build complex trajectory: z = x + j*y directly from EKF state (no polar conversion).
-    5. RANSAC per radar pair: robust closed-form solve with inlier selection.
+    Pipeline (per radar pair)
+    -------------------------
+    1. Per-pair frame intersection: only the two nodes in the pair need a common frame.
+    2. Single-target filter: both nodes must have exactly 1 confirmed track in the frame.
+    3. Track lifetime filter: each node's track_id must appear in >= min_track_frames
+       single-target frames before its positions are trusted.
+    4. Build complex trajectory: z = x + j*y from EKF Cartesian state.
+    5. RANSAC closed-form solve with quality gate (rmse_sq < _RANSAC_RESIDUAL_THRESHOLD).
+    6. Network averaging: fuse direct + indirect paths using RANSAC weights.
 
     Returns
     -------
-    node_ids  : ordered list of node IDs
-    P_opt     : complex translation matrix  (num_nodes × num_nodes)
-    theta_opt : rotation matrix in degrees  (num_nodes × num_nodes)
-    solve_meta : calibration quality summary
-    Returns (None, None, None, None) when calibration cannot be solved.
+    node_ids   : ordered list of node IDs
+    P_opt      : fused complex translation matrix  (num_nodes x num_nodes)
+    theta_opt  : fused rotation matrix in degrees  (num_nodes x num_nodes)
+    solve_meta : calibration quality summary per pair + network flag
+    Returns (None, None, None, meta) when no pairs could be solved.
     """
     node_ids = list(frame_data.keys())
     num_nodes = len(node_ids)
     if num_nodes < 2:
         return None, None, None, None
 
-    # 1. Common frame intersection
-    frame_sets = [set(frame_data[n].keys()) for n in node_ids]
-    common_frames = sorted(set.intersection(*frame_sets))
-    if not common_frames:
-        return None, None, None, None
-
-    # 2. Single-target filter: every node must have exactly 1 track in this frame.
-    single_target_frames = [
-        f for f in common_frames
-        if all(len(frame_data[nid].get(f, [])) == 1 for nid in node_ids)
-    ]
-
-    if not single_target_frames:
-        logging.warning("[CALIB] No single-target frames found across %d common frames", len(common_frames))
-        return None, None, None, {
-            "commonFrames": len(common_frames),
-            "singleTargetFrames": 0,
-            "lifetimeFilteredFrames": 0,
-            "reason": "no_single_target_frames",
-        }
-
-    # 3. Track lifetime filter: count per-node track_id appearances in single-target frames.
-    track_appearances: Dict[str, Dict[int, int]] = {nid: {} for nid in node_ids}
-    for f in single_target_frames:
-        for nid in node_ids:
-            tid = int(frame_data[nid][f][0]["track_id"])
-            track_appearances[nid][tid] = track_appearances[nid].get(tid, 0) + 1
-
-    lifetime_filtered_frames = [
-        f for f in single_target_frames
-        if all(
-            track_appearances[nid].get(int(frame_data[nid][f][0]["track_id"]), 0) >= min_track_frames
-            for nid in node_ids
-        )
-    ]
-
-    if len(lifetime_filtered_frames) < min_trajectory_frames:
-        logging.warning(
-            "[CALIB] Too few frames after filtering: common=%d single_target=%d lifetime=%d (need %d)",
-            len(common_frames), len(single_target_frames),
-            len(lifetime_filtered_frames), min_trajectory_frames,
-        )
-        return None, None, None, {
-            "commonFrames": len(common_frames),
-            "singleTargetFrames": len(single_target_frames),
-            "lifetimeFilteredFrames": len(lifetime_filtered_frames),
-            "reason": "insufficient_frames_after_filtering",
-        }
-
-    # 4. Build complex trajectory: z = x + j*y from EKF Cartesian state.
-    T = len(lifetime_filtered_frames)
-    trajectory = np.zeros((num_nodes, T), dtype=np.complex128)
-    for i, nid in enumerate(node_ids):
-        for t, f in enumerate(lifetime_filtered_frames):
-            track = frame_data[nid][f][0]
-            trajectory[i, t] = complex(float(track["x"]), float(track["y"]))
-
-    # 5. RANSAC closed-form solve for every radar pair.
-    P_opt = np.zeros((num_nodes, num_nodes), dtype=np.complex128)
-    theta_opt = np.zeros((num_nodes, num_nodes), dtype=np.float64)
+    P_raw = np.zeros((num_nodes, num_nodes), dtype=np.complex128)
+    theta_raw = np.zeros((num_nodes, num_nodes), dtype=np.float64)
+    pair_weights = np.zeros((num_nodes, num_nodes), dtype=np.float64)
     ransac_meta: Dict[str, Any] = {}
 
     for i in range(num_nodes):
         for k in range(num_nodes):
             if i == k:
                 continue
-            phi, P, rmse_sq, inlier_ratio, weight = _ransac_pair(trajectory[i], trajectory[k])
-            theta_opt[i, k] = float(np.rad2deg(-phi))
-            P_opt[i, k] = P
-            pair_key = f"{node_ids[i]}->{node_ids[k]}"
+
+            ni, nk = node_ids[i], node_ids[k]
+            pair_key = f"{ni}->{nk}"
+
+            # 1. Per-pair frame intersection.
+            pair_common = sorted(frame_data[ni].keys() & frame_data[nk].keys())
+            if not pair_common:
+                logging.warning("[CALIB] No common frames for pair %s", pair_key)
+                ransac_meta[pair_key] = {"solved": False, "reason": "no_common_frames"}
+                continue
+
+            # 2. Single-target filter: both nodes must have exactly 1 track.
+            pair_single = [
+                f for f in pair_common
+                if len(frame_data[ni].get(f, [])) == 1
+                and len(frame_data[nk].get(f, [])) == 1
+            ]
+            if not pair_single:
+                logging.warning("[CALIB] No single-target frames for pair %s", pair_key)
+                ransac_meta[pair_key] = {
+                    "solved": False,
+                    "reason": "no_single_target_frames",
+                    "commonFrames": len(pair_common),
+                }
+                continue
+
+            # 3. Track lifetime filter.
+            track_count_i: Dict[int, int] = {}
+            track_count_k: Dict[int, int] = {}
+            for f in pair_single:
+                tid_i = int(frame_data[ni][f][0]["track_id"])
+                tid_k = int(frame_data[nk][f][0]["track_id"])
+                track_count_i[tid_i] = track_count_i.get(tid_i, 0) + 1
+                track_count_k[tid_k] = track_count_k.get(tid_k, 0) + 1
+
+            pair_filtered = [
+                f for f in pair_single
+                if track_count_i.get(int(frame_data[ni][f][0]["track_id"]), 0) >= min_track_frames
+                and track_count_k.get(int(frame_data[nk][f][0]["track_id"]), 0) >= min_track_frames
+            ]
+
+            if len(pair_filtered) < min_trajectory_frames:
+                logging.warning(
+                    "[CALIB] Too few frames for pair %s: common=%d single=%d lifetime=%d (need %d)",
+                    pair_key, len(pair_common), len(pair_single),
+                    len(pair_filtered), min_trajectory_frames,
+                )
+                ransac_meta[pair_key] = {
+                    "solved": False,
+                    "reason": "insufficient_frames_after_filtering",
+                    "commonFrames": len(pair_common),
+                    "singleTargetFrames": len(pair_single),
+                    "lifetimeFilteredFrames": len(pair_filtered),
+                }
+                continue
+
+            # 4. Build complex trajectory for this pair.
+            zi = np.array([
+                complex(
+                    float(frame_data[ni][f][0]["x"]),
+                    float(frame_data[ni][f][0]["y"]),
+                )
+                for f in pair_filtered
+            ])
+            zk = np.array([
+                complex(
+                    float(frame_data[nk][f][0]["x"]),
+                    float(frame_data[nk][f][0]["y"]),
+                )
+                for f in pair_filtered
+            ])
+
+            # 5. RANSAC closed-form solve with quality gate.
+            phi, P, rmse_sq, inlier_ratio, weight = _ransac_pair(zi, zk)
+
+            if rmse_sq > _RANSAC_RESIDUAL_THRESHOLD:
+                logging.warning(
+                    "[CALIB] Pair %s rejected: rmse_sq=%.4f > threshold=%.4f"
+                    " inlier_ratio=%.2f",
+                    pair_key, rmse_sq, _RANSAC_RESIDUAL_THRESHOLD, inlier_ratio,
+                )
+                ransac_meta[pair_key] = {
+                    "solved": False,
+                    "reason": "residual_above_threshold",
+                    "commonFrames": len(pair_common),
+                    "singleTargetFrames": len(pair_single),
+                    "lifetimeFilteredFrames": len(pair_filtered),
+                    "rmse_sq": round(float(rmse_sq), 6),
+                    "inlier_ratio": round(float(inlier_ratio), 4),
+                }
+                continue
+
+            P_raw[i, k] = P
+            theta_raw[i, k] = float(np.rad2deg(-phi))
+            pair_weights[i, k] = weight
             ransac_meta[pair_key] = {
+                "solved": True,
+                "commonFrames": len(pair_common),
+                "singleTargetFrames": len(pair_single),
+                "lifetimeFilteredFrames": len(pair_filtered),
                 "rmse_sq": round(float(rmse_sq), 6),
                 "inlier_ratio": round(float(inlier_ratio), 4),
                 "weight": round(float(weight), 4),
             }
-            if rmse_sq > _RANSAC_RESIDUAL_WARN:
-                logging.warning(
-                    "[CALIB] High residual for pair %s rmse_sq=%.4f inlier_ratio=%.2f",
-                    pair_key, rmse_sq, inlier_ratio,
-                )
+
+    if not np.any(pair_weights > 0):
+        logging.warning("[CALIB] No radar pairs passed calibration criteria")
+        return None, None, None, {
+            "reason": "no_pairs_solved",
+            "ransacMetaByPair": ransac_meta,
+        }
+
+    # 6. Network-level weighted averaging over direct + indirect paths.
+    P_opt, theta_opt, weight_opt = _network_average(P_raw, theta_raw, pair_weights)
 
     solve_meta = {
-        "commonFrames": len(common_frames),
-        "singleTargetFrames": len(single_target_frames),
-        "lifetimeFilteredFrames": T,
-        "usedFrames": lifetime_filtered_frames,
+        "networked": True,
         "ransacMetaByPair": ransac_meta,
     }
     return node_ids, P_opt, theta_opt, solve_meta
@@ -744,21 +862,25 @@ class ServerController:
         }
 
         if node_ids is None:
+            failure_reason = (
+                solve_meta.get("reason", "calibration_failed")
+                if solve_meta else "calibration_failed"
+            )
             result_payload: Dict[str, Any] = {
                 "schemaVersion": SCHEMA_VERSION,
                 "timestampMs": _now_ms(),
                 "groupId": group_id,
                 "commandId": command_id,
                 "ok": False,
-                "reason": "insufficient_common_frames",
+                "reason": failure_reason,
                 "nodeIds": sorted(frame_data_snapshot.keys()),
             }
             self.client.publish(result_topic, payload=json.dumps(result_payload), qos=1, retain=False)
-            logging.warning("[CALIB] Calibration failed commandId=%s", command_id)
+            logging.warning("[CALIB] Calibration failed commandId=%s reason=%s", command_id, failure_reason)
             artifact_payload.update(
                 {
                     "ok": False,
-                    "reason": "insufficient_common_frames",
+                    "reason": failure_reason,
                 }
             )
         else:

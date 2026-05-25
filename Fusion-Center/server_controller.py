@@ -30,9 +30,113 @@ ACK_TOPIC_FILTER = f"{TOPIC_PREFIX}/group/+/capture/ack/+"          # subscribed
 CALIB_FRAME_TOPIC_FILTER = f"{TOPIC_PREFIX}/group/+/calibration/frame/+"  # subscribed
 CALIB_DONE_TOPIC_FILTER = f"{TOPIC_PREFIX}/group/+/calibration/done/+"    # subscribed
 
+# Calibration quality parameters
+CALIB_MIN_TRACK_FRAMES = 50       # min frames a track_id must appear in (single-target) to be trusted
+CALIB_MIN_TRAJECTORY_FRAMES = 25  # min frames surviving all filters before attempting solve
+
+# RANSAC parameters (mirror MATLAB's get_ransac_closed_form_solution defaults)
+_RANSAC_SUBSET_SIZE = 10
+_RANSAC_NUM_TRIALS = 200
+_RANSAC_INLIER_THRESHOLD = 0.5   # metres
+_RANSAC_MIN_INLIER_RATIO = 0.25
+_RANSAC_RESIDUAL_WARN = 0.25     # log warning if RMSE² exceeds this
+
+
+def _closed_form_pair(
+    z_i: np.ndarray, z_k: np.ndarray
+) -> Tuple[float, complex, float]:
+    """
+    Closed-form calibration for one radar pair from complex trajectories.
+
+    Returns (phi_rad, P, J) where:
+      phi_rad : rotation angle such that theta_deg = -deg(phi)
+      P       : complex translation  z_i ≈ P + exp(-j*phi) * z_k
+      J       : least-squares residual (sum, not per-frame)
+    """
+    z_i_mean = np.mean(z_i)
+    z_k_mean = np.mean(z_k)
+    val = np.sum((z_k - z_k_mean) * np.conj(z_i - z_i_mean))
+    phi = float(np.arctan2(val.imag, val.real))
+    P = z_i_mean - np.exp(-1j * phi) * z_k_mean
+    J = float(
+        np.sum(np.abs(z_i - z_i_mean) ** 2)
+        + np.sum(np.abs(z_k - z_k_mean) ** 2)
+        - 2.0 * abs(val)
+    )
+    if J < 0 and abs(J) < 1e-10:
+        J = 0.0
+    return phi, P, J
+
+
+def _ransac_pair(
+    z_i: np.ndarray,
+    z_k: np.ndarray,
+    subset_size: int = _RANSAC_SUBSET_SIZE,
+    num_trials: int = _RANSAC_NUM_TRIALS,
+    inlier_threshold: float = _RANSAC_INLIER_THRESHOLD,
+    min_inlier_ratio: float = _RANSAC_MIN_INLIER_RATIO,
+) -> Tuple[float, complex, float, float, float]:
+    """
+    RANSAC-robust closed-form calibration for one radar pair.
+
+    Returns (phi_rad, P, rmse_sq, inlier_ratio, weight) where:
+      rmse_sq      = J_final / num_inliers  (RMSE²)
+      inlier_ratio = num_inliers / T
+      weight       = inlier_ratio / (rmse_sq + eps)
+    """
+    T = len(z_i)
+    min_inliers = max(subset_size, int(np.ceil(min_inlier_ratio * T)))
+
+    best_inliers = np.ones(T, dtype=bool)  # fallback: all frames
+    best_num_inliers = 0
+    best_rmse = np.inf
+    best_spread = -np.inf
+
+    # Trial 0 is deterministic (evenly-spaced) for repeatability.
+    det_idx = np.unique(np.round(np.linspace(0, T - 1, subset_size)).astype(int))
+
+    for trial in range(num_trials):
+        sample_idx = det_idx if trial == 0 else np.random.choice(T, subset_size, replace=False)
+
+        phi_hyp, P_hyp, _ = _closed_form_pair(z_i[sample_idx], z_k[sample_idx])
+        residuals = np.abs(z_i - (P_hyp + np.exp(-1j * phi_hyp) * z_k))
+        inliers = residuals <= inlier_threshold
+        n_in = int(np.sum(inliers))
+
+        if n_in == 0:
+            continue
+
+        rmse = float(np.sqrt(np.mean(residuals[inliers] ** 2)))
+        spread = float(np.sqrt(np.mean(np.abs(z_i[inliers] - np.mean(z_i[inliers])) ** 2)))
+
+        better = (
+            n_in > best_num_inliers
+            or (n_in == best_num_inliers and rmse < best_rmse)
+            or (n_in == best_num_inliers and abs(rmse - best_rmse) < 1e-12 and spread > best_spread)
+        )
+        if better:
+            best_inliers = inliers
+            best_num_inliers = n_in
+            best_rmse = rmse
+            best_spread = spread
+
+    # If RANSAC found insufficient consensus fall back to all frames.
+    if best_num_inliers < min_inliers:
+        best_inliers = np.ones(T, dtype=bool)
+
+    final_K = int(np.sum(best_inliers))
+    phi_final, P_final, J_final = _closed_form_pair(z_i[best_inliers], z_k[best_inliers])
+    rmse_sq = J_final / final_K if final_K > 0 else np.inf
+    inlier_ratio = final_K / T
+    weight = inlier_ratio / (rmse_sq + 1e-12)
+
+    return phi_final, P_final, rmse_sq, inlier_ratio, weight
+
 
 def closed_form_calibration(
     frame_data: Dict[str, Dict[int, List]],
+    min_track_frames: int = CALIB_MIN_TRACK_FRAMES,
+    min_trajectory_frames: int = CALIB_MIN_TRAJECTORY_FRAMES,
 ) -> Tuple[
     Optional[List[str]],
     Optional[np.ndarray],
@@ -40,18 +144,28 @@ def closed_form_calibration(
     Optional[Dict[str, Any]],
 ]:
     """
-    Closed-form spatial calibration across multiple radar nodes.
+    Robust pairwise self-calibration across multiple radar nodes.
 
     Parameters
     ----------
-    frame_data : node_id -> (relative_frame_idx -> list of [range_m, doppler_bin, angle_rad])
+    frame_data : node_id -> frame_idx -> list of {"track_id": int, "x": float, "y": float}
+
+    Pipeline
+    --------
+    1. Common frame intersection across all nodes.
+    2. Single-target filter: keep frames where every node has exactly 1 confirmed track.
+       Frames with 0 or 2+ tracks are discarded (multi-target JPDA state is contaminated).
+    3. Track lifetime filter: a track_id must appear in >= min_track_frames single-target
+       frames per node before its positions are used. Removes short-lived noise tracks.
+    4. Build complex trajectory: z = x + j*y directly from EKF state (no polar conversion).
+    5. RANSAC per radar pair: robust closed-form solve with inlier selection.
 
     Returns
     -------
     node_ids  : ordered list of node IDs
     P_opt     : complex translation matrix  (num_nodes × num_nodes)
     theta_opt : rotation matrix in degrees  (num_nodes × num_nodes)
-    solve_meta : dict with common/used timestamps and used frame detections
+    solve_meta : calibration quality summary
     Returns (None, None, None, None) when calibration cannot be solved.
     """
     node_ids = list(frame_data.keys())
@@ -59,80 +173,93 @@ def closed_form_calibration(
     if num_nodes < 2:
         return None, None, None, None
 
-    # Find relative frame indices that every node observed.
+    # 1. Common frame intersection
     frame_sets = [set(frame_data[n].keys()) for n in node_ids]
     common_frames = sorted(set.intersection(*frame_sets))
     if not common_frames:
         return None, None, None, None
 
-    # Build complex trajectory matrix: shape (num_nodes, num_common_frames)
-    trajectory = np.zeros((num_nodes, len(common_frames)), dtype=np.complex64)
-    valid_flags: List[bool] = [True] * len(common_frames)
-    for i, node_id in enumerate(node_ids):
-        for t, frame_idx in enumerate(common_frames):
-            dets = frame_data[node_id][frame_idx]
-            if not dets:
-                trajectory[i, t] = np.nan
-                valid_flags[t] = False
-                continue
-            arr = np.array(dets, dtype=np.float32)
-            if arr.ndim < 2 or arr.shape[1] < 3:
-                trajectory[i, t] = np.nan
-                valid_flags[t] = False
-                continue
-            mean_range = float(np.mean(arr[:, 0]))
-            # Circular mean prevents wraparound bias near -pi/+pi.
-            mean_angle = float(np.arctan2(np.mean(np.sin(arr[:, 2])), np.mean(np.cos(arr[:, 2]))))
-            # Use x+j*y convention (x=r·sin θ, y=r·cos θ) to match the
-            # complex(x_local, y_local) encoding in dashboard._apply_calibration.
-            x_loc = mean_range * np.sin(mean_angle)
-            y_loc = mean_range * np.cos(mean_angle)
-            trajectory[i, t] = complex(x_loc, y_loc)
+    # 2. Single-target filter: every node must have exactly 1 track in this frame.
+    single_target_frames = [
+        f for f in common_frames
+        if all(len(frame_data[nid].get(f, [])) == 1 for nid in node_ids)
+    ]
 
-    # Drop frames where any node has no valid detection
-    valid_mask = ~np.isnan(trajectory).any(axis=0)
-    trajectory = trajectory[:, valid_mask]
-    if trajectory.shape[1] < 3:
-        logging.warning("[CALIB] Too few valid common frames (%d) to calibrate", trajectory.shape[1])
+    if not single_target_frames:
+        logging.warning("[CALIB] No single-target frames found across %d common frames", len(common_frames))
         return None, None, None, {
-            "commonFrames": common_frames,
-            "usedFrames": [f for f, keep in zip(common_frames, valid_flags) if keep],
-            "droppedFrames": [f for f, keep in zip(common_frames, valid_flags) if not keep],
-            "usedFrameDataByNode": {
-                node_id: {
-                    str(f): frame_data[node_id][f]
-                    for f, keep in zip(common_frames, valid_flags)
-                    if keep and f in frame_data[node_id]
-                }
-                for node_id in node_ids
-            },
+            "commonFrames": len(common_frames),
+            "singleTargetFrames": 0,
+            "lifetimeFilteredFrames": 0,
+            "reason": "no_single_target_frames",
         }
 
-    P_opt = np.zeros((num_nodes, num_nodes), dtype=np.complex64)
-    theta_opt = np.zeros((num_nodes, num_nodes), dtype=np.float32)
+    # 3. Track lifetime filter: count per-node track_id appearances in single-target frames.
+    track_appearances: Dict[str, Dict[int, int]] = {nid: {} for nid in node_ids}
+    for f in single_target_frames:
+        for nid in node_ids:
+            tid = int(frame_data[nid][f][0]["track_id"])
+            track_appearances[nid][tid] = track_appearances[nid].get(tid, 0) + 1
+
+    lifetime_filtered_frames = [
+        f for f in single_target_frames
+        if all(
+            track_appearances[nid].get(int(frame_data[nid][f][0]["track_id"]), 0) >= min_track_frames
+            for nid in node_ids
+        )
+    ]
+
+    if len(lifetime_filtered_frames) < min_trajectory_frames:
+        logging.warning(
+            "[CALIB] Too few frames after filtering: common=%d single_target=%d lifetime=%d (need %d)",
+            len(common_frames), len(single_target_frames),
+            len(lifetime_filtered_frames), min_trajectory_frames,
+        )
+        return None, None, None, {
+            "commonFrames": len(common_frames),
+            "singleTargetFrames": len(single_target_frames),
+            "lifetimeFilteredFrames": len(lifetime_filtered_frames),
+            "reason": "insufficient_frames_after_filtering",
+        }
+
+    # 4. Build complex trajectory: z = x + j*y from EKF Cartesian state.
+    T = len(lifetime_filtered_frames)
+    trajectory = np.zeros((num_nodes, T), dtype=np.complex128)
+    for i, nid in enumerate(node_ids):
+        for t, f in enumerate(lifetime_filtered_frames):
+            track = frame_data[nid][f][0]
+            trajectory[i, t] = complex(float(track["x"]), float(track["y"]))
+
+    # 5. RANSAC closed-form solve for every radar pair.
+    P_opt = np.zeros((num_nodes, num_nodes), dtype=np.complex128)
+    theta_opt = np.zeros((num_nodes, num_nodes), dtype=np.float64)
+    ransac_meta: Dict[str, Any] = {}
+
     for i in range(num_nodes):
         for k in range(num_nodes):
-            z_i = trajectory[i, :]
-            z_k = trajectory[k, :]
-            z_i_mean = np.mean(z_i)
-            z_k_mean = np.mean(z_k)
-            val = np.sum((z_k - z_k_mean) * np.conj(z_i - z_i_mean))
-            phi = np.arctan2(float(val.imag), float(val.real))
+            if i == k:
+                continue
+            phi, P, rmse_sq, inlier_ratio, weight = _ransac_pair(trajectory[i], trajectory[k])
             theta_opt[i, k] = float(np.rad2deg(-phi))
-            P_opt[i, k] = z_i_mean - np.exp(-1j * phi) * z_k_mean
+            P_opt[i, k] = P
+            pair_key = f"{node_ids[i]}->{node_ids[k]}"
+            ransac_meta[pair_key] = {
+                "rmse_sq": round(float(rmse_sq), 6),
+                "inlier_ratio": round(float(inlier_ratio), 4),
+                "weight": round(float(weight), 4),
+            }
+            if rmse_sq > _RANSAC_RESIDUAL_WARN:
+                logging.warning(
+                    "[CALIB] High residual for pair %s rmse_sq=%.4f inlier_ratio=%.2f",
+                    pair_key, rmse_sq, inlier_ratio,
+                )
 
     solve_meta = {
-        "commonFrames": common_frames,
-        "usedFrames": [f for f, keep in zip(common_frames, valid_flags) if keep],
-        "droppedFrames": [f for f, keep in zip(common_frames, valid_flags) if not keep],
-        "usedFrameDataByNode": {
-            node_id: {
-                str(f): frame_data[node_id][f]
-                for f, keep in zip(common_frames, valid_flags)
-                if keep and f in frame_data[node_id]
-            }
-            for node_id in node_ids
-        },
+        "commonFrames": len(common_frames),
+        "singleTargetFrames": len(single_target_frames),
+        "lifetimeFilteredFrames": T,
+        "usedFrames": lifetime_filtered_frames,
+        "ransacMetaByPair": ransac_meta,
     }
     return node_ids, P_opt, theta_opt, solve_meta
 
@@ -179,7 +306,7 @@ class CalibrationSession:
     command_id: str
     group_id: str
     target_nodes: Set[str]
-    # node_id -> relative_frame_idx -> list of [range_m, doppler_bin, angle_rad]
+    # node_id -> relative_frame_idx -> list of {"track_id": int, "x": float, "y": float}
     frame_data: Dict[str, Dict[int, List]] = field(default_factory=dict)
     done_nodes: Set[str] = field(default_factory=set)
     created_ms: int = field(default_factory=lambda: int(time.time() * 1000))
@@ -531,7 +658,6 @@ class ServerController:
         node_id = parts[-1]
         command_id = str(payload.get("commandId", ""))
         frame_num = payload.get("frameNum")
-        detections = payload.get("detections", [])
         tracks = payload.get("tracks", [])
 
         if not command_id:
@@ -554,8 +680,7 @@ class ServerController:
         with session.lock:
             if node_id not in session.frame_data:
                 session.frame_data[node_id] = {}
-            session.frame_data[node_id][frame_key] = detections
-            # session.frame_data[node_id][frame_key] = tracks
+            session.frame_data[node_id][frame_key] = tracks
 
 
     def _handle_calib_done(self, topic: str, payload: Dict[str, Any]) -> None:

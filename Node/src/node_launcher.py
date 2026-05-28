@@ -142,6 +142,15 @@ class PipelineManager:
                 log.warning("Pipeline already running (pid=%s)", self._process.pid)
                 return False
 
+            # Start the trigger (clock source) first so the DAQ has pulses
+            trigger_mode = os.getenv("CHIRP_TRIGGER_MODE", "mqtt")
+            if not self.start_trigger(trigger_mode):
+                log.error(
+                    "Failed to start trigger (mode=%s) — pipeline will start without clock source",
+                    trigger_mode,
+                )
+                # Don't block — pipeline can still run if trigger is handled externally
+
             main_py = NODE_DIR / "src" / "main.py"
             if not main_py.exists():
                 log.error("main.py not found at %s", main_py)
@@ -275,12 +284,14 @@ class PipelineManager:
             log.error("Trigger not found: %s", path)
             return False
         try:
+            if str(path).endswith(".py"):
+                cmd = [self._python, str(path)]
+            else:
+                cmd = [str(path)]
             proc = subprocess.Popen(
-                [str(path)] if str(path).endswith(".py") else [str(path)],
+                cmd,
                 env=os.environ.copy(),
                 cwd=str(NODE_DIR),
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
                 start_new_session=True,
             )
             self._trigger_proc = proc

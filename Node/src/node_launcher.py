@@ -52,30 +52,6 @@ if _ENV_FILE.is_file():
             if k and k not in os.environ:
                 os.environ[k] = v
 
-# MQTT / pipeline env vars — logged immediately after .env load + config init
-_PIPELINE_ENV_KEYS = [
-    "MQTT_HOST",
-    "MQTT_PORT",
-    "MQTT_USERNAME",
-    "MQTT_PASSWORD",
-    "NODE_ID",
-    "GROUP_ID",
-    "SERVER_URL",
-    "CHIRP_TRIGGER_MODE",
-    "CHIRP_SCHEMA_VERSION",
-    "CHIRP_TOPIC_PREFIX",
-]
-
-
-def _log_pipeline_env() -> None:
-    """Log key env vars the pipeline subprocess will inherit (redact password)."""
-    for k in _PIPELINE_ENV_KEYS:
-        v = os.getenv(k, "<unset>")
-        if k.endswith("PASSWORD") and v != "<unset>":
-            v = "***"
-        log.info("env: %s=%s", k, v)
-
-
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
@@ -99,18 +75,6 @@ os.environ.setdefault("MQTT_PORT", str(MQTT_PORT))
 os.environ.setdefault("MQTT_USERNAME", MQTT_USER)
 os.environ.setdefault("MQTT_PASSWORD", MQTT_PASS)
 os.environ.setdefault("SERVER_URL", "http://127.0.0.1:5001")
-
-# Trigger (clock source) selection — matches run_tests.sh modes
-TRIGGER_MODE = os.getenv("CHIRP_TRIGGER_MODE", "none").lower()
-os.environ.setdefault("CHIRP_TRIGGER_MODE", TRIGGER_MODE)
-_TRIGGER_PATHS: dict[str, list[str]] = {
-    "local": [str(NODE_DIR / "src" / "hardware_trigger" / "local_trigger")],
-    "networked": [str(NODE_DIR / "src" / "hardware_trigger" / "networked_trigger")],
-    "mqtt": [
-        str(NODE_DIR / ".venv" / "bin" / "python3"),
-        str(NODE_DIR / "src" / "hardware_trigger_mqtt" / "mqtt_trigger_client.py"),
-    ],
-}
 
 COMMAND_TOPIC = f"{TOPIC_PREFIX}/group/{GROUP_ID}/node/{NODE_ID}/command"
 STATUS_TOPIC = f"{TOPIC_PREFIX}/group/{GROUP_ID}/node/{NODE_ID}/status"
@@ -142,23 +106,11 @@ log.debug(
     STATUS_TOPIC,
     PRESENCE_TOPIC,
 )
-log.debug(
-    "NODE_DIR=%s  MQTT_USER=%s  TRIGGER_MODE=%s", NODE_DIR, MQTT_USER, TRIGGER_MODE
-)
-_log_pipeline_env()
+log.debug("NODE_DIR=%s  MQTT_USER=%s", NODE_DIR, MQTT_USER)
 
 
 def _now_ms() -> int:
     return int(time.time() * 1000)
-
-
-def _dump_script_output(script_name: str, stdout: str, stderr: str) -> None:
-    """Log full script stdout and stderr at verbosity level 2."""
-    if _VERBOSITY < 2:
-        return
-    for stream_name, text in (("stdout", stdout), ("stderr", stderr)):
-        if text.strip():
-            log.info("--- %s %s ---\n%s", script_name, stream_name, text.strip())
 
 
 # ---------------------------------------------------------------------------
@@ -169,10 +121,8 @@ def _dump_script_output(script_name: str, stdout: str, stderr: str) -> None:
 class PipelineManager:
     def __init__(self) -> None:
         self._process: Optional[subprocess.Popen] = None
-        self._trigger: Optional[subprocess.Popen] = None
         self._lock = threading.Lock()
         self._started_ms: int = 0
-        self._trigger_started_ms: int = 0
         self._python = self._find_python()
 
     @staticmethod
@@ -184,82 +134,6 @@ class PipelineManager:
         log.debug("Using system python: %s", sys.executable)
         return sys.executable
 
-    # ----- Trigger / clock source ------------------------------------
-
-    def _start_trigger(self) -> bool:
-        """Launch the hardware trigger binary or MQTT trigger client."""
-        if TRIGGER_MODE == "none":
-            log.info(
-                "Trigger mode=none — skipping clock source (pipeline must provide its own timing)"
-            )
-            return True
-        if TRIGGER_MODE not in _TRIGGER_PATHS:
-            log.error(
-                "Unknown trigger mode: %s (valid: %s)",
-                TRIGGER_MODE,
-                list(_TRIGGER_PATHS),
-            )
-            return False
-
-        cmd = _TRIGGER_PATHS[TRIGGER_MODE]
-        exe = Path(cmd[0])
-        if not exe.exists():
-            log.error("Trigger binary not found: %s", exe)
-            return False
-
-        try:
-            log.info("Starting trigger (mode=%s): %s", TRIGGER_MODE, " ".join(cmd))
-            self._trigger = subprocess.Popen(
-                cmd,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True,
-            )
-            self._trigger_started_ms = _now_ms()
-            log.info("Trigger started  pid=%s", self._trigger.pid)
-            return True
-        except Exception as exc:
-            log.exception("Failed to start trigger: %s", exc)
-            self._trigger = None
-            return False
-
-    def _stop_trigger(self) -> None:
-        if self._trigger is None:
-            return
-        pid = self._trigger.pid
-        if self._trigger.poll() is not None:
-            log.debug(
-                "Trigger already exited (pid=%s, rc=%s)", pid, self._trigger.returncode
-            )
-            self._trigger = None
-            return
-        try:
-            pgid = os.getpgid(pid)
-            log.debug("Stopping trigger pgid=%s (pid=%s)", pgid, pid)
-            os.killpg(pgid, signal.SIGTERM)
-            try:
-                self._trigger.wait(timeout=3)
-            except subprocess.TimeoutExpired:
-                log.warning(
-                    "Trigger did not exit on SIGTERM, sending SIGKILL  pid=%s", pid
-                )
-                os.killpg(pgid, signal.SIGKILL)
-                self._trigger.wait(timeout=2)
-        except ProcessLookupError:
-            log.debug("Trigger process already gone  pid=%s", pid)
-        log.info("Trigger stopped  pid=%s", pid)
-        self._trigger = None
-
-    @property
-    def trigger_running(self) -> bool:
-        with self._lock:
-            return self._trigger is not None and self._trigger.poll() is None
-
-    @property
-    def trigger_pid(self) -> Optional[int]:
-        with self._lock:
-            return self._trigger.pid if self._trigger else None
-
     # ----- Pipeline lifecycle -----------------------------------------
 
     def start(self) -> bool:
@@ -268,14 +142,11 @@ class PipelineManager:
                 log.warning("Pipeline already running (pid=%s)", self._process.pid)
                 return False
 
-            # Start clock source first
-            if not self._start_trigger():
-                return False
+            self.start_trigger("mqtt")
 
             main_py = NODE_DIR / "src" / "main.py"
             if not main_py.exists():
                 log.error("main.py not found at %s", main_py)
-                self._stop_trigger()
                 return False
             try:
                 log.debug(
@@ -284,14 +155,12 @@ class PipelineManager:
                     main_py,
                     NODE_DIR,
                 )
-                _log_pipeline_env()
                 child_env = os.environ.copy()
                 self._process = subprocess.Popen(
                     [self._python, "-u", str(main_py)],
                     env=child_env,
                     cwd=str(NODE_DIR),
                     start_new_session=True,
-                    close_fds=True,
                 )
                 self._started_ms = _now_ms()
                 log.info("Pipeline started  pid=%s", self._process.pid)
@@ -299,7 +168,6 @@ class PipelineManager:
             except Exception as exc:
                 log.exception("Failed to start pipeline: %s", exc)
                 self._process = None
-                self._stop_trigger()
                 return False
 
     def stop(self) -> bool:
@@ -339,7 +207,7 @@ class PipelineManager:
                     pipeline_stopped = True
 
             # Always try to stop the trigger
-            self._stop_trigger()
+            self.stop_trigger()
             return pipeline_stopped
 
     @property
@@ -380,10 +248,8 @@ class PipelineManager:
                     result.returncode,
                     result.stderr[:200],
                 )
-                _dump_script_output(script_name, result.stdout, result.stderr)
                 return False
             log.info("%s completed", script_name)
-            _dump_script_output(script_name, result.stdout, result.stderr)
             return True
         except subprocess.TimeoutExpired:
             log.error("%s timed out", script_name)
@@ -488,9 +354,6 @@ class PipelineManager:
             "triggerRunning": self.trigger_running,
             "triggerMode": self.trigger_mode,
             "uptimeMs": self.uptime_ms,
-            "triggerMode": TRIGGER_MODE,
-            "triggerRunning": self.trigger_running,
-            "triggerPid": self.trigger_pid,
             "timestampMs": _now_ms(),
         }
 

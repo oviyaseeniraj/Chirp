@@ -142,8 +142,6 @@ class PipelineManager:
                 log.warning("Pipeline already running (pid=%s)", self._process.pid)
                 return False
 
-            self.start_trigger("mqtt")
-
             main_py = NODE_DIR / "src" / "main.py"
             if not main_py.exists():
                 log.error("main.py not found at %s", main_py)

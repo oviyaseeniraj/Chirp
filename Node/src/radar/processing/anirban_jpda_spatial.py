@@ -900,7 +900,7 @@ class JPDATracker:
                 claim = 0.0
             
             # If no existing track strongly claims this detection, spawn a new one
-            print(claim)
+            #print(claim)
             if claim < threshold_init:
                 track_id = self.next_track_id
                 self.next_track_id += 1

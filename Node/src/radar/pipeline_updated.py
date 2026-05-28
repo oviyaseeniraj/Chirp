@@ -785,11 +785,13 @@ def post_dbscan_process(
                     serialized_confirmed_tracks.append(serialize_track(t))
 
                     s = np.array(t["State"]).flatten()
-                    tracks_for_calibration.append({
-                        "track_id": int(t["TrackID"]),
-                        "x": float(s[0]),
-                        "y": float(s[2]),
-                    })
+                    tracks_for_calibration.append(
+                        {
+                            "track_id": int(t["TrackID"]),
+                            "x": float(s[0]),
+                            "y": float(s[2]),
+                        }
+                    )
 
             for t in tentative_tracks:
                 serialized_tentative_tracks.append(serialize_track(t))
@@ -920,46 +922,7 @@ def socket_process(
             time.sleep(0.001)
             continue
 
-        if sio is None or not sio.connected:
-            sio = reconnect_socketio(server_url)
-            if sio is None:
-                time.sleep(1)
-                continue
-
-        try:
-            # Emit data payload combining base requirements and shim enhancements
-            sio.emit(
-                "send_frame",
-                {
-                    "node_id": node_id,
-                    "timestamp_ms": data.get("timestamp", int(time.time() * 1000)),
-                    "array": data.get("array", b""),
-                    "angles": data.get("angles", b""),
-                    "cfar": data.get("cfar", b""),
-                    "cluster_count": data.get("cluster_count", 0),
-                    "clusters": data.get("clusters", b""),
-                    "confirmed_tracks": data.get("confirmed_tracks", b""),
-                    "tentative_tracks": data.get("tentative_tracks", b""),
-                    "confirmed_tracks_rd": data.get("confirmed_tracks_rd", b""),
-                    "confirmed_tracks_angles": data.get("confirmed_tracks_angles", b""),
-                },
-            )
-        except Exception as e:
-            debug_print(f"[SOCKET] Send error: {e}")
-            sio = None
-
-        if db_enabled and db_client is not None:
-            try:
-                db_row = {
-                    "node_id": node_id,
-                    "timestamp_ms": data.get("timestamp", int(time.time() * 1000)),
-                    "cluster_count": data.get("cluster_count", 0),
-                    "clusters": data.get("clusters", []),
-                }
-                db_client.table("radar_frame_summary").insert(db_row).execute()
-            except Exception as e:
-                debug_print(f"[DB] Insert row failed: {e}")
-
+        # --- MQTT frame publish (never gated on SocketIO) ------------
         if mqtt_client is not None:
             clusters = data.get("clusters", [])
             if clusters:
@@ -998,3 +961,43 @@ def socket_process(
                     )
                 except Exception as exc:
                     debug_print(f"[SOCKET] MQTT publish failed: {exc}")
+
+        # --- DB insert -------------------------------------------------
+        if db_enabled and db_client is not None:
+            try:
+                db_row = {
+                    "node_id": node_id,
+                    "timestamp_ms": data.get("timestamp", int(time.time() * 1000)),
+                    "cluster_count": data.get("cluster_count", 0),
+                    "clusters": data.get("clusters", []),
+                }
+                db_client.table("radar_frame_summary").insert(db_row).execute()
+            except Exception as e:
+                debug_print(f"[DB] Insert row failed: {e}")
+
+        # --- SocketIO (best-effort; may fail if UI server is down) -----
+        if sio is None or not sio.connected:
+            sio = reconnect_socketio(server_url)
+        if sio is not None:
+            try:
+                sio.emit(
+                    "send_frame",
+                    {
+                        "node_id": node_id,
+                        "timestamp_ms": data.get("timestamp", int(time.time() * 1000)),
+                        "array": data.get("array", b""),
+                        "angles": data.get("angles", b""),
+                        "cfar": data.get("cfar", b""),
+                        "cluster_count": data.get("cluster_count", 0),
+                        "clusters": data.get("clusters", b""),
+                        "confirmed_tracks": data.get("confirmed_tracks", b""),
+                        "tentative_tracks": data.get("tentative_tracks", b""),
+                        "confirmed_tracks_rd": data.get("confirmed_tracks_rd", b""),
+                        "confirmed_tracks_angles": data.get(
+                            "confirmed_tracks_angles", b""
+                        ),
+                    },
+                )
+            except Exception as e:
+                debug_print(f"[SOCKET] Send error: {e}")
+                sio = None

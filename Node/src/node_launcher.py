@@ -38,6 +38,20 @@ from typing import Optional
 
 import paho.mqtt.client as mqtt
 
+# ---- Load Node/.env so MQTT_HOST etc are picked up ---------------
+_NODE_DIR = Path(os.getenv("NODE_DIR", str(Path(__file__).resolve().parents[1])))
+_ENV_FILE = _NODE_DIR / ".env"
+if _ENV_FILE.is_file():
+    with open(_ENV_FILE) as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if not _line or _line.startswith("#") or "=" not in _line:
+                continue
+            k, _, v = _line.partition("=")
+            k, v = k.strip(), v.strip().strip('"').strip("'")
+            if k and k not in os.environ:
+                os.environ[k] = v
+
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------

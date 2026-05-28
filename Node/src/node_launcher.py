@@ -206,6 +206,84 @@ class PipelineManager:
     def reset_radar(self) -> bool:
         return self._fpga_script("reset_radar.sh")
 
+    # ----- Trigger management (mutually exclusive) -----------------------
+
+    def _launch_trigger(self, which: str, binary_or_script: str) -> bool:
+        """Launch a trigger binary/script as a subprocess."""
+        path = (
+            Path(binary_or_script)
+            if binary_or_script.startswith("/")
+            else NODE_DIR / binary_or_script
+        )
+        if not path.exists():
+            log.error("Trigger not found: %s", path)
+            return False
+        try:
+            proc = subprocess.Popen(
+                [str(path)] if str(path).endswith(".py") else [str(path)],
+                env=os.environ.copy(),
+                cwd=str(NODE_DIR),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            self._trigger_proc = proc
+            log.info("Trigger started  which=%s pid=%s", which, proc.pid)
+            return True
+        except Exception as exc:
+            log.exception("Failed to start trigger %s: %s", which, exc)
+            return False
+
+    def start_trigger(self, mode: str = "mqtt") -> bool:
+        """Start a trigger. Mode: 'local' or 'mqtt'. Stops any running trigger first."""
+        self.stop_trigger()
+        if mode == "local":
+            ok = self._launch_trigger("local", "src/hardware_trigger/local_trigger")
+        elif mode == "mqtt":
+            ok = self._launch_trigger(
+                "mqtt", "src/hardware_trigger_mqtt/mqtt_trigger_client.py"
+            )
+        else:
+            log.error("Unknown trigger mode: %s", mode)
+            return False
+        if ok:
+            self._trigger_mode = mode
+        return ok
+
+    def stop_trigger(self) -> bool:
+        """Stop any running trigger."""
+        if not hasattr(self, "_trigger_proc") or self._trigger_proc is None:
+            return False
+        pid = self._trigger_proc.pid
+        if self._trigger_proc.poll() is not None:
+            self._trigger_proc = None
+            self._trigger_mode = None
+            return True
+        try:
+            os.killpg(os.getpgid(pid), signal.SIGTERM)
+            self._trigger_proc.wait(timeout=3)
+        except Exception:
+            try:
+                os.killpg(os.getpgid(pid), signal.SIGKILL)
+            except Exception:
+                pass
+        self._trigger_proc = None
+        self._trigger_mode = None
+        log.info("Trigger stopped  pid=%s", pid)
+        return True
+
+    @property
+    def trigger_running(self) -> bool:
+        return (
+            hasattr(self, "_trigger_proc")
+            and self._trigger_proc is not None
+            and self._trigger_proc.poll() is None
+        )
+
+    @property
+    def trigger_mode(self) -> str:
+        return getattr(self, "_trigger_mode", None) or ""
+
     # ----- Status ----------------------------------------------------
 
     def status_payload(self) -> dict:
@@ -215,6 +293,8 @@ class PipelineManager:
             "groupId": GROUP_ID,
             "pipelineRunning": self.running,
             "pipelinePid": self.pid,
+            "triggerRunning": self.trigger_running,
+            "triggerMode": self.trigger_mode,
             "uptimeMs": self.uptime_ms,
             "timestampMs": _now_ms(),
         }
@@ -318,6 +398,15 @@ class NodeLauncher:
             log.info("Command: reset_radar")
             self.pipeline.reset_radar()
             self._publish_status()
+        elif action == "start_trigger":
+            mode = payload.get("mode", "mqtt")
+            log.info("Command: start_trigger mode=%s", mode)
+            self.pipeline.start_trigger(mode)
+            self._publish_status()
+        elif action == "stop_trigger":
+            log.info("Command: stop_trigger")
+            self.pipeline.stop_trigger()
+            self._publish_status()
         elif action == "status":
             self._publish_status()
         else:
@@ -336,6 +425,7 @@ class NodeLauncher:
         log.info("Node launcher running  node=%s  group=%s", NODE_ID, GROUP_ID)
         self.shutdown.wait()
         self.pipeline.stop()
+        self.pipeline.stop_trigger()
         self._publish_presence("offline")
         self.client.loop_stop()
         self.client.disconnect()

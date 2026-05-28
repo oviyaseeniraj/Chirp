@@ -48,7 +48,7 @@ if _ENV_FILE.is_file():
             if not _line or _line.startswith("#") or "=" not in _line:
                 continue
             k, _, v = _line.partition("=")
-            k, v = k.strip(), v.strip().strip('"').strip("'")
+            k, v = k.strip(), v.split("#")[0].strip().strip('"').strip("'")
             if k and k not in os.environ:
                 os.environ[k] = v
 

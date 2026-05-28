@@ -197,3 +197,5 @@ src/hardware_trigger/jetgpio_example
 src/hardware_trigger/networked_trigger
 src/hardware_trigger/trigger_test
 src/hardware_trigger/timing_test
+src/hardware_trigger_mqtt/trigger_test
+src/hardware_trigger_mqtt/networked_trigger

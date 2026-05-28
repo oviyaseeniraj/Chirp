@@ -6,7 +6,7 @@
 #define PULSE_WIDTH_NS 50
 
 // Trigger timing defaults
-#define DEFAULT_PULSE_PERIOD_MS 65
+#define DEFAULT_PULSE_PERIOD_MS 50
 
 // Runtime defaults
 #define DEFAULT_CPU_CORE 5

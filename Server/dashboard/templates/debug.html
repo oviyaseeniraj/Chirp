@@ -48,6 +48,42 @@
   .ip-btn { padding: 3px 6px; margin-left: auto; min-width: 30px; text-align: center; border: 1px solid #1f6feb; border-radius: 3px; background: #0d2d6b; color: #58a6ff; cursor: help; font-size: 12px; line-height: 1.2; transition: all 0.2s; white-space: nowrap; }
   .ip-btn::after { content: "DEBUG"; }
   .ip-btn:hover::after { content: attr(data-ip); }
+
+  /* NEW: visualizer button */
+  .viz-btn {
+    padding: 3px 6px;
+    border: 1px solid #238636;
+    border-radius: 3px;
+    background: #0d3320;
+    color: #3fb950;
+    cursor: pointer;
+    font-size: 12px;
+    line-height: 1.2;
+    white-space: nowrap;
+  }
+
+  .log-btn {
+    padding: 3px 6px;
+    border: 1px solid #1f6feb;
+    border-radius: 3px;
+    background: #0d2d6b;
+    color: #58a6ff;
+    cursor: pointer;
+    font-size: 12px;
+    line-height: 1.2;
+    white-space: nowrap;
+  }
+  .ssh-btn {
+    padding: 3px 6px;
+    border: 1px solid #8957e5;
+    border-radius: 3px;
+    background: #1f1636;
+    color: #b392f0;
+    cursor: pointer;
+    font-size: 12px;
+    line-height: 1.2;
+    white-space: nowrap;
+  }
 </style>
 </head>
 <body>
@@ -184,20 +220,8 @@ nodeCtrlList.addEventListener("click", (e) => {
   const btn = e.target.closest("button");
   if (!btn) return;
 
-  const row = btn.closest(".node-ctrl-row");
-  if (!row) return;
-  const nodeId = row.dataset.nodeId;
-  const ip = row.dataset.ip;
+  const ip = btn.dataset.ip;
 
-  // SSH button
-  if (btn.classList.contains("ssh-btn")) {
-    if (ip && ip !== "Unknown") {
-      window.open("ssh://" + "chirp@" + ip, "_self");
-    }
-    return;
-  }
-
-  // Log viewer button
   if (btn.classList.contains("log-btn")) {
     if (ip && ip !== "Unknown") {
       window.open("http://" + ip + ":5003", "_blank");
@@ -205,8 +229,25 @@ nodeCtrlList.addEventListener("click", (e) => {
     return;
   }
 
+  if (btn.classList.contains("viz-btn")) {
+    if (ip && ip !== "Unknown") {
+      window.open("http://" + ip + ":5001", "_blank", "noopener,noreferrer");
+    }
+    return;
+  }
+
+  if (btn.classList.contains("ssh-btn")) {
+    if (ip && ip !== "Unknown") {
+      window.open("ssh://chirp@" + ip, "_blank", "noopener,noreferrer");
+    }
+    return;
+  }
+
+  const row = btn.closest(".node-ctrl-row");
+  if (!row) return;
   const action = btn.dataset.action;
   const mode = btn.dataset.mode || "";
+  const nodeId = row.dataset.nodeId;
   if (action && nodeId) sendNodeCmd(nodeId, action, mode);
 });
 const nodeStatusAll = document.getElementById("nodeStatusAll");
@@ -429,17 +470,18 @@ function updateNodeCtrl(data) {
     const row = document.createElement("div");
     row.className = "node-ctrl-row";
     row.dataset.nodeId = n.node_id;
-    row.dataset.ip = n.ip_address || "Unknown";
     row.style.cssText = "display:flex;align-items:center;gap:2px;padding:2px 0;flex-wrap:wrap";
     row.innerHTML =
       '<span style="color:' + n.color + ';font-weight:600;font-size:12px;width:45px">' + n.node_id + '</span>' +
       '<span style="font-size:12px;color:' + (running ? '#3fb950' : '#f85149') + ';width:55px">' + (running ? 'ON ' + uptime : 'OFF') + '</span>' +
-      '<button data-action="start_pipeline" style="padding:3px 6px;border:1px solid #238636;border-radius:3px;background:#0d3320;color:#3fb950;cursor:pointer;font-size:12px;line-height:1.2" title="Start pipeline">&#9654;</button>' +
-      '<button data-action="stop_pipeline" style="padding:3px 6px;border:1px solid #da3633;border-radius:3px;background:#2a1a1a;color:#f85149;cursor:pointer;font-size:12px;line-height:1.2" title="Stop">&#9632;</button>' +
       '<button data-action="start_radar" style="padding:3px 6px;border:1px solid #d29922;border-radius:3px;background:#1a1508;color:#d29922;cursor:pointer;font-size:12px;line-height:1.2" title="FPGA init">F</button>' +
       '<button data-action="reset_radar" style="padding:3px 6px;border:1px solid #8b949e;border-radius:3px;background:#21262d;color:#8b949e;cursor:pointer;font-size:12px;line-height:1.2" title="FPGA reset">R</button>' +
-      '<button class="log-btn" title="Open log viewer:5003" style="padding:3px 6px;border:1px solid #1f6feb;border-radius:3px;background:#0d2d6b;color:#58a6ff;cursor:pointer;font-size:12px;line-height:1.2">LOG</button>' +
-      '<button class="ssh-btn" title="SSH to node" style="padding:3px 6px;border:1px solid #30363d;border-radius:3px;background:#21262d;color:#c9d1d9;cursor:pointer;font-size:12px;line-height:1.2">SSH</button>';
+      '<button data-action="start_pipeline" style="padding:3px 6px;border:1px solid #238636;border-radius:3px;background:#0d3320;color:#3fb950;cursor:pointer;font-size:12px;line-height:1.2" title="Start pipeline">&#9654;</button>' +
+      '<button data-action="stop_pipeline" style="padding:3px 6px;border:1px solid #da3633;border-radius:3px;background:#2a1a1a;color:#f85149;cursor:pointer;font-size:12px;line-height:1.2" title="Stop">&#9632;</button>' +
+      
+      '<button class="log-btn" data-ip="' + (n.ip_address || "Unknown") + '" title="Copy remote journalctl command">LOG</button>' +
+      '<button class="viz-btn" data-ip="' + (n.ip_address || "Unknown") + '" title="Open visualizer">UI</button>' +
+      '<button class="ssh-btn" data-ip="' + (n.ip_address || "Unknown") + '" title="Open SSH link">SSH</button>';
     nodeCtrlList.appendChild(row);
   }
 }
@@ -455,3 +497,4 @@ socket.on("mqtt_status", (s) => {
 </script>
 </body>
 </html>
+

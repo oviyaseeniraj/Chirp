@@ -43,3 +43,17 @@ sudo systemctl status chirp-launcher
 
 # Follow logs
 sudo journalctl -u chirp-launcher -f
+
+
+# Testing pipeline manually using /test
+1. Run the following commands
+```
+cd test
+source .venv/bin/activate
+sudo ./run_tests.sh
+```
+
+2. Select test 1 (Full Integration Test)
+3. Then select your choice of trigger:
+ 1) local trigger
+ 2) mqtt trigger

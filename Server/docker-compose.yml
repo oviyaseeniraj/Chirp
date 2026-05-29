@@ -109,6 +109,11 @@ services:
             MQTT_USER: ${MQTT_SERVER_USER:-chirp}
             MQTT_PASS: ${MQTT_SERVER_PASS:-chirp}
             DASHBOARD_PORT: "5002"
+            DB_HOST: postgres
+            DB_PORT: "5432"
+            DB_NAME: ${POSTGRES_DB:-chirp}
+            DB_USER: ${POSTGRES_USER:-chirp}
+            DB_PASS: ${POSTGRES_PASSWORD:-chirp}
         logging:
             driver: "json-file"
             options:

@@ -49,7 +49,7 @@ TOPIC_PREFIX = "chirp/v1"
 NODE_STALE_MS = int(os.getenv("NODE_STALE_MS", "3000"))
 
 # Database configuration
-DB_HOST = os.getenv("DB_HOST", "localhost")
+DB_HOST = os.getenv("DB_HOST", "postgres")
 DB_PORT = int(os.getenv("DB_PORT", "5432"))
 DB_NAME = os.getenv("DB_NAME", "chirp")
 DB_USER = os.getenv("DB_USER", "chirp")

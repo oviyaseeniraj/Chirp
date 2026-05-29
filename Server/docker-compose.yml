@@ -1,0 +1,119 @@
+services:
+    # ── MQTT broker (NanoMQ) ──────────────────────────────────────────
+    nanomq:
+        image: emqx/nanomq:latest
+        container_name: chirp-nanomq
+        restart: unless-stopped
+        ports:
+            - "1883:1883" # MQTT TCP
+            - "8083:8083" # MQTT over WebSocket (optional)
+            - "8883:8883" # MQTT over TLS  (optional)
+        volumes:
+            - ./nanomq/nanomq.conf:/etc/nanomq.conf:ro
+            - ./nanomq/auth:/etc/nanomq/auth:ro
+        healthcheck:
+            test: ["CMD", "nanomq_cli", "ping"]
+            interval: 10s
+            timeout: 5s
+            retries: 5
+
+    # ── PostgreSQL (message store) ─────────────────────────────────────
+    postgres:
+        image: postgres:16-alpine
+        container_name: chirp-postgres
+        restart: unless-stopped
+        ports:
+            - "5432:5432"
+        environment:
+            POSTGRES_USER: ${POSTGRES_USER:-chirp}
+            POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-chirp}
+            POSTGRES_DB: ${POSTGRES_DB:-chirp}
+        volumes:
+            - pgdata:/var/lib/postgresql/data
+            - ./db/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+        healthcheck:
+            test:
+                [
+                    "CMD-SHELL",
+                    "pg_isready -U ${POSTGRES_USER:-chirp} -d ${POSTGRES_DB:-chirp}",
+                ]
+            interval: 10s
+            timeout: 5s
+            retries: 5
+
+    # ── Bridge: subscribes to MQTT topics and inserts into Postgres ────
+    bridge:
+        build: ./bridge
+        container_name: chirp-bridge
+        restart: unless-stopped
+        depends_on:
+            nanomq:
+                condition: service_healthy
+            postgres:
+                condition: service_healthy
+        environment:
+            MQTT_HOST: nanomq
+            MQTT_PORT: "1883"
+            MQTT_USER: ${MQTT_SERVER_USER:-chirp}
+            MQTT_PASS: ${MQTT_SERVER_PASS:-chirp}
+            DB_HOST: postgres
+            DB_PORT: "5432"
+            DB_NAME: ${POSTGRES_DB:-chirp}
+            DB_USER: ${POSTGRES_USER:-chirp}
+            DB_PASS: ${POSTGRES_PASSWORD:-chirp}
+        logging:
+            driver: "json-file"
+            options:
+                max-size: "10m"
+                max-file: "3"
+
+    # ── Calibration: orchestrates multi‑node self‑calibration ──────────
+    calibration:
+        build: ./calibration
+        container_name: chirp-calibration
+        restart: unless-stopped
+        depends_on:
+            nanomq:
+                condition: service_healthy
+            postgres:
+                condition: service_healthy
+        environment:
+            MQTT_HOST: nanomq
+            MQTT_PORT: "1883"
+            MQTT_USER: ${MQTT_SERVER_USER:-chirp}
+            MQTT_PASS: ${MQTT_SERVER_PASS:-chirp}
+            DB_HOST: postgres
+            DB_PORT: "5432"
+            DB_NAME: ${POSTGRES_DB:-chirp}
+            DB_USER: ${POSTGRES_USER:-chirp}
+            DB_PASS: ${POSTGRES_PASSWORD:-chirp}
+        logging:
+            driver: "json-file"
+            options:
+                max-size: "10m"
+                max-file: "3"
+
+    # ── Debug dashboard: multi‑node bird's‑eye x‑y plot ──────────────
+    dashboard:
+        build: ./dashboard
+        container_name: chirp-dashboard
+        restart: unless-stopped
+        ports:
+            - "5002:5002"
+        depends_on:
+            nanomq:
+                condition: service_healthy
+        environment:
+            MQTT_HOST: nanomq
+            MQTT_PORT: "1883"
+            MQTT_USER: ${MQTT_SERVER_USER:-chirp}
+            MQTT_PASS: ${MQTT_SERVER_PASS:-chirp}
+            DASHBOARD_PORT: "5002"
+        logging:
+            driver: "json-file"
+            options:
+                max-size: "10m"
+                max-file: "3"
+
+volumes:
+    pgdata:

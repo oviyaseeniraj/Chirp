@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Chirp — Debug Dashboard</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #0d1117; color: #c9d1d9; display: flex; height: 100vh; overflow: hidden;
+  }
+  #sidebar {
+    width: 300px; min-width: 300px; background: #161b22;
+    border-right: 1px solid #30363d; display: flex; flex-direction: column;
+    padding: 16px; gap: 12px; overflow-y: auto;
+  }
+  #sidebar h1 { font-size: 18px; font-weight: 600; color: #f0f6fc; }
+  .section-title { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #8b949e; margin-top: 4px; }
+  #calib-badge { padding: 6px 10px; border-radius: 6px; font-size: 12px; display: flex; align-items: center; gap: 8px; }
+  #calib-badge.ok { background: #0d3320; color: #3fb950; }
+  #calib-badge.none { background: #2a1a1a; color: #f85149; }
+  #calib-dot { width: 8px; height: 8px; border-radius: 50%; background: #f85149; }
+  #calib-dot.ok { background: #3fb950; }
+  .node-card { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 4px; font-size: 13px; background: #0d1117; border: 1px solid #21262d; }
+  .node-card.stale { opacity: 0.4; }
+  .node-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .node-name { flex: 1; }
+  .node-stats { font-size: 11px; color: #8b949e; }
+  #main { flex: 1; display: flex; flex-direction: column; }
+  #topbar { display: flex; align-items: center; gap: 16px; padding: 8px 16px; background: #161b22; border-bottom: 1px solid #30363d; font-size: 13px; }
+  #topbar .tag { background: #21262d; padding: 2px 8px; border-radius: 4px; font-family: monospace; font-size: 12px; }
+  #canvas-wrap { flex: 1; position: relative; overflow: hidden; }
+  #bev-canvas { width: 100%; height: 100%; display: block; }
+  #fps-counter { position: absolute; top: 8px; right: 8px; background: rgba(0,0,0,0.6); color: #58a6ff; padding: 2px 8px; border-radius: 4px; font-family: monospace; font-size: 13px; }
+  #controls { display: flex; flex-direction: column; gap: 8px; }
+  .ctrl-row { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+  input[type=range] { width: 100%; }
+  label { display: flex; align-items: center; gap: 6px; }
+  #calibBtn { padding: 6px; border: none; border-radius: 4px; background: #238636; color: #fff; cursor: pointer; font-size: 13px; font-weight: 600; }
+  #calibBtn:disabled { background: #30363d; color: #8b949e; cursor: not-allowed; }
+  #calibBtn.running { background: #da3633; }
+  #calibStatus { font-size: 11px; color: #8b949e; }
+  #calibStatus.active { color: #d29922; }
+  .calib-input { background: #0d1117; border: 1px solid #30363d; color: #c9d1d9; padding: 2px 6px; border-radius: 4px; font-size: 12px; }
+</style>
+</head>
+<body>
+
+<div id="sidebar">
+  <h1>Chirp Debug</h1>
+
+  <div id="calib-badge" class="none">
+    <div id="calib-dot"></div>
+    <span id="calib-label">Uncalibrated</span>
+  </div>
+
+  <div class="section-title">Nodes</div>
+  <div id="node-list"></div>
+
+  <div class="section-title">Calibration</div>
+  <div id="calib-panel" style="display:flex;flex-direction:column;gap:6px;font-size:12px">
+    <div class="ctrl-row">
+      <span>Group:</span>
+      <input id="calibGroup" class="calib-input" value="default" style="width:90px">
+    </div>
+    <div class="ctrl-row">
+      <span>Frames:</span>
+      <input id="calibFrames" class="calib-input" type="number" value="150" min="10" max="1000" style="width:70px">
+    </div>
+    <button id="calibBtn">Start Calibration</button>
+    <div id="calibStatus"></div>
+  </div>
+
+  <div class="section-title">Node Control</div>
+  <div id="node-ctrl-panel" style="display:flex;flex-direction:column;gap:4px;font-size:12px">
+    <div style="color:#8b949e">Pipeline (start/stop)</div>
+    <div id="node-ctrl-list"></div>
+    <button id="nodeStatusAll" style="margin-top:4px;padding:4px;border:1px solid #30363d;border-radius:4px;background:#21262d;color:#8b949e;cursor:pointer;font-size:11px">Refresh Status</button>
+  </div>
+
+  <div class="section-title">MQTT</div>
+  <div style="font-size:11px;color:#8b949e;font-family:monospace">
+    <div>Host: <span id="mqttHost">-</span></div>
+    <div>Port: <span id="mqttPort">-</span></div>
+    <div>User: <span id="mqttUser">-</span></div>
+    <div>Status: <span id="mqttConn" style="color:#f85149">disconnected</span></div>
+  </div>
+
+  <div class="section-title">Controls</div>
+  <div id="controls">
+    <div class="ctrl-row">
+      <label><input type="checkbox" id="showGrid" checked> Grid</label>
+      <label><input type="checkbox" id="showNodes" checked> Node pos</label>
+    </div>
+    <div class="ctrl-row">
+      <label><input type="checkbox" id="showClusters" checked> Clusters</label>
+      <label><input type="checkbox" id="showTracks" checked> Tracks</label>
+    </div>
+    <div class="ctrl-row">
+      <label><input type="checkbox" id="showTrails"> Trails</label>
+      <label><input type="checkbox" id="showDoppler"> Doppler color</label>
+    </div>
+    <div class="ctrl-row">
+      <span>Zoom:</span>
+      <input type="range" id="scaleSlider" min="1" max="20" value="4" step="0.5">
+      <span id="scaleVal">4 m/div</span>
+    </div>
+  </div>
+
+  <div class="section-title">Stats</div>
+  <div style="font-size:12px;color:#8b949e;font-family:monospace">
+    <div>FPS: <span id="statFps">0</span></div>
+    <div>Points: <span id="statPoints">0</span></div>
+    <div>Nodes: <span id="statNodes">0</span></div>
+  </div>
+</div>
+
+<div id="main">
+  <div id="topbar">
+    <span class="tag" id="groupTag">group: -</span>
+    <span class="tag" id="cmdTag">cmd: -</span>
+    <span style="margin-left:auto" id="timeTag"></span>
+  </div>
+  <div id="canvas-wrap">
+    <canvas id="bev-canvas"></canvas>
+    <div id="fps-counter">-- FPS</div>
+  </div>
+</div>
+
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<script>
+const canvas = document.getElementById("bev-canvas");
+const ctx = canvas.getContext("2d");
+const wrap = document.getElementById("canvas-wrap");
+
+const scaleSlider = document.getElementById("scaleSlider");
+const scaleVal = document.getElementById("scaleVal");
+const showGrid = document.getElementById("showGrid");
+const showNodes = document.getElementById("showNodes");
+const showClusters = document.getElementById("showClusters");
+const showTracks = document.getElementById("showTracks");
+const showTrails = document.getElementById("showTrails");
+const showDoppler = document.getElementById("showDoppler");
+
+const calibDot = document.getElementById("calib-dot");
+const calibLabel = document.getElementById("calib-label");
+const calibBadge = document.getElementById("calib-badge");
+const nodeList = document.getElementById("node-list");
+const groupTag = document.getElementById("groupTag");
+const cmdTag = document.getElementById("cmdTag");
+const timeTag = document.getElementById("timeTag");
+const statFps = document.getElementById("statFps");
+const statPoints = document.getElementById("statPoints");
+const statNodes = document.getElementById("statNodes");
+
+const calibBtn = document.getElementById("calibBtn");
+const calibGroup = document.getElementById("calibGroup");
+const calibFrames = document.getElementById("calibFrames");
+const calibStatus = document.getElementById("calibStatus");
+
+const mqttHost = document.getElementById("mqttHost");
+const mqttPort = document.getElementById("mqttPort");
+const mqttUser = document.getElementById("mqttUser");
+const mqttConn = document.getElementById("mqttConn");
+const nodeCtrlList = document.getElementById("node-ctrl-list");
+nodeCtrlList.addEventListener("click", (e) => {
+  const btn = e.target.closest("button");
+  if (!btn) return;
+  const row = btn.closest(".node-ctrl-row");
+  if (!row) return;
+  const action = btn.dataset.action;
+  const mode = btn.dataset.mode || "";
+  const nodeId = row.dataset.nodeId;
+  if (action && nodeId) sendNodeCmd(nodeId, action, mode);
+});
+const nodeStatusAll = document.getElementById("nodeStatusAll");
+
+let metersPerDiv = 4;
+const TRAIL_LEN = 50;
+const trails = {};
+
+function cssW() { return canvas.width / devicePixelRatio; }
+function cssH() { return canvas.height / devicePixelRatio; }
+function pxPerM() { return cssW() / (metersPerDiv * 10); }
+function toCanvas(x, y) {
+  const s = pxPerM();
+  return { cx: cssW() / 2 + x * s, cy: cssH() / 2 - y * s };
+}
+
+function resize() {
+  const rect = wrap.getBoundingClientRect();
+  canvas.width = rect.width * devicePixelRatio;
+  canvas.height = rect.height * devicePixelRatio;
+  canvas.style.width = rect.width + "px";
+  canvas.style.height = rect.height + "px";
+  ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+}
+window.addEventListener("resize", resize);
+resize();
+
+scaleSlider.addEventListener("input", () => {
+  metersPerDiv = parseFloat(scaleSlider.value);
+  scaleVal.textContent = metersPerDiv + " m/div";
+});
+
+// ── Calibration button ─────────────────────────
+calibBtn.addEventListener("click", () => {
+  calibBtn.disabled = true;
+  calibBtn.textContent = "Requesting...";
+  socket.emit("start_calibration", {
+    groupId: calibGroup.value || "default",
+    calibrationFrames: parseInt(calibFrames.value) || 150,
+  });
+});
+
+// ── Drawing ────────────────────────────────────
+function dopplerColor(d) {
+  const abs = Math.min(Math.abs(d), 5), t = abs / 5;
+  return d > 0
+    ? `rgb(${Math.round(255*t)},${Math.round(100*(1-t))},${Math.round(100*(1-t))})`
+    : `rgb(${Math.round(100*(1-t))},${Math.round(100*(1-t))},${Math.round(255*t)})`;
+}
+
+function drawGrid() {
+  const w = cssW(), h = cssH(), cx = w / 2, cy = h / 2, s = pxPerM();
+  ctx.strokeStyle = "#21262d"; ctx.lineWidth = 0.5; ctx.setLineDash([4, 4]);
+  for (let xv = -50; xv <= 50; xv += metersPerDiv) {
+    const px = cx + xv * s; ctx.beginPath(); ctx.moveTo(px, 0); ctx.lineTo(px, h); ctx.stroke();
+  }
+  for (let yv = -50; yv <= 50; yv += metersPerDiv) {
+    const py = cy - yv * s; ctx.beginPath(); ctx.moveTo(0, py); ctx.lineTo(w, py); ctx.stroke();
+  }
+  ctx.setLineDash([]); ctx.strokeStyle = "#484f58"; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(cx, 0); ctx.lineTo(cx, h); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(0, cy); ctx.lineTo(w, cy); ctx.stroke();
+  ctx.fillStyle = "#8b949e"; ctx.font = "11px monospace"; ctx.textAlign = "center";
+  for (let v = -50; v <= 50; v += metersPerDiv * 2) {
+    ctx.fillText(v + "m", cx + v * s, cy + 14);
+    if (v !== 0) ctx.fillText(v + "m", cx - 30, cy - v * s + 4);
+  }
+}
+
+function drawNodePositions(positions) {
+  for (const np of positions) {
+    const { cx: x, cy: y } = toCanvas(np.x, np.y);
+    ctx.fillStyle = np.color; ctx.beginPath(); ctx.arc(x, y, 8, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.stroke();
+    ctx.fillStyle = "#fff"; ctx.font = "10px monospace"; ctx.textAlign = "center";
+    ctx.fillText(np.node_id, x, y - 12);
+  }
+}
+
+function drawPoints(points) {
+  for (const p of points) {
+    const { cx, cy } = toCanvas(p.x, p.y);
+    const r = Math.max(1.5, Math.min(6, p.mass * 2.5));
+    ctx.globalAlpha = p.stale ? 0.2 : 0.85;
+    ctx.fillStyle = showDoppler.checked ? dopplerColor(p.doppler) : p.color;
+    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+}
+
+function drawTracks(tracks) {
+  for (const t of tracks) {
+    const { cx, cy } = toCanvas(t.x, t.y);
+    ctx.fillStyle = t.color; ctx.fillRect(cx - 4, cy - 4, 8, 8);
+    ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.5; ctx.strokeRect(cx - 4, cy - 4, 8, 8);
+    ctx.fillStyle = "#fff"; ctx.font = "9px monospace"; ctx.textAlign = "center";
+    ctx.fillText("T" + t.track_id, cx, cy - 7);
+    if (showTrails.checked) {
+      const key = t.node_id + "_" + t.track_id;
+      if (!trails[key]) trails[key] = [];
+      trails[key].push({ x: cx, y: cy });
+      if (trails[key].length > TRAIL_LEN) trails[key].shift();
+      const arr = trails[key];
+      for (let k = 1; k < arr.length; k++) {
+        ctx.globalAlpha = k / arr.length * 0.5;
+        ctx.strokeStyle = t.color; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(arr[k-1].x, arr[k-1].y); ctx.lineTo(arr[k].x, arr[k].y); ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+    }
+  }
+}
+
+function drawScaleBar() {
+  const barPx = metersPerDiv * pxPerM(), x0 = 16, y0 = cssH() - 20;
+  ctx.strokeStyle = "#fff"; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x0 + barPx, y0); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x0, y0 - 6); ctx.lineTo(x0, y0 + 6); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x0 + barPx, y0 - 6); ctx.lineTo(x0 + barPx, y0 + 6); ctx.stroke();
+  ctx.fillStyle = "#fff"; ctx.font = "11px monospace"; ctx.textAlign = "center";
+  ctx.fillText(metersPerDiv + " m", x0 + barPx / 2, y0 - 8);
+}
+
+function updateSidebar(data) {
+  calibDot.className = data.calibrated ? "ok" : "";
+  calibLabel.textContent = data.calibrated ? "Calibrated" : "Uncalibrated";
+  calibBadge.className = data.calibrated ? "ok" : "none";
+  groupTag.textContent = "group: " + (data.node_ids || []).join(",") || "-";
+  cmdTag.textContent = "cmd: " + (data.calib_command_id || "-");
+  nodeList.innerHTML = "";
+  for (const nd of (data.nodes_detail || [])) {
+    const card = document.createElement("div");
+    card.className = "node-card" + (nd.stale ? " stale" : "");
+    card.innerHTML =
+      `<div class="node-dot" style="background:${nd.color}"></div>` +
+      `<span class="node-name">${nd.node_id}</span>` +
+      `<span class="node-stats">C:${nd.clusters} T:${nd.tracks}</span>`;
+    nodeList.appendChild(card);
+  }
+}
+
+// ── Socket.IO ──────────────────────────────────
+const socket = io();
+let lastTime = performance.now(), frameCount = 0, displayFps = 0;
+
+socket.on("debug_frame", (data) => {
+  frameCount++;
+  const now = performance.now();
+  if (now - lastTime >= 1000) {
+    displayFps = Math.round(frameCount / ((now - lastTime) / 1000));
+    frameCount = 0; lastTime = now;
+  }
+  ctx.clearRect(0, 0, cssW(), cssH());
+  if (showGrid.checked) drawGrid();
+  if (showNodes.checked && data.node_positions) drawNodePositions(data.node_positions);
+  if (showClusters.checked && data.points) drawPoints(data.points);
+  if (showTracks.checked && data.tracks) drawTracks(data.tracks);
+  drawScaleBar();
+  document.getElementById("fps-counter").textContent = displayFps + " FPS";
+  statFps.textContent = displayFps;
+  statPoints.textContent = (data.points || []).length;
+  statNodes.textContent = (data.nodes_detail || []).length;
+  timeTag.textContent = new Date(data.timestampMs).toLocaleTimeString();
+  updateSidebar(data);
+  updateNodeCtrl(data);
+});
+
+// ── Calibration state updates ──────────────────
+socket.on("calib_state", (s) => {
+  if (s.active) {
+    calibBtn.textContent = "Running...";
+    calibBtn.className = "running";
+    calibBtn.disabled = true;
+    calibStatus.textContent = "Collecting frames... (" + (s.elapsedMs / 1000).toFixed(1) + "s)";
+    calibStatus.className = "active";
+  } else {
+    calibBtn.textContent = "Start Calibration";
+    calibBtn.className = "";
+    calibBtn.disabled = false;
+    if (s.error) {
+      calibStatus.textContent = "Error: " + s.error;
+      calibStatus.className = "";
+    } else if (s.commandId) {
+      calibStatus.textContent = "Done. Result: " + s.commandId;
+      calibStatus.className = "";
+    } else {
+      calibStatus.textContent = "";
+    }
+  }
+});
+
+// Node control
+function sendNodeCmd(nodeId, action, mode) {
+  const body = { nodeId, action, groupId: calibGroup.value || "default" };
+  if (mode) body.mode = mode;
+  fetch("/api/node_command", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  }).catch(e => console.error("sendNodeCmd failed:", e));
+}
+nodeStatusAll.addEventListener("click", () => {
+  document.querySelectorAll(".node-ctrl-row").forEach(el => {
+    const nid = el.dataset.nodeId;
+    if (nid) sendNodeCmd(nid, "status");
+  });
+});
+let _lastNodeCtrlHash = "";
+function updateNodeCtrl(data) {
+  const nodes = data.node_control || [];
+  if (nodes.length === 0) { nodeCtrlList.innerHTML = ""; _lastNodeCtrlHash = ""; return; }
+  const hash = JSON.stringify(nodes);
+  if (hash === _lastNodeCtrlHash) return;
+  _lastNodeCtrlHash = hash;
+
+  nodeCtrlList.innerHTML = "";
+  for (const n of nodes) {
+    const running = n.pipelineRunning;
+    const uptime = (n.uptimeMs / 1000).toFixed(0) + "s";
+    const row = document.createElement("div");
+    row.className = "node-ctrl-row";
+    row.dataset.nodeId = n.node_id;
+    row.style.cssText = "display:flex;align-items:center;gap:2px;padding:2px 0;flex-wrap:wrap";
+    row.innerHTML =
+      '<span style="color:' + n.color + ';font-weight:600;font-size:12px;width:45px">' + n.node_id + '</span>' +
+      '<span style="font-size:12px;color:' + (running ? '#3fb950' : '#f85149') + ';width:55px">' + (running ? 'ON ' + uptime : 'OFF') + '</span>' +
+      '<button data-action="start_pipeline" style="padding:3px 6px;border:1px solid #238636;border-radius:3px;background:#0d3320;color:#3fb950;cursor:pointer;font-size:12px;line-height:1.2" title="Start pipeline">&#9654;</button>' +
+      '<button data-action="stop_pipeline" style="padding:3px 6px;border:1px solid #da3633;border-radius:3px;background:#2a1a1a;color:#f85149;cursor:pointer;font-size:12px;line-height:1.2" title="Stop">&#9632;</button>' +
+      '<button data-action="start_radar" style="padding:3px 6px;border:1px solid #d29922;border-radius:3px;background:#1a1508;color:#d29922;cursor:pointer;font-size:12px;line-height:1.2" title="FPGA init">F</button>' +
+      '<button data-action="reset_radar" style="padding:3px 6px;border:1px solid #8b949e;border-radius:3px;background:#21262d;color:#8b949e;cursor:pointer;font-size:12px;line-height:1.2" title="FPGA reset">R</button>';
+    nodeCtrlList.appendChild(row);
+  }
+}
+
+// ── MQTT status ────────────────────────────────
+socket.on("mqtt_status", (s) => {
+  mqttHost.textContent = s.host;
+  mqttPort.textContent = s.port;
+  mqttUser.textContent = s.user;
+  mqttConn.textContent = s.connected ? "connected" : "disconnected";
+  mqttConn.style.color = s.connected ? "#3fb950" : "#f85149";
+});
+</script>
+</body>
+</html>

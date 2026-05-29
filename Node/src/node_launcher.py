@@ -238,6 +238,7 @@ class PipelineManager:
                 capture_output=True,
                 text=True,
                 timeout=30,
+                cwd=str(script.parent),
             )
             if result.returncode != 0:
                 log.error(

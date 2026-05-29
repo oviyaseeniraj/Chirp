@@ -39,9 +39,6 @@ from typing import Optional
 import paho.mqtt.client as mqtt
 from multiprocessing import Process
 
-# if logger is imported as a function:
-from src.logger import main as logger_main
-
 # ---- Load Node/.env so MQTT_HOST etc are picked up ---------------
 _NODE_DIR = Path(os.getenv("NODE_DIR", os.path.expanduser("~/Chirp/Node")))
 _ENV_FILE = _NODE_DIR / ".env"
@@ -536,28 +533,41 @@ class NodeLauncher:
 # ---------------------------------------------------------------------------
 
 
+def _run_logger() -> None:
+    """Run logger in child process with lazy import to avoid startup crash in parent."""
+    try:
+        from logger import main as logger_main  # lazy import
+        logger_main()
+    except Exception:
+        # Keep minimal and avoid killing parent service due to logger issues
+        logging.exception("Logger process crashed")
+
+
 def main() -> None:
-    processes = []
+    launcher = NodeLauncher()
+    logger_proc = Process(target=_run_logger, name="Logger")
+    logger_proc.start()
+    log.info("Started logger process pid=%s", logger_proc.pid)
 
-    p_logger = Process(target=logger_main, name="Logger")
-    processes.append(p_logger)
+    def _sig_handler(sig, frame):
+        log.info("Signal %s received, shutting down", sig)
+        launcher.stop()
+        if logger_proc.is_alive():
+            logger_proc.terminate()
 
-    # ...existing code...
-    for p in processes:
-        p.start()
+    signal.signal(signal.SIGTERM, _sig_handler)
+    signal.signal(signal.SIGINT, _sig_handler)
 
     try:
-        for p in processes:
-            p.join()
-    except KeyboardInterrupt:
-        pass
+        launcher.run()  # keep launcher in foreground (service stays alive)
     finally:
-        for p in processes:
-            if p.is_alive():
-                p.terminate()
-        for p in processes:
-            p.join(timeout=2)
-
+        if logger_proc.is_alive():
+            logger_proc.terminate()
+            logger_proc.join(timeout=5)
+            if logger_proc.is_alive():
+                logger_proc.kill()
+                logger_proc.join(timeout=2)
+        log.info("node_launcher main exited cleanly")
 
 if __name__ == "__main__":
     main()

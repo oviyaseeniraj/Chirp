@@ -8,7 +8,7 @@ HTML_PAGE = """
 <head>
     <title>Journalctl Logs</title>
     <style>
-        body { background-color: #1e1e1e; color: #00ff00; font-family: monospace; padding: 10px; }
+        body { background-color: #1e1e1e; color: #ffffff; font-family: monospace; padding: 10px; }
         #terminal { white-space: pre-wrap; word-wrap: break-word; }
     </style>
 </head>
@@ -70,12 +70,16 @@ class LogStreamingHandler(BaseHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
 
-if __name__ == '__main__':
-    PORT = os.getenv("LOG_PORT", "5003")
-    server = HTTPServer(('127.0.0.1', PORT), LogStreamingHandler)
-    print(f"Starting logger UI at http://127.0.0.1:{PORT}")
+def main():
+    PORT = int(os.getenv("LOG_PORT", "5003"))
+    server = HTTPServer(('0.0.0.0', PORT), LogStreamingHandler)
+    print(f"Starting logger UI at http://0.0.0.0:{PORT}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         print("\nShutting down logger.")
         server.server_close()
+
+if __name__ == '__main__':
+    main()
+    

@@ -45,11 +45,6 @@
   #calibStatus.active { color: #d29922; }
   .calib-input { background: #0d1117; border: 1px solid #30363d; color: #c9d1d9; padding: 2px 6px; border-radius: 4px; font-size: 12px; }
   
-  .ip-btn { padding: 3px 6px; margin-left: auto; min-width: 30px; text-align: center; border: 1px solid #1f6feb; border-radius: 3px; background: #0d2d6b; color: #58a6ff; cursor: help; font-size: 12px; line-height: 1.2; transition: all 0.2s; white-space: nowrap; }
-  .ip-btn::after { content: "DEBUG"; }
-  .ip-btn:hover::after { content: attr(data-ip); }
-
-  /* NEW: visualizer button */
   .viz-btn {
     padding: 3px 6px;
     border: 1px solid #238636;
@@ -185,6 +180,7 @@
 const canvas = document.getElementById("bev-canvas");
 const ctx = canvas.getContext("2d");
 const wrap = document.getElementById("canvas-wrap");
+let currentCalibration = null;   // NEW
 
 const scaleSlider = document.getElementById("scaleSlider");
 const scaleVal = document.getElementById("scaleVal");
@@ -371,6 +367,91 @@ function drawScaleBar() {
   ctx.fillText(metersPerDiv + " m", x0 + barPx / 2, y0 - 8);
 }
 
+function drawArrow(x, y, angleRad, length, color, label) {
+  const x2 = x + Math.cos(angleRad) * length;
+  const y2 = y - Math.sin(angleRad) * length;
+
+  ctx.strokeStyle = color;
+  ctx.fillStyle = color;
+  ctx.lineWidth = 2;
+
+  ctx.beginPath();
+  ctx.moveTo(x, y);
+  ctx.lineTo(x2, y2);
+  ctx.stroke();
+
+  const head = 7;
+  const a1 = angleRad + Math.PI * 0.85;
+  const a2 = angleRad - Math.PI * 0.85;
+  ctx.beginPath();
+  ctx.moveTo(x2, y2);
+  ctx.lineTo(x2 + Math.cos(a1) * head, y2 - Math.sin(a1) * head);
+  ctx.lineTo(x2 + Math.cos(a2) * head, y2 - Math.sin(a2) * head);
+  ctx.closePath();
+  ctx.fill();
+
+  if (label) {
+    ctx.font = "10px monospace";
+    ctx.textAlign = "center";
+    ctx.fillText(label, x2, y2 - 10);
+  }
+}
+
+function drawNodeOrientations(calib, nodePositions) {
+  if (!calib || !nodePositions?.length) return;
+  const ids = calib.nodeIds || [];
+  const theta = calib.theta_opt || [];
+
+  for (const np of nodePositions) {
+    const idx = ids.indexOf(np.node_id);
+    if (idx < 0) continue;
+
+    const tdeg = theta?.[0]?.[idx];
+    if (tdeg === undefined || tdeg === null) continue;
+
+    const { cx, cy } = toCanvas(np.x, np.y);
+    drawArrow(cx, cy, (-Number(tdeg) * Math.PI) / 180, 26, np.color, `${tdeg.toFixed(1)}°`);
+  }
+}
+
+// ...existing code...
+function drawCalibrationLinks(calib, nodePositions) {
+  if (!calib || !nodePositions?.length) return;
+
+  const pmap = new Map(nodePositions.map(n => [n.node_id, n]));
+  const links = calib.solveMeta?.pairwiseLinks || [];
+  const seen = new Set();
+
+  for (const link of links) {
+    const a = pmap.get(link.from);
+    const b = pmap.get(link.to);
+    if (!a || !b) continue;
+
+    // draw only one line/text per node pair
+    const key = [link.from, link.to].sort().join("|");
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    const A = toCanvas(a.x, a.y);
+    const B = toCanvas(b.x, b.y);
+    const mx = (A.cx + B.cx) / 2;
+    const my = (A.cy + B.cy) / 2;
+
+    ctx.strokeStyle = "rgba(255,255,255,0.35)";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(A.cx, A.cy);
+    ctx.lineTo(B.cx, B.cy);
+    ctx.stroke();
+
+    ctx.fillStyle = "#c9d1d9";
+    ctx.font = "10px monospace";
+    ctx.textAlign = "center";
+    ctx.fillText(`${link.distance_m}m  ${link.relative_angle_deg}°`, mx, my - 4);
+  }
+}
+// ...existing code...
+
 function updateSidebar(data) {
   calibDot.className = data.calibrated ? "ok" : "";
   calibLabel.textContent = data.calibrated ? "Calibrated" : "Uncalibrated";
@@ -394,6 +475,7 @@ const socket = io();
 let lastTime = performance.now(), frameCount = 0, displayFps = 0;
 
 socket.on("debug_frame", (data) => {
+  currentCalibration = data.calibration || null;   // NEW
   frameCount++;
   const now = performance.now();
   if (now - lastTime >= 1000) {
@@ -403,8 +485,15 @@ socket.on("debug_frame", (data) => {
   ctx.clearRect(0, 0, cssW(), cssH());
   if (showGrid.checked) drawGrid();
   if (showNodes.checked && data.node_positions) drawNodePositions(data.node_positions);
-  if (showClusters.checked && data.points) drawPoints(data.points);
+
+  if (showClusters.checked && data.poin
+  ts) drawPoints(data.points);
   if (showTracks.checked && data.tracks) drawTracks(data.tracks);
+
+  if (currentCalibration && data.node_positions) {
+    drawCalibrationLinks(currentCalibration, data.node_positions);   // NEW
+    drawNodeOrientations(currentCalibration, data.node_positions);   // NEW
+  }
   drawScaleBar();
   document.getElementById("fps-counter").textContent = displayFps + " FPS";
   statFps.textContent = displayFps;

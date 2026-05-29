@@ -339,5 +339,24 @@ def closed_form_calibration(
         )
 
     P_opt, theta_opt, _weight_opt = _network_average(P_raw, theta_raw, pair_weights)
-    solve_meta = {"networked": True, "ransacMetaByPair": ransac_meta}
+
+    pairwise_links = []
+    for i in range(num_nodes):
+        for j in range(num_nodes):
+            if i == j or pair_weights[i, j] <= 0:
+                continue
+            pairwise_links.append(
+                {
+                    "from": node_ids[i],
+                    "to": node_ids[j],
+                    "distance_m": round(float(abs(P_opt[i, j])), 3),
+                    "relative_angle_deg": round(float(theta_opt[i, j]), 3),
+                }
+            )
+
+    solve_meta = {
+        "networked": True,
+        "ransacMetaByPair": ransac_meta,
+        "pairwiseLinks": pairwise_links,  # NEW
+    }
     return node_ids, P_opt, theta_opt, solve_meta

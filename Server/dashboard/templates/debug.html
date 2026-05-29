@@ -493,6 +493,10 @@ socket.on("debug_frame", (data) => {
     drawCalibrationLinks(currentCalibration, data.node_positions);   // NEW
     drawNodeOrientations(currentCalibration, data.node_positions);   // NEW
   }
+
+  if (currentCalibration) { console.log("found calibration")}
+  if (data.node_positions) { console.log("found position")}
+
   drawScaleBar();
   document.getElementById("fps-counter").textContent = displayFps + " FPS";
   statFps.textContent = displayFps;

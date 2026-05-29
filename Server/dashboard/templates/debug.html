@@ -527,12 +527,14 @@ function updateNodeCtrl(data) {
     row.innerHTML =
       '<span style="color:' + n.color + ';font-weight:600;font-size:12px;width:45px">' + n.node_id + '</span>' +
       '<span style="font-size:12px;color:' + (running ? '#3fb950' : '#f85149') + ';width:55px">' + (running ? 'ON ' + uptime : 'OFF') + '</span>' +
-      '<button data-action="start_pipeline" style="padding:3px 6px;border:1px solid #238636;border-radius:3px;background:#0d3320;color:#3fb950;cursor:pointer;font-size:12px;line-height:1.2" title="Start pipeline">&#9654;</button>' +
-      '<button data-action="stop_pipeline" style="padding:3px 6px;border:1px solid #da3633;border-radius:3px;background:#2a1a1a;color:#f85149;cursor:pointer;font-size:12px;line-height:1.2" title="Stop">&#9632;</button>' +
       '<button data-action="start_radar" style="padding:3px 6px;border:1px solid #d29922;border-radius:3px;background:#1a1508;color:#d29922;cursor:pointer;font-size:12px;line-height:1.2" title="FPGA init">F</button>' +
       '<button data-action="reset_radar" style="padding:3px 6px;border:1px solid #8b949e;border-radius:3px;background:#21262d;color:#8b949e;cursor:pointer;font-size:12px;line-height:1.2" title="FPGA reset">R</button>' +
-      '<button class="log-btn" title="Open log viewer:5003" style="padding:3px 6px;border:1px solid #1f6feb;border-radius:3px;background:#0d2d6b;color:#58a6ff;cursor:pointer;font-size:12px;line-height:1.2">LOG</button>' +
-      '<button class="ssh-btn" title="SSH to node" style="padding:3px 6px;border:1px solid #30363d;border-radius:3px;background:#21262d;color:#c9d1d9;cursor:pointer;font-size:12px;line-height:1.2">SSH</button>';
+      '<button data-action="start_pipeline" style="padding:3px 6px;border:1px solid #238636;border-radius:3px;background:#0d3320;color:#3fb950;cursor:pointer;font-size:12px;line-height:1.2" title="Start pipeline">&#9654;</button>' +
+      '<button data-action="stop_pipeline" style="padding:3px 6px;border:1px solid #da3633;border-radius:3px;background:#2a1a1a;color:#f85149;cursor:pointer;font-size:12px;line-height:1.2" title="Stop">&#9632;</button>' +
+      
+      '<button class="log-btn" data-ip="' + (n.ip_address || "Unknown") + '" title="Copy remote journalctl command">LOG</button>' +
+      '<button class="viz-btn" data-ip="' + (n.ip_address || "Unknown") + '" title="Open visualizer">UI</button>' +
+      '<button class="ssh-btn" data-ip="' + (n.ip_address || "Unknown") + '" title="Open SSH link">SSH</button>';
     nodeCtrlList.appendChild(row);
   }
 }

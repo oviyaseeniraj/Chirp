@@ -378,69 +378,43 @@ function drawNodeOrientations(calib, nodePositions) {
   }
 }
 
+// ...existing code...
 function drawCalibrationLinks(calib, nodePositions) {
   if (!calib || !nodePositions?.length) return;
-  const ids = calib.nodeIds || [];
+
   const pmap = new Map(nodePositions.map(n => [n.node_id, n]));
   const links = calib.solveMeta?.pairwiseLinks || [];
+  const seen = new Set();
 
-  if (links.length > 0) {
-    for (const link of links) {
-      const a = pmap.get(link.from);
-      const b = pmap.get(link.to);
-      if (!a || !b) continue;
+  for (const link of links) {
+    const a = pmap.get(link.from);
+    const b = pmap.get(link.to);
+    if (!a || !b) continue;
 
-      const A = toCanvas(a.x, a.y);
-      const B = toCanvas(b.x, b.y);
-      const mx = (A.cx + B.cx) / 2;
-      const my = (A.cy + B.cy) / 2;
+    // draw only one line/text per node pair
+    const key = [link.from, link.to].sort().join("|");
+    if (seen.has(key)) continue;
+    seen.add(key);
 
-      ctx.strokeStyle = "rgba(255,255,255,0.35)";
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.moveTo(A.cx, A.cy);
-      ctx.lineTo(B.cx, B.cy);
-      ctx.stroke();
+    const A = toCanvas(a.x, a.y);
+    const B = toCanvas(b.x, b.y);
+    const mx = (A.cx + B.cx) / 2;
+    const my = (A.cy + B.cy) / 2;
 
-      ctx.fillStyle = "#c9d1d9";
-      ctx.font = "10px monospace";
-      ctx.textAlign = "center";
-      ctx.fillText(`${link.distance_m}m  ${link.relative_angle_deg}°`, mx, my - 4);
-    }
-    return;
-  }
+    ctx.strokeStyle = "rgba(255,255,255,0.35)";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(A.cx, A.cy);
+    ctx.lineTo(B.cx, B.cy);
+    ctx.stroke();
 
-  // Fallback if pairwiseLinks is absent
-  const P = calib.P_opt || [];
-  const T = calib.theta_opt || [];
-  for (let i = 0; i < ids.length; i++) {
-    for (let j = i + 1; j < ids.length; j++) {
-      const a = pmap.get(ids[i]);
-      const b = pmap.get(ids[j]);
-      const p = P?.[i]?.[j];
-      const t = T?.[i]?.[j];
-      if (!a || !b || !p || t === undefined || t === null) continue;
-
-      const A = toCanvas(a.x, a.y);
-      const B = toCanvas(b.x, b.y);
-      const mx = (A.cx + B.cx) / 2;
-      const my = (A.cy + B.cy) / 2;
-
-      ctx.strokeStyle = "rgba(255,255,255,0.35)";
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.moveTo(A.cx, A.cy);
-      ctx.lineTo(B.cx, B.cy);
-      ctx.stroke();
-
-      const dist = Math.hypot(Number(p[0] ?? p.re ?? 0), Number(p[1] ?? p.im ?? 0));
-      ctx.fillStyle = "#c9d1d9";
-      ctx.font = "10px monospace";
-      ctx.textAlign = "center";
-      ctx.fillText(`${dist.toFixed(2)}m  ${Number(t).toFixed(1)}°`, mx, my - 4);
-    }
+    ctx.fillStyle = "#c9d1d9";
+    ctx.font = "10px monospace";
+    ctx.textAlign = "center";
+    ctx.fillText(`${link.distance_m}m  ${link.relative_angle_deg}°`, mx, my - 4);
   }
 }
+// ...existing code...
 
 function updateSidebar(data) {
   calibDot.className = data.calibrated ? "ok" : "";

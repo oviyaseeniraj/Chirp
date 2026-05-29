@@ -113,6 +113,21 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
+def _get_local_ip() -> str:
+    try:
+        # A dummy UDP connection to discover the outbound interface IP
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect((MQTT_HOST, MQTT_PORT))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        # Fallback if the network is unreachable
+        return socket.gethostbyname(socket.gethostname())
+
+NODE_IP = _get_local_ip()
+#TODO: set with tailscale ip
+
 # ---------------------------------------------------------------------------
 # Pipeline + FPGA manager
 # ---------------------------------------------------------------------------
@@ -353,11 +368,11 @@ class PipelineManager:
         return getattr(self, "_trigger_mode", None) or ""
 
     # ----- Status ----------------------------------------------------
-
     def status_payload(self) -> dict:
         return {
             "schemaVersion": SCHEMA_VERSION,
             "nodeId": NODE_ID,
+            "nodeIp": NODE_IP,
             "groupId": GROUP_ID,
             "pipelineRunning": self.running,
             "pipelinePid": self.pid,

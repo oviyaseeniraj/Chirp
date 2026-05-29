@@ -39,7 +39,7 @@ from typing import Optional
 import paho.mqtt.client as mqtt
 
 # ---- Load Node/.env so MQTT_HOST etc are picked up ---------------
-_NODE_DIR = Path(os.getenv("NODE_DIR", str(Path(__file__).resolve().parents[1])))
+_NODE_DIR = Path(os.getenv("NODE_DIR", os.path.expanduser("~/Chirp/Node")))
 _ENV_FILE = _NODE_DIR / ".env"
 if _ENV_FILE.is_file():
     with open(_ENV_FILE) as _f:
@@ -64,7 +64,7 @@ MQTT_PASS = os.getenv("MQTT_PASSWORD", "")
 SCHEMA_VERSION = int(os.getenv("CHIRP_SCHEMA_VERSION", "1"))
 TOPIC_PREFIX = os.getenv("CHIRP_TOPIC_PREFIX", "chirp/v1")
 
-NODE_DIR = Path(os.getenv("NODE_DIR", str(Path(__file__).resolve().parents[1])))
+NODE_DIR = Path(os.getenv("NODE_DIR", os.path.expanduser("~/Chirp/Node")))
 
 # ---- Back-propagate resolved defaults into os.environ so the pipeline
 #     subprocess (full_integration_test.py) inherits every value it needs.
@@ -247,6 +247,7 @@ class PipelineManager:
                 capture_output=True,
                 text=True,
                 timeout=30,
+                cwd=str(script.parent),
             )
             if result.returncode != 0:
                 log.error(

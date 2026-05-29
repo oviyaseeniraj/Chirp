@@ -8,6 +8,8 @@ Wants=network-online.target mosquitto.service
 Type=simple
 User=root
 Group=root
+Environment=NODE_DIR=/home/chirp/Chirp/Node
+Environment=HOME=/home/chirp
 WorkingDirectory=/home/chirp/Chirp/Node
 ExecStart=/home/chirp/Chirp/Node/.venv/bin/python3 /home/chirp/Chirp/Node/src/node_launcher.py
 Restart=always

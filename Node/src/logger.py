@@ -51,7 +51,7 @@ class LogStreamingHandler(BaseHTTPRequestHandler):
             
             # Subprocess tailing the systemd journal
             process = subprocess.Popen(
-                ['journalctl', '-f', '-n', '50'],
+                ['journalctl', '-u', 'chirp-launcher','-f', '-n', '50'],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True

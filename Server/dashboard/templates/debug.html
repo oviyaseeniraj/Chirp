@@ -486,8 +486,7 @@ socket.on("debug_frame", (data) => {
   if (showGrid.checked) drawGrid();
   if (showNodes.checked && data.node_positions) drawNodePositions(data.node_positions);
 
-  if (showClusters.checked && data.poin
-  ts) drawPoints(data.points);
+  if (showClusters.checked && data.points) drawPoints(data.points);
   if (showTracks.checked && data.tracks) drawTracks(data.tracks);
 
   if (currentCalibration && data.node_positions) {

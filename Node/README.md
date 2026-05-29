@@ -23,3 +23,23 @@ We use the library in the following way:
 
 My current best guess is that each Radar Block iteration represents getting/processing a frame
  <!--TODO: include a block diagram of how they play into each other  -->
+
+
+
+EXTRA STUFF:
+added a launch service so that we dont need to ssh to the nodes
+
+
+# Copy to systemd
+sudo cp /home/chirp/Chirp/Node/scripts/chirp-launcher.service /etc/systemd/system/
+
+# Reload, enable at boot, start now
+sudo systemctl daemon-reload
+sudo systemctl enable chirp-launcher
+sudo systemctl start chirp-launcher
+
+# Check it's running
+sudo systemctl status chirp-launcher
+
+# Follow logs
+sudo journalctl -u chirp-launcher -f

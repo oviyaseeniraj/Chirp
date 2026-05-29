@@ -72,7 +72,7 @@ def _topic_parts(msg: mqtt.MQTTMessage) -> list[str]:
 
 def _upsert_node_ip(conn, node_id: str, payload: dict) -> None:
     """Upserts the node's IP address if present in the payload."""
-    ip_address = payload.get("ipAddress")
+    ip_address = payload.get("ipAddress") or payload.get("nodeIp")
     if not ip_address:
         return
 
@@ -223,6 +223,13 @@ def handle_live_frame(conn, topic_parts: list[str], payload: dict) -> None:
     log.info("live/frames  group=%s  node=%s", group_id, node_id)
 
 
+def handle_node_status(conn, topic_parts: list[str], payload: dict) -> None:
+    """Extract node IP and keep the status updated."""
+    # chirp/v1/group/<groupId>/node/<nodeId>/status
+    node_id = topic_parts[5]
+    _upsert_node_ip(conn, node_id, payload)
+
+
 # ---------------------------------------------------------------------------
 # MQTT callback
 # ---------------------------------------------------------------------------
@@ -233,12 +240,13 @@ def on_connect(client, userdata, flags, reason_code, properties):
         log.error("MQTT connect failed  reason_code=%s", reason_code)
         return
 
-    # Subscribe to all four topic patterns
+    # Subscribe to all topic patterns
     subs = [
         f"{TOPIC_PREFIX}/group/+/capture/start",
         f"{TOPIC_PREFIX}/group/+/calibration/frame/+",
         f"{TOPIC_PREFIX}/group/+/calibration/done/+",
         f"{TOPIC_PREFIX}/group/+/frames/+",
+        f"{TOPIC_PREFIX}/group/+/node/+/status",
     ]
     for topic in subs:
         client.subscribe(topic, qos=1)
@@ -262,7 +270,7 @@ def on_message(client, userdata, msg):
         return
 
     try:
-        subtype = parts[4]  # "capture" | "calibration" | "frames"
+        subtype = parts[4]  # "capture" | "calibration" | "frames" | "node"
 
         if subtype == "capture":
             handle_capture_start(conn, parts, payload)
@@ -276,6 +284,9 @@ def on_message(client, userdata, msg):
                 log.warning("Unknown calibration subtopic  parts=%s", parts)
         elif subtype == "frames":
             handle_live_frame(conn, parts, payload)
+        elif subtype == "node":
+            if len(parts) > 6 and parts[6] == "status":
+                handle_node_status(conn, parts, payload)
         else:
             log.warning("Unknown subtype  topic=%s", msg.topic)
 

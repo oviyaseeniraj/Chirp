@@ -348,7 +348,19 @@ def _build_mqtt() -> mqtt.Client:
             return
         parts = msg.topic.split("/")
         if "/frames/" in msg.topic:
-            state.update_frame(parts[-1], p)
+            node_id = parts[-1]
+            group_id = parts[3]
+            is_new = node_id not in state.frames
+            
+            state.update_frame(node_id, p)
+            
+            if is_new:
+                # Request status the first time we see frames from this node
+                cmd_topic = f"{TOPIC_PREFIX}/group/{group_id}/node/{node_id}/command"
+                cmd_payload = {"action": "status", "timestampMs": int(time.time() * 1000)}
+                client.publish(cmd_topic, payload=json.dumps(cmd_payload), qos=1)
+                log.info("First frame seen for %s, requested status.", node_id)
+                
         elif msg.topic == f"{TOPIC_PREFIX}/server/start/result":
             if not p.get("ok", False):
                 _calib_active = False
@@ -364,7 +376,18 @@ def _build_mqtt() -> mqtt.Client:
         elif "/node/" in msg.topic and "/status" in msg.topic:
             state.update_node_status(parts[5], p)
         elif msg.topic.startswith(f"{TOPIC_PREFIX}/presence/"):
-            state.update_presence(parts[-1], p)
+            node_id = parts[-1]
+            was_offline = state.presence.get(node_id, {}).get("status") != "online"
+            is_online = p.get("status") == "online"
+            
+            state.update_presence(node_id, p)
+            
+            if was_offline and is_online:
+                # Request status when node explicitly announces it is online
+                cmd_topic = f"{TOPIC_PREFIX}/group/default/node/{node_id}/command"
+                cmd_payload = {"action": "status", "timestampMs": int(time.time() * 1000)}
+                client.publish(cmd_topic, payload=json.dumps(cmd_payload), qos=1)
+                log.info("Node %s came online, requested status.", node_id)
 
     c.on_connect = on_connect
     c.on_message = on_message

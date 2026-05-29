@@ -79,6 +79,17 @@
 
   <div class="section-title">Node Control</div>
   <div id="node-ctrl-panel" style="display:flex;flex-direction:column;gap:4px;font-size:12px">
+    <div style="color:#8b949e;font-size:10px;margin-top:2px;">run on remote terminal to view logs</div>
+    <input type="text" value="sudo journalctl -u chirp-launcher -f" readonly style="width:100%;background:#0d1117;border:1px solid #30363d;color:#c9d1d9;padding:4px;border-radius:4px;font-family:monospace;font-size:11px;cursor:pointer;margin-bottom:4px;" onclick="this.select()" title="Click to copy">
+    
+    <div style="color:#8b949e">Pipeline (start/stop)</div>
+    <div id="node-ctrl-list"></div>
+    <button id="nodeStatusAll" style="margin-top:4px;padding:4px;border:1px solid #30363d;border-radius:4px;background:#21262d;color:#8b949e;cursor:pointer;font-size:11px">Refresh Status</button>
+  </div>
+
+  <div class="section-title">MQTT</div>
+
+  <div id="node-ctrl-panel" style="display:flex;flex-direction:column;gap:4px;font-size:12px">
     <div style="color:#8b949e">Pipeline (start/stop)</div>
     <div id="node-ctrl-list"></div>
     <button id="nodeStatusAll" style="margin-top:4px;padding:4px;border:1px solid #30363d;border-radius:4px;background:#21262d;color:#8b949e;cursor:pointer;font-size:11px">Refresh Status</button>
@@ -172,6 +183,17 @@ const nodeCtrlList = document.getElementById("node-ctrl-list");
 nodeCtrlList.addEventListener("click", (e) => {
   const btn = e.target.closest("button");
   if (!btn) return;
+  
+  // Handle the DEBUG (IP) button click
+  if (btn.classList.contains("ip-btn")) {
+    const ip = btn.dataset.ip;
+    if (ip && ip !== "Unknown") {
+      // Use the ssh protocol handler
+      window.open("ssh://" + "chirp@"+ip, "_self");
+    }
+    return;
+  }
+
   const row = btn.closest(".node-ctrl-row");
   if (!row) return;
   const action = btn.dataset.action;

@@ -37,10 +37,15 @@ from pathlib import Path
 from typing import Optional
 
 import paho.mqtt.client as mqtt
+from multiprocessing import Process
 
 # ---- Load Node/.env so MQTT_HOST etc are picked up ---------------
-_NODE_DIR = Path(os.getenv("NODE_DIR", os.path.expanduser("~/Chirp/Node")))
-_ENV_FILE = _NODE_DIR / ".env"
+NODE_DIR = Path(os.getenv("NODE_DIR", os.path.expanduser("~/Chirp/Node")))
+LOGGER_SCRIPT = Path(os.getenv("LOGGER_SCRIPT", NODE_DIR / "src" / "logger.py"))
+SERVER_SCRIPT = NODE_DIR / "src" / "ui" / "server.py"
+
+
+_ENV_FILE = NODE_DIR / ".env"
 if _ENV_FILE.is_file():
     with open(_ENV_FILE) as _f:
         for _line in _f:
@@ -64,7 +69,7 @@ MQTT_PASS = os.getenv("MQTT_PASSWORD", "")
 SCHEMA_VERSION = int(os.getenv("CHIRP_SCHEMA_VERSION", "1"))
 TOPIC_PREFIX = os.getenv("CHIRP_TOPIC_PREFIX", "chirp/v1")
 
-NODE_DIR = Path(os.getenv("NODE_DIR", os.path.expanduser("~/Chirp/Node")))
+#NODE_DIR = Path(os.getenv("NODE_DIR", os.path.expanduser("~/Chirp/Node")))
 
 # ---- Back-propagate resolved defaults into os.environ so the pipeline
 #     subprocess (full_integration_test.py) inherits every value it needs.
@@ -392,6 +397,7 @@ class NodeLauncher:
     def __init__(self) -> None:
         self.pipeline = PipelineManager()
         self.shutdown = threading.Event()
+        self._background_procs: list[tuple[str, subprocess.Popen]] = []
 
         self.client = mqtt.Client(
             mqtt.CallbackAPIVersion.VERSION2,
@@ -506,22 +512,70 @@ class NodeLauncher:
             time.sleep(1)
         log.debug("Status loop stopped")
 
+    def _launch_background(self, name: str, script: Path) -> bool:
+        if not script.exists():
+            log.warning("%s not found: %s", name, script)
+            return False
+        try:
+            cmd = [self.pipeline._python, "-u", str(script)]
+            proc = subprocess.Popen(
+                cmd,
+                env=os.environ.copy(),
+                cwd=str(NODE_DIR),
+                start_new_session=True,
+            )
+            self._background_procs.append((name, proc))
+            log.info("%s started in background  pid=%s", name, proc.pid)
+            return True
+        except Exception as exc:
+            log.exception("Failed to start %s: %s", name, exc)
+            return False
+
+    def _start_background_services(self) -> None:
+        self._launch_background("logger", LOGGER_SCRIPT)
+        self._launch_background("server", SERVER_SCRIPT)
+
+    def _stop_background_services(self) -> None:
+        for name, proc in reversed(self._background_procs):
+            pid = proc.pid
+            if proc.poll() is not None:
+                log.info("%s already exited  pid=%s  rc=%s", name, pid, proc.returncode)
+                continue
+            try:
+                pgid = os.getpgid(pid)
+                os.killpg(pgid, signal.SIGTERM)
+                proc.wait(timeout=5)
+            except Exception:
+                try:
+                    os.killpg(os.getpgid(pid), signal.SIGKILL)
+                except Exception:
+                    pass
+            log.info("%s stopped  pid=%s", name, pid)
+        self._background_procs.clear()
+
     def run(self) -> None:
-        log.debug(
-            "Connecting to broker  host=%s:%s  keepalive=30", MQTT_HOST, MQTT_PORT
-        )
-        self.client.connect_async(MQTT_HOST, MQTT_PORT, keepalive=30)
-        self.client.loop_start()
-        threading.Thread(target=self._status_loop, daemon=True).start()
-        log.info("Node launcher running  node=%s  group=%s", NODE_ID, GROUP_ID)
-        self.shutdown.wait()
-        log.debug("Shutdown signal received, stopping pipeline")
-        self.pipeline.stop()
-        self.pipeline.stop_trigger()
-        self._publish_presence("offline")
-        self.client.loop_stop()
-        self.client.disconnect()
-        log.info("Node launcher stopped")
+        log.debug("Starting background services")
+        self._start_background_services()
+
+        try:
+            log.debug(
+                "Connecting to broker  host=%s:%s  keepalive=30", MQTT_HOST, MQTT_PORT
+            )
+            self.client.connect_async(MQTT_HOST, MQTT_PORT, keepalive=30)
+            self.client.loop_start()
+            threading.Thread(target=self._status_loop, daemon=True).start()
+            log.info("Node launcher running  node=%s  group=%s", NODE_ID, GROUP_ID)
+
+            self.shutdown.wait()
+
+        finally:
+            log.debug("Shutdown signal received, stopping pipeline and services")
+            self.pipeline.stop()
+            self._stop_background_services()
+            self._publish_presence("offline")
+            self.client.loop_stop()
+            self.client.disconnect()
+            log.info("Node launcher stopped")
 
     def stop(self) -> None:
         self.shutdown.set()
@@ -532,17 +586,41 @@ class NodeLauncher:
 # ---------------------------------------------------------------------------
 
 
-def main():
+def _run_logger() -> None:
+    """Run logger in child process with lazy import to avoid startup crash in parent."""
+    try:
+        from logger import main as logger_main  # lazy import
+        logger_main()
+    except Exception:
+        # Keep minimal and avoid killing parent service due to logger issues
+        logging.exception("Logger process crashed")
+
+
+def main() -> None:
     launcher = NodeLauncher()
+    logger_proc = Process(target=_run_logger, name="Logger")
+    logger_proc.start()
+    log.info("Started logger process pid=%s", logger_proc.pid)
 
     def _sig_handler(sig, frame):
         log.info("Signal %s received, shutting down", sig)
         launcher.stop()
+        if logger_proc.is_alive():
+            logger_proc.terminate()
 
     signal.signal(signal.SIGTERM, _sig_handler)
     signal.signal(signal.SIGINT, _sig_handler)
-    launcher.run()
 
+    try:
+        launcher.run()  # keep launcher in foreground (service stays alive)
+    finally:
+        if logger_proc.is_alive():
+            logger_proc.terminate()
+            logger_proc.join(timeout=5)
+            if logger_proc.is_alive():
+                logger_proc.kill()
+                logger_proc.join(timeout=2)
+        log.info("node_launcher main exited cleanly")
 
 if __name__ == "__main__":
     main()

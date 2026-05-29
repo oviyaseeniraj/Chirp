@@ -23,14 +23,19 @@ SHOW_RANGE_ANGLE_PLOT = True
 RANGE_ANGLE_PLOT_WIDTH = 400
 RANGE_ANGLE_PLOT_HEIGHT = 300
 
-# Debug level: 0 = only 50-frame avg, 1 = all prints
-# DEBUG_LEVEL = int(os.getenv("DEBUG_LEVEL", "0"))
-DEBUG_LEVEL = 0
+# Logging setup
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [SERVER] %(levelname)s %(message)s",
+)
+logger = logging.getLogger(__name__)
 
+# Debug level: 0 = only 50-frame avg, 1 = all logs
+DEBUG_LEVEL = 0
 
 def debug_print(msg):
     if DEBUG_LEVEL >= 1:
-        print(msg)
+        logger.debug(msg)
 
 # Pre-compute RdBu colormap lookup table
 TRANSITION_MID = 128
@@ -137,10 +142,11 @@ def print_frame_summary():
         return
     avg_proc = sum(stats.frame_times) / n
     avg_interval = sum(stats.frame_intervals) / n if stats.frame_intervals else 0.0
-    print(
-        f"[AVG] Last {n} frames | "
-        f"Process: {avg_proc:.1f}ms | "
-        f"Interval: {avg_interval:.1f}ms"
+    logger.info(
+        "[AVG] Last %d frames | Process: %.1fms | Interval: %.1fms",
+        n,
+        avg_proc,
+        avg_interval,
     )
     stats.frame_times = []
     stats.frame_intervals = []
@@ -460,6 +466,5 @@ app.router.add_get('/', index_handler)
 app.router.add_get('/status', status_handler)
 
 if __name__ == "__main__":
-    debug_print("Starting Optimized Asyncio/Aiohttp Radar Plotter on port 5001")
-    # Disable access log for performance, but we can check manual prints
+    logger.info("Starting Optimized Asyncio/Aiohttp Radar Plotter on port 5001")
     web.run_app(app, host="0.0.0.0", port=5001, access_log=None)

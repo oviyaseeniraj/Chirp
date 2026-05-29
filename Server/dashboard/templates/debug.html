@@ -183,22 +183,30 @@ const nodeCtrlList = document.getElementById("node-ctrl-list");
 nodeCtrlList.addEventListener("click", (e) => {
   const btn = e.target.closest("button");
   if (!btn) return;
-  
-  // Handle the DEBUG (IP) button click
-  if (btn.classList.contains("ip-btn")) {
-    const ip = btn.dataset.ip;
+
+  const row = btn.closest(".node-ctrl-row");
+  if (!row) return;
+  const nodeId = row.dataset.nodeId;
+  const ip = row.dataset.ip;
+
+  // SSH button
+  if (btn.classList.contains("ssh-btn")) {
     if (ip && ip !== "Unknown") {
-      // Use the ssh protocol handler
-      window.open("ssh://" + "chirp@"+ip, "_self");
+      window.open("ssh://" + "chirp@" + ip, "_self");
     }
     return;
   }
 
-  const row = btn.closest(".node-ctrl-row");
-  if (!row) return;
+  // Log viewer button
+  if (btn.classList.contains("log-btn")) {
+    if (ip && ip !== "Unknown") {
+      window.open("http://" + ip + ":5003", "_blank");
+    }
+    return;
+  }
+
   const action = btn.dataset.action;
   const mode = btn.dataset.mode || "";
-  const nodeId = row.dataset.nodeId;
   if (action && nodeId) sendNodeCmd(nodeId, action, mode);
 });
 const nodeStatusAll = document.getElementById("nodeStatusAll");
@@ -421,6 +429,7 @@ function updateNodeCtrl(data) {
     const row = document.createElement("div");
     row.className = "node-ctrl-row";
     row.dataset.nodeId = n.node_id;
+    row.dataset.ip = n.ip_address || "Unknown";
     row.style.cssText = "display:flex;align-items:center;gap:2px;padding:2px 0;flex-wrap:wrap";
     row.innerHTML =
       '<span style="color:' + n.color + ';font-weight:600;font-size:12px;width:45px">' + n.node_id + '</span>' +
@@ -429,7 +438,8 @@ function updateNodeCtrl(data) {
       '<button data-action="stop_pipeline" style="padding:3px 6px;border:1px solid #da3633;border-radius:3px;background:#2a1a1a;color:#f85149;cursor:pointer;font-size:12px;line-height:1.2" title="Stop">&#9632;</button>' +
       '<button data-action="start_radar" style="padding:3px 6px;border:1px solid #d29922;border-radius:3px;background:#1a1508;color:#d29922;cursor:pointer;font-size:12px;line-height:1.2" title="FPGA init">F</button>' +
       '<button data-action="reset_radar" style="padding:3px 6px;border:1px solid #8b949e;border-radius:3px;background:#21262d;color:#8b949e;cursor:pointer;font-size:12px;line-height:1.2" title="FPGA reset">R</button>' +
-      '<button class="ip-btn" data-ip="' + (n.ip_address || "Unknown") + '" title="Node IP"></button>';
+      '<button class="log-btn" title="Open log viewer:5003" style="padding:3px 6px;border:1px solid #1f6feb;border-radius:3px;background:#0d2d6b;color:#58a6ff;cursor:pointer;font-size:12px;line-height:1.2">LOG</button>' +
+      '<button class="ssh-btn" title="SSH to node" style="padding:3px 6px;border:1px solid #30363d;border-radius:3px;background:#21262d;color:#c9d1d9;cursor:pointer;font-size:12px;line-height:1.2">SSH</button>';
     nodeCtrlList.appendChild(row);
   }
 }

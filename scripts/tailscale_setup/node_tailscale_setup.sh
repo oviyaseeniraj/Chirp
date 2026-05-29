@@ -6,13 +6,13 @@ if [[ $EUID -ne 0 ]]; then
 fi
 
 # Load .env and validate AUTH_KEY
-if [[ ! -f .env ]]; then
+if [[ ! -f auth_key ]]; then
   echo "Error: .env file not found. Please create one with AUTH_KEY defined."
   exit 1
 fi
 
 set -a
-source .env
+source auth_key
 set +a
 
 if [[ -z "${AUTH_KEY}" ]]; then

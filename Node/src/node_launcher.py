@@ -39,7 +39,7 @@ from typing import Optional
 import paho.mqtt.client as mqtt
 
 # ---- Load Node/.env so MQTT_HOST etc are picked up ---------------
-_NODE_DIR = Path(os.getenv("NODE_DIR", str(Path(__file__).resolve().parents[1])))
+_NODE_DIR = Path(os.getenv("NODE_DIR", os.path.expanduser("~/Chirp/Node")))
 _ENV_FILE = _NODE_DIR / ".env"
 if _ENV_FILE.is_file():
     with open(_ENV_FILE) as _f:
@@ -64,7 +64,7 @@ MQTT_PASS = os.getenv("MQTT_PASSWORD", "")
 SCHEMA_VERSION = int(os.getenv("CHIRP_SCHEMA_VERSION", "1"))
 TOPIC_PREFIX = os.getenv("CHIRP_TOPIC_PREFIX", "chirp/v1")
 
-NODE_DIR = Path(os.getenv("NODE_DIR", str(Path(__file__).resolve().parents[1])))
+NODE_DIR = Path(os.getenv("NODE_DIR", os.path.expanduser("~/Chirp/Node")))
 
 # ---- Back-propagate resolved defaults into os.environ so the pipeline
 #     subprocess (full_integration_test.py) inherits every value it needs.
@@ -141,6 +141,15 @@ class PipelineManager:
             if self._process is not None and self._process.poll() is None:
                 log.warning("Pipeline already running (pid=%s)", self._process.pid)
                 return False
+
+            # Start the trigger (clock source) first so the DAQ has pulses
+            trigger_mode = os.getenv("CHIRP_TRIGGER_MODE", "mqtt")
+            if not self.start_trigger(trigger_mode):
+                log.error(
+                    "Failed to start trigger (mode=%s) — pipeline will start without clock source",
+                    trigger_mode,
+                )
+                # Don't block — pipeline can still run if trigger is handled externally
 
             main_py = NODE_DIR / "src" / "main.py"
             if not main_py.exists():
@@ -276,12 +285,14 @@ class PipelineManager:
             log.error("Trigger not found: %s", path)
             return False
         try:
+            if str(path).endswith(".py"):
+                cmd = [self._python, str(path)]
+            else:
+                cmd = [str(path)]
             proc = subprocess.Popen(
-                [str(path)] if str(path).endswith(".py") else [str(path)],
+                cmd,
                 env=os.environ.copy(),
                 cwd=str(NODE_DIR),
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
                 start_new_session=True,
             )
             self._trigger_proc = proc

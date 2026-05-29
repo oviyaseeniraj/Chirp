@@ -298,9 +298,10 @@ class CalibrationController:
     # ----- Start request → calibration trigger --------------------------
 
     def _handle_start_request(self, payload: dict) -> None:
-        group_id = str(payload.get("groupId", "")).strip()
+        group_id = str(payload.get("groupId", "default")).strip()
         capture_cfg = payload.get("captureConfig", {}) or {}
-        is_calib = capture_cfg.get("calibration", False)
+        request_command_id = str(payload.get("commandId", "")).strip()
+        command_id = request_command_id or f"cmd-{uuid.uuid4().hex[:12]}"
 
         if not group_id:
             self._publish_result(
@@ -310,7 +311,7 @@ class CalibrationController:
 
         # Select nodes that are online and in this group
         selected = self._select_active_nodes(group_id)
-        if not selected and not is_calib:
+        if not selected and not capture_cfg.get("calibration", False):
             self._publish_result(
                 ok=False,
                 reason="no_active_nodes",
@@ -318,13 +319,12 @@ class CalibrationController:
                 group_id=group_id,
             )
             return
-        if not selected and is_calib:
+        if not selected and capture_cfg.get("calibration", False):
             log.info("No presence nodes — broadcasting calibration to all subscribers")
 
         # Delay
         lead_ms = int(os.getenv("CHIRP_LEAD_TIME_MS", "5000"))
         start_epoch_ms = _now_ms() + lead_ms
-        command_id = f"cmd-{uuid.uuid4().hex[:12]}"
 
         # Publish capture/start to all targeted nodes
         start_topic = f"{TOPIC_PREFIX}/group/{group_id}/capture/start"
@@ -348,7 +348,7 @@ class CalibrationController:
         )
 
         # If calibration mode, create a session for collecting frames
-        if is_calib:
+        if capture_cfg.get("calibration", False):
             session = CalibrationSession(
                 command_id=command_id,
                 group_id=group_id,

@@ -65,6 +65,7 @@ DBSCAN_QUEUE_SIZE = 5
 PROCESSED_QUEUE_SIZE = 2
 CALIB_QUEUE_SIZE = 200
 VISUALIZE_CLUSTERS_ONLY = True
+CALIB_FRAMES = int(os.getenv("CALIB_FRAMES", "150"))
 
 
 # ---------------------------------------------------------------------------
@@ -133,6 +134,7 @@ def main() -> None:
             MQTT_PORT,
             MQTT_USERNAME,
             MQTT_PASSWORD,
+            CALIB_FRAMES,
         ),
         name="CalibPublisher",
     )

@@ -156,7 +156,11 @@ class State:
     def snapshot(self) -> Dict:
         with self._lock:
             calib = self.calibration
-            node_ids = calib["nodeIds"] if calib else sorted(self.frames.keys())
+            node_ids = (
+                calib.get("nodeIds")
+                or calib.get("node_ids")
+                or sorted(self.frames.keys())
+            ) if calib else sorted(self.frames.keys())
             now_ms = int(time.time() * 1000)
             points, tracks_list, nodes_detail = [], [], []
 

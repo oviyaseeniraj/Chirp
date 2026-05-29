@@ -97,3 +97,10 @@ CREATE INDEX IF NOT EXISTS idx_capcmd_group
     ON capture_commands (group_id);
 CREATE INDEX IF NOT EXISTS idx_capcmd_command
     ON capture_commands (command_id);
+
+
+CREATE TABLE IF NOT EXISTS node_status (
+    node_id VARCHAR(50) PRIMARY KEY,
+    ip_address VARCHAR(45) NOT NULL,
+    last_seen_ms BIGINT
+);

@@ -28,6 +28,7 @@ import os
 import threading
 import time
 import uuid
+import psycopg2
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -46,6 +47,13 @@ MQTT_PASS = os.getenv("MQTT_PASS") or os.getenv("MQTT_SERVER_PASS") or "chirp"
 DASHBOARD_PORT = int(os.getenv("DASHBOARD_PORT", "5002"))
 TOPIC_PREFIX = "chirp/v1"
 NODE_STALE_MS = int(os.getenv("NODE_STALE_MS", "3000"))
+
+# Database configuration
+DB_HOST = os.getenv("DB_HOST", "localhost")
+DB_PORT = int(os.getenv("DB_PORT", "5432"))
+DB_NAME = os.getenv("DB_NAME", "chirp")
+DB_USER = os.getenv("DB_USER", "chirp")
+DB_PASS = os.getenv("DB_PASS", "chirp")
 
 NODE_COLORS = [
     "#00d4ff",
@@ -108,6 +116,7 @@ class State:
         self.calibration: Optional[Dict] = None
         self.presence: Dict[str, Dict] = {}
         self.node_status: Dict[str, dict] = {}  # node_id -> pipeline status
+        self.node_ips: Dict[str, str] = {}      # node_id -> ip_address
 
     def update_frame(self, node_id: str, payload: Dict) -> None:
         with self._lock:
@@ -253,6 +262,7 @@ class State:
                 node_control.append(
                     {
                         "node_id": nid,
+                        "ip_address": self.node_ips.get(nid, "Unknown"),
                         "pipelineRunning": ns.get("pipelineRunning", False),
                         "triggerRunning": ns.get("triggerRunning", False),
                         "triggerMode": ns.get("triggerMode", ""),
@@ -372,6 +382,24 @@ sio.attach(app)
 TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
 jinja = Environment(loader=FileSystemLoader(str(TEMPLATE_DIR)))
 
+async def _fetch_ips_from_db():
+    """Background task to periodically fetch node IPs from Postgres."""
+    while True:
+        try:
+            conn = psycopg2.connect(
+                host=DB_HOST, port=DB_PORT, dbname=DB_NAME,
+                user=DB_USER, password=DB_PASS, connect_timeout=3
+            )
+            with conn.cursor() as cur:
+                cur.execute("SELECT node_id, ip_address FROM node_status")
+                rows = cur.fetchall()
+                with state._lock:
+                    for row in rows:
+                        state.node_ips[row[0]] = row[1]
+            conn.close()
+        except Exception as e:
+            log.warning("Could not fetch IPs from DB: %s", e)
+        await asyncio.sleep(5)  # Update IPs every 5 seconds
 
 @sio.event
 async def connect(sid, environ):
@@ -518,12 +546,15 @@ async def _broadcast():
 
 async def _on_startup(app_):
     app_["broadcast"] = asyncio.create_task(_broadcast())
+    app_["db_poll"] = asyncio.create_task(_fetch_ips_from_db())
 
 
 async def _on_cleanup(app_):
     app_["broadcast"].cancel()
+    app_["db_poll"].cancel()
     try:
         await app_["broadcast"]
+        await app_["db_poll"]
     except asyncio.CancelledError:
         pass
 

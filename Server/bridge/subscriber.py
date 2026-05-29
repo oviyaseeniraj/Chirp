@@ -70,6 +70,30 @@ def _topic_parts(msg: mqtt.MQTTMessage) -> list[str]:
     return msg.topic.split("/") if msg.topic else []
 
 
+def _upsert_node_ip(conn, node_id: str, payload: dict) -> None:
+    """Upserts the node's IP address if present in the payload."""
+    ip_address = payload.get("ipAddress")
+    if not ip_address:
+        return
+
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            """
+            INSERT INTO node_status (node_id, ip_address, last_seen_ms)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (node_id) DO UPDATE
+            SET ip_address = EXCLUDED.ip_address,
+                last_seen_ms = EXCLUDED.last_seen_ms
+            """,
+            (node_id, ip_address, payload.get("timestampMs", 0)),
+        )
+    except Exception as e:
+        log.warning("Could not upsert node IP for %s: %s", node_id, e)
+    finally:
+        cursor.close()
+
+
 # ---------------------------------------------------------------------------
 # Per-topic insert handlers
 # ---------------------------------------------------------------------------
@@ -109,6 +133,9 @@ def handle_calibration_frame(conn, topic_parts: list[str], payload: dict) -> Non
     # chirp/v1/group/<groupId>/calibration/frame/<nodeId>
     group_id = topic_parts[3]
     node_id = topic_parts[6]
+
+    _upsert_node_ip(conn, node_id, payload)
+
     cursor = conn.cursor()
     cursor.execute(
         """
@@ -173,6 +200,9 @@ def handle_live_frame(conn, topic_parts: list[str], payload: dict) -> None:
     # chirp/v1/group/<groupId>/frames/<nodeId>
     group_id = topic_parts[3]
     node_id = topic_parts[5]
+
+    _upsert_node_ip(conn, node_id, payload)
+
     cursor = conn.cursor()
     cursor.execute(
         """

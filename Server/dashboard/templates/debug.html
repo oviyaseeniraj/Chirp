@@ -43,6 +43,10 @@
   #calibStatus { font-size: 11px; color: #8b949e; }
   #calibStatus.active { color: #d29922; }
   .calib-input { background: #0d1117; border: 1px solid #30363d; color: #c9d1d9; padding: 2px 6px; border-radius: 4px; font-size: 12px; }
+  
+  .ip-btn { padding: 3px 6px; border: 1px solid #1f6feb; border-radius: 3px; background: #0d2d6b; color: #58a6ff; cursor: help; font-size: 12px; line-height: 1.2; transition: all 0.2s; white-space: nowrap; }
+  .ip-btn::after { content: "IP"; }
+  .ip-btn:hover::after { content: attr(data-ip); }
 </style>
 </head>
 <body>
@@ -401,7 +405,8 @@ function updateNodeCtrl(data) {
       '<button data-action="start_pipeline" style="padding:3px 6px;border:1px solid #238636;border-radius:3px;background:#0d3320;color:#3fb950;cursor:pointer;font-size:12px;line-height:1.2" title="Start pipeline">&#9654;</button>' +
       '<button data-action="stop_pipeline" style="padding:3px 6px;border:1px solid #da3633;border-radius:3px;background:#2a1a1a;color:#f85149;cursor:pointer;font-size:12px;line-height:1.2" title="Stop">&#9632;</button>' +
       '<button data-action="start_radar" style="padding:3px 6px;border:1px solid #d29922;border-radius:3px;background:#1a1508;color:#d29922;cursor:pointer;font-size:12px;line-height:1.2" title="FPGA init">F</button>' +
-      '<button data-action="reset_radar" style="padding:3px 6px;border:1px solid #8b949e;border-radius:3px;background:#21262d;color:#8b949e;cursor:pointer;font-size:12px;line-height:1.2" title="FPGA reset">R</button>';
+      '<button data-action="reset_radar" style="padding:3px 6px;border:1px solid #8b949e;border-radius:3px;background:#21262d;color:#8b949e;cursor:pointer;font-size:12px;line-height:1.2" title="FPGA reset">R</button>' +
+      '<button class="ip-btn" data-ip="' + (n.ip_address || "Unknown") + '" title="Node IP"></button>';
     nodeCtrlList.appendChild(row);
   }
 }

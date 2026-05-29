@@ -41,7 +41,7 @@ from multiprocessing import Process
 
 # ---- Load Node/.env so MQTT_HOST etc are picked up ---------------
 NODE_DIR = Path(os.getenv("NODE_DIR", os.path.expanduser("~/Chirp/Node")))
-LOGGER_SCRIPT = Path(os.getenv("LOGGER_SCRIPT", NODE_DIR / "src" / "log" / "logger.py"))
+LOGGER_SCRIPT = Path(os.getenv("LOGGER_SCRIPT", NODE_DIR / "src" / "logger.py"))
 SERVER_SCRIPT = NODE_DIR / "src" / "ui" / "server.py"
 
 

@@ -37,6 +37,10 @@ from pathlib import Path
 from typing import Optional
 
 import paho.mqtt.client as mqtt
+from multiprocessing import Process
+
+# if logger is imported as a function:
+from src.logger import main as logger_main
 
 # ---- Load Node/.env so MQTT_HOST etc are picked up ---------------
 _NODE_DIR = Path(os.getenv("NODE_DIR", os.path.expanduser("~/Chirp/Node")))
@@ -532,16 +536,27 @@ class NodeLauncher:
 # ---------------------------------------------------------------------------
 
 
-def main():
-    launcher = NodeLauncher()
+def main() -> None:
+    processes = []
 
-    def _sig_handler(sig, frame):
-        log.info("Signal %s received, shutting down", sig)
-        launcher.stop()
+    p_logger = Process(target=logger_main, name="Logger")
+    processes.append(p_logger)
 
-    signal.signal(signal.SIGTERM, _sig_handler)
-    signal.signal(signal.SIGINT, _sig_handler)
-    launcher.run()
+    # ...existing code...
+    for p in processes:
+        p.start()
+
+    try:
+        for p in processes:
+            p.join()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        for p in processes:
+            if p.is_alive():
+                p.terminate()
+        for p in processes:
+            p.join(timeout=2)
 
 
 if __name__ == "__main__":

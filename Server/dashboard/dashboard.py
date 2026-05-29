@@ -156,7 +156,11 @@ class State:
     def snapshot(self) -> Dict:
         with self._lock:
             calib = self.calibration
-            node_ids = calib["nodeIds"] if calib else sorted(self.frames.keys())
+            node_ids = (
+                calib.get("nodeIds")
+                or calib.get("node_ids")
+                or sorted(self.frames.keys())
+            ) if calib else sorted(self.frames.keys())
             now_ms = int(time.time() * 1000)
             points, tracks_list, nodes_detail = [], [], []
 
@@ -278,6 +282,7 @@ class State:
                 "timestampMs": now_ms,
                 "calibrated": calib is not None,
                 "calib_command_id": calib.get("commandId") if calib else None,
+                "calibration": calib,   # NEW
                 "node_ids": node_ids,
                 "points": points,
                 "tracks": tracks_list,
@@ -471,6 +476,7 @@ async def start_calibration(sid, data):
         "timestampMs": int(time.time() * 1000),
         "requestId": f"req-{uuid.uuid4().hex[:8]}",
         "groupId": group_id,
+        "commandId": command_id,
         "captureConfig": {
             "calibration": True,
             "calibrationFrames": frames,

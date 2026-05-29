@@ -471,6 +471,7 @@ async def start_calibration(sid, data):
         "timestampMs": int(time.time() * 1000),
         "requestId": f"req-{uuid.uuid4().hex[:8]}",
         "groupId": group_id,
+        "commandId": command_id,
         "captureConfig": {
             "calibration": True,
             "calibrationFrames": frames,

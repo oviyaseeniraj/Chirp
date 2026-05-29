@@ -278,6 +278,7 @@ class State:
                 "timestampMs": now_ms,
                 "calibrated": calib is not None,
                 "calib_command_id": calib.get("commandId") if calib else None,
+                "calibration": calib,   # NEW
                 "node_ids": node_ids,
                 "points": points,
                 "tracks": tracks_list,

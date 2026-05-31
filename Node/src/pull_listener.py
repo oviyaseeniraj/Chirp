@@ -35,7 +35,10 @@ def run(cmd):
 def do_deploy():
     logger.info("Starting deploy")
     steps = []
+    steps.append(run(["git", "config", "--global", "--add", "safe.directory", REPO_DIR]))
+
     steps.append(run(["systemctl", "stop", SERVICE_NAME]))
+
     steps.append(run(["git", "-C", REPO_DIR, "fetch", "origin", BRANCH]))
     steps.append(run(["git", "-C", REPO_DIR, "reset", "--hard", f"origin/{BRANCH}"]))
     steps.append(run(["git", "-C", REPO_DIR, "clean", "-fd"]))

@@ -5,15 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SERVICE_SRC="${SCRIPT_DIR}/chirp_pull_listener.service"
 SERVICE_NAME="$(basename "${SERVICE_SRC}")"
 SERVICE_DST="/etc/systemd/system/${SERVICE_NAME}"
-ENV_TEMPLATE="${SCRIPT_DIR}/.pull_listener_env"
-ENV_FILE="/etc/chirp-pull-listener.env"
-
-# Defaults (override by exporting before running)
-PULL_LISTENER_PORT="${PULL_LISTENER_PORT:-5055}"
-PULL_REPO_DIR="${PULL_REPO_DIR:-/home/chirp/Chirp}"
-PULL_BRANCH="${PULL_BRANCH:-main}"
-PULL_SERVICE_NAME="${PULL_SERVICE_NAME:-chirp-launcher.service}"
-PULL_TOKEN="${PULL_TOKEN:-}"
+ENV_FILE="${SCRIPT_DIR}/.pull_listener_env"
 
 SRC_DIR="$(cd "${SCRIPT_DIR}/../src" && pwd)"
 
@@ -27,35 +19,30 @@ if [[ ! -f "${SERVICE_SRC}" ]]; then
   exit 1
 fi
 
-
-
-# Resolve EnvironmentFile path from service (supports optional '-' prefix)
-ENV_FILE_LINE="$(grep -E '^[[:space:]]*EnvironmentFile=' "${SERVICE_SRC}" | head -n1 || true)"
-if [[ -n "${ENV_FILE_LINE}" ]]; then
-  ENV_FILE="${ENV_FILE_LINE#*=}"
-  ENV_FILE="${ENV_FILE#-}"
-else
-  ENV_FILE="/etc/chirp-pull-listener.env"
+if [[ ! -f "${ENV_FILE}" ]]; then
+  echo "Missing ${ENV_FILE}" >&2
+  echo "Create it and define your PAT in PULL_TOKEN, along with the required settings:" >&2
+  echo "  PULL_LISTENER_PORT" >&2
+  echo "  PULL_REPO_DIR" >&2
+  echo "  PULL_BRANCH" >&2
+  echo "  PULL_SERVICE_NAME" >&2
+  echo "  PULL_TOKEN" >&2
+  exit 1
 fi
 
-# Ensure env directory exists before writing
+set -a
+# shellcheck disable=SC1090
+source "${ENV_FILE}"
+set +a
+
+if [[ -z "${PULL_TOKEN:-}" ]]; then
+  echo "PULL_TOKEN is not set in ${ENV_FILE}." >&2
+  echo "Define it with your PAT and rerun this script." >&2
+  exit 1
+fi
+
 sudo install -d -m 0755 "$(dirname "${ENV_FILE}")"
-
-# Copy template env file if present, otherwise generate defaults
-if [[ -f "${ENV_TEMPLATE}" ]]; then
-  sudo install -m 600 "${ENV_TEMPLATE}" "${ENV_FILE}"
-else
-  sudo tee "${ENV_FILE}" >/dev/null <<EOF
-PULL_LISTENER_PORT=${PULL_LISTENER_PORT}
-PULL_REPO_DIR=${PULL_REPO_DIR}
-PULL_BRANCH=${PULL_BRANCH}
-PULL_SERVICE_NAME=${PULL_SERVICE_NAME}
-PULL_TOKEN=${PULL_TOKEN}
-EOF
-  sudo chmod 600 "${ENV_FILE}"
-fi
-
-# Enable + start
+sudo chmod 600 "${ENV_FILE}"
 sudo install -m 0644 "${SERVICE_SRC}" "${SERVICE_DST}"
 
 sudo systemctl daemon-reload

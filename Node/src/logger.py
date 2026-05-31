@@ -51,11 +51,19 @@ class LogStreamingHandler(BaseHTTPRequestHandler):
             
             # Subprocess tailing the systemd journal
             process = subprocess.Popen(
-                ['journalctl', '-u', 'chirp-launcher','-f', '-n', '50'],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True
-            )
+    [
+        'journalctl',
+        '--follow',
+        '--no-pager',
+        '-o', 'short-precise',
+        '-u', 'chirp-launcher.service',
+        '-u', 'chirp_pull_listener.service',
+        '-n', '50',
+    ],
+    stdout=subprocess.PIPE,
+    stderr=subprocess.STDOUT,
+    text=True
+)
             try:
                 for line in iter(process.stdout.readline, ''):
                     # SSE format requires "data: <content>\n\n"

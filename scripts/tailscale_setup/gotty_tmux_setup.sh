@@ -115,13 +115,27 @@ random-url = true
 EOF
 sudo chown "$GOTTY_USER":"$GOTTY_USER" /etc/gotty/gotty.conf
 sudo chmod 640 /etc/gotty/gotty.conf
+# ...existing code...
+
+# load environment values from repo .env (use script dir)
+if [ -f "${SCRIPT_DIR}/.env" ]; then
+  # shellcheck disable=SC1090
+  source "${SCRIPT_DIR}/.env"
+else
+  echo "Warning: .env not found in ${SCRIPT_DIR}, continuing with defaults"
+fi
+
+# ...existing code...
 
 # copy env for service (optional)
 if [ -f "${SCRIPT_DIR}/.env" ]; then
   sudo cp "${SCRIPT_DIR}/.env" /etc/gotty/gotty_env
-  sudo chown "$GOTTY_USER":"$GOTTY_USER" /etc/gotty/gotty_env
+  sudo chown root:root /etc/gotty/gotty_env
   sudo chmod 640 /etc/gotty/gotty_env
 fi
+
+#enable the tmux profile
+chmod +x ${SCRIPT_DIR}/tmux_profile.sh
 
 # create global systemd service unit
 sudo tee /etc/systemd/system/gotty.service >/dev/null <<'UNIT'
@@ -131,11 +145,11 @@ After=network-online.target tailscaled.service
 Wants=network-online.target tailscaled.service
 
 [Service]
-User=GOTTY_USER_PLACEHOLDER
-Group=GOTTY_USER_PLACEHOLDER
+User=chirp
+Group=chirp
 EnvironmentFile=/etc/gotty/gotty_env
-WorkingDirectory=GOTTY_HOME_PLACEHOLDER
-ExecStart=/usr/local/bin/gotty --config /etc/gotty/gotty.conf tmux new -A -s gotty top
+WorkingDirectory=/home/chirp
+ExecStart=/usr/local/bin/gotty --config /etc/gotty/gotty.conf /home/chirp/Documents/Chirp/scripts/tailscale_setup/tmux_profile.sh
 Restart=always
 RestartSec=5
 LimitNOFILE=65536

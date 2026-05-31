@@ -12,3 +12,9 @@
 # Connecting to remote TMUX console
 After connecting to the tailnet, run:
 4. In your web browser, run <tailscale_dns_name>:5004
+
+
+# Fusion-Center tmux profile
+TODO: Instead of hardcoding node ids to tienX, discover them from tailscale
+
+5. 

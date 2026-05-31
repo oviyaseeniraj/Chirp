@@ -130,7 +130,7 @@ fi
 # copy env for service (optional)
 if [ -f "${SCRIPT_DIR}/.env" ]; then
   sudo cp "${SCRIPT_DIR}/.env" /etc/gotty/gotty_env
-  sudo chown root:root /etc/gotty/gotty_env
+  sudo chown root:chirp /etc/gotty/gotty_env
   sudo chmod 640 /etc/gotty/gotty_env
 fi
 

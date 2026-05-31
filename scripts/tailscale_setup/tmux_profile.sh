@@ -40,12 +40,17 @@ EOF
 sleep infinity'"
 
 # Second window: 4 panes, one per node
+# ...existing code...
+
+# Second window: 4 panes, one per node
 tmux new-window -t "$SESSION" -n "logs"
-tmux send-keys -t "$SESSION:1.0" "curl -N http://${NODE1}:${LOGGER_PORT}" C-m
-tmux split-window -h -t "$SESSION:1.0" "curl -N http://${NODE2}:${LOGGER_PORT}"
-tmux split-window -v -t "$SESSION:1.0" "curl -N http://${NODE3}:${LOGGER_PORT}"
-tmux split-window -v -t "$SESSION:1.1" "curl -N http://${NODE4}:${LOGGER_PORT}"
+tmux send-keys -t "$SESSION:1.0" "ssh -t ${NODE1} 'sudo journalctl -u chirp-launcher -f'" C-m
+tmux split-window -h -t "$SESSION:1.0" "ssh -t ${NODE2} 'sudo journalctl -u chirp-launcher -f'"
+tmux split-window -v -t "$SESSION:1.0" "ssh -t ${NODE3} 'sudo journalctl -u chirp-launcher -f'"
+tmux split-window -v -t "$SESSION:1.1" "ssh -t ${NODE4} 'sudo journalctl -u chirp-launcher -f'"
 tmux select-layout -t "$SESSION:1" tiled
+
+# ...existing code...
 
 # Third window: shell prompt
 tmux new-window -t "$SESSION" -n "command prompt" "bash"

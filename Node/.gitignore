@@ -103,6 +103,7 @@ celerybeat.pid
 
 # Environments
 .env
+.pull_listener_env
 .venv
 env/
 venv/

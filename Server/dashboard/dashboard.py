@@ -75,6 +75,30 @@ def _node_color(node_id: str, node_ids: List[str]) -> str:
     except ValueError:
         return "#ffffff"
 
+# new helper to prefer DNS hostnames (nodeX) over raw IPs
+def _choose_hostname(node_id: str, ip_addr: Optional[str]) -> str:
+    candidates = []
+    if node_id:
+        candidates.append(node_id)
+    # if node_id looks numeric or doesn't start with "node", try "node{node_id}"
+    if node_id and not node_id.lower().startswith("node"):
+        candidates.append(f"node{node_id}")
+    if ip_addr:
+        candidates.append(ip_addr)
+    for c in candidates:
+        try:
+            # rely on DNS resolution: if it resolves, use it
+            socket.gethostbyname(c)
+            return c
+        except Exception:
+            continue
+    # fallback: prefer nodeX if possible, else ip, else node_id, else "Unknown"
+    if node_id:
+        return f"node{node_id}" if not node_id.lower().startswith("node") else node_id
+    if ip_addr:
+        return ip_addr
+    return "Unknown"
+
 
 # ---------------------------------------------------------------------------
 # Coordinate helpers
@@ -411,7 +435,7 @@ TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
 jinja = Environment(loader=FileSystemLoader(str(TEMPLATE_DIR)))
 
 async def _fetch_ips_from_db():
-    """Background task to periodically fetch node IPs from Postgres."""
+    """Background task to periodically fetch node IPs from Postgres and map to DNS names."""
     while True:
         try:
             conn = psycopg2.connect(
@@ -423,7 +447,10 @@ async def _fetch_ips_from_db():
                 rows = cur.fetchall()
                 with state._lock:
                     for row in rows:
-                        state.node_ips[row[0]] = row[1]
+                        nid = row[0]
+                        ip = row[1] if len(row) > 1 else None
+                        # replace stored ip with a hostname preference (nodeX) when resolvable
+                        state.node_ips[nid] = _choose_hostname(nid, ip)
             conn.close()
         except Exception as e:
             log.warning("Could not fetch IPs from DB: %s", e)
@@ -561,6 +588,24 @@ app.router.add_post("/api/node_command", node_command_handler)
 app.router.add_get("/", index_handler)
 app.router.add_get("/status", status_handler)
 
+# new periodic task to request node status so update_node_status gets refreshed
+async def _periodic_status_request():
+    """Periodically request status from known nodes so `update_node_status` is kept up-to-date."""
+    while True:
+        try:
+            with state._lock:
+                # prefer the set of nodes we've seen frames/presence for, fallback to node_ips keys
+                nodes = set(state.frames.keys()) | set(state.presence.keys()) | set(state.node_ips.keys())
+            for nid in nodes:
+                topic = f"{TOPIC_PREFIX}/group/default/node/{nid}/command"
+                payload = {"action": "status", "timestampMs": int(time.time() * 1000)}
+                if _mqtt_client is not None:
+                    _mqtt_client.publish(topic, payload=json.dumps(payload), qos=1)
+            # run every 10 seconds
+        except Exception as exc:
+            log.warning("Periodic status request failed: %s", exc)
+        await asyncio.sleep(10)
+
 
 async def _broadcast():
     while True:
@@ -576,14 +621,17 @@ async def _broadcast():
 async def _on_startup(app_):
     app_["broadcast"] = asyncio.create_task(_broadcast())
     app_["db_poll"] = asyncio.create_task(_fetch_ips_from_db())
+    app_["status_req"] = asyncio.create_task(_periodic_status_request())
 
 
 async def _on_cleanup(app_):
     app_["broadcast"].cancel()
     app_["db_poll"].cancel()
+    app_["status_req"].cancel()
     try:
         await app_["broadcast"]
         await app_["db_poll"]
+        await app_["status_req"]
     except asyncio.CancelledError:
         pass
 

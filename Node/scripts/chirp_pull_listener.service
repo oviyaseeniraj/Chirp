@@ -1,0 +1,19 @@
+[Unit]
+Description=Chirp Pull Listener
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+EnvironmentFile=/etc/chirp-pull-listener.env
+ExecStart=/usr/bin/python3 /home/chirp/Chirp/Node/src/pull_listener.py
+Restart=always
+RestartSec=2
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=chirp-pull-listener
+
+[Install]
+WantedBy=multi-user.target

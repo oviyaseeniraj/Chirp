@@ -68,6 +68,18 @@
     line-height: 1.2;
     white-space: nowrap;
   }
+  /* pull button style */
+  .pull-btn {
+    padding: 3px 6px;
+    border: 1px solid #f59e0b;
+    border-radius: 3px;
+    background: #27272a;
+    color: #f59e0b;
+    cursor: pointer;
+    font-size: 12px;
+    line-height: 1.2;
+    white-space: nowrap;
+  }
   .ssh-btn {
     padding: 3px 6px;
     border: 1px solid #8957e5;
@@ -78,6 +90,30 @@
     font-size: 12px;
     line-height: 1.2;
     white-space: nowrap;
+  }
+
+  .server-console-btn {
+    padding: 4px 8px;
+    border: 1px solid #8b5cf6;
+    border-radius: 4px;
+    background: linear-gradient(180deg, #2a1d4a 0%, #1b1230 100%);
+    color: #d8b4fe;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.2;
+    white-space: nowrap;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.06);
+  }
+
+  .server-console-btn:hover {
+    background: linear-gradient(180deg, #35255f 0%, #24163f 100%);
+    border-color: #a78bfa;
+    color: #ede9fe;
+  }
+
+  .server-console-btn:active {
+    transform: translateY(1px);
   }
 </style>
 </head>
@@ -117,6 +153,9 @@
     <div id="node-ctrl-list"></div>
     <button id="nodeStatusAll" style="margin-top:4px;padding:4px;border:1px solid #30363d;border-radius:4px;background:#21262d;color:#8b949e;cursor:pointer;font-size:11px">Refresh Status</button>
   </div>
+
+  <button id="server-console-btn" class="server-console-btn" type="button">server console</button>
+
 
   <div class="section-title">MQTT</div>
 
@@ -217,6 +256,27 @@ nodeCtrlList.addEventListener("click", (e) => {
   if (!btn) return;
 
   const ip = btn.dataset.ip;
+
+  if (btn.classList.contains("pull-btn")) {
+    if (!ip || ip === "Unknown") return;
+    btn.disabled = true;
+    fetch(`http://${ip}:5055/pull`, { method: "POST" })
+      .then(async (res) => {
+        if (!res.ok) {
+          const text = await res.text().catch(() => "");
+          throw new Error(`HTTP ${res.status} ${text}`);
+        }
+        alert(`PULL triggered for ${ip}`);
+      })
+      .catch((err) => {
+        console.error("PULL failed:", err);
+        alert(`PULL failed for ${ip}: ${err.message}`);
+      })
+      .finally(() => {
+        btn.disabled = false;
+      });
+    return;
+  }
 
   if (btn.classList.contains("log-btn")) {
     if (ip && ip !== "Unknown") {
@@ -570,13 +630,21 @@ function updateNodeCtrl(data) {
       '<button data-action="reset_radar" style="padding:3px 6px;border:1px solid #8b949e;border-radius:3px;background:#21262d;color:#8b949e;cursor:pointer;font-size:12px;line-height:1.2" title="FPGA reset">R</button>' +
       '<button data-action="start_pipeline" style="padding:3px 6px;border:1px solid #238636;border-radius:3px;background:#0d3320;color:#3fb950;cursor:pointer;font-size:12px;line-height:1.2" title="Start pipeline">&#9654;</button>' +
       '<button data-action="stop_pipeline" style="padding:3px 6px;border:1px solid #da3633;border-radius:3px;background:#2a1a1a;color:#f85149;cursor:pointer;font-size:12px;line-height:1.2" title="Stop">&#9632;</button>' +
-      
+      '<button class="pull-btn" data-ip="' + (n.ip_address || "Unknown") + '" title="Pull main and restart">PULL</button>' +
       '<button class="log-btn" data-ip="' + (n.ip_address || "Unknown") + '" title="Copy remote journalctl command">LOG</button>' +
       '<button class="viz-btn" data-ip="' + (n.ip_address || "Unknown") + '" title="Open visualizer">UI</button>' +
       '<button class="ssh-btn" data-ip="' + (n.ip_address || "Unknown") + '" title="Open SSH link">SSH</button>';
     nodeCtrlList.appendChild(row);
   }
 }
+
+//console button
+const serverConsoleBtn = document.getElementById("server-console-btn");
+  if (serverConsoleBtn) {
+    serverConsoleBtn.addEventListener("click", () => {
+      window.open("https://fusion-center:5004", "_blank", "noopener,noreferrer");
+    });
+  }
 
 // ── MQTT status ────────────────────────────────
 socket.on("mqtt_status", (s) => {
@@ -589,4 +657,3 @@ socket.on("mqtt_status", (s) => {
 </script>
 </body>
 </html>
-

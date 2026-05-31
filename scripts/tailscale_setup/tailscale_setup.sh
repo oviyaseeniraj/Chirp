@@ -20,8 +20,6 @@ if [[ -z "${AUTH_KEY}" ]]; then
   exit 1
 fi
 
-
-
 curl -fsSL https://tailscale.com/install.sh | sh
 tailscale up --auth-key="${AUTH_KEY}"
 systemctl enable --now tailscaled

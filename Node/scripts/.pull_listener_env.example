@@ -1,0 +1,5 @@
+PULL_LISTENER_PORT=5055
+PULL_REPO_DIR=/home/chirp/Chirp
+PULL_BRANCH=main
+PULL_SERVICE_NAME=chirp-launcher.service
+PULL_TOKEN=

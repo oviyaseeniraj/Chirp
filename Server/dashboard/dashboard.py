@@ -115,7 +115,7 @@ def _apply_calib(
     node_idx: int,
     calib: Optional[Dict],
 ) -> Tuple[float, float]:
-    x_local, y_local = _polar_to_xy(range_m, angle_rad)
+    y_local, x_local = _polar_to_xy(range_m, angle_rad)
     if calib is None or node_idx == 0:
         return x_local, y_local
     try:
@@ -214,17 +214,10 @@ class State:
                     )
 
                 for t in frame["tracks"]:
+                    # tracks are provided as local Cartesian (x,y). convert to polar,
+                    # run through _apply_calib so tracks use the same transform as clusters.
                     x, y = float(t.get("x", 0)), float(t.get("y", 0))
-                    if calib and nidx > 0:
-                        try:
-                            td = calib["theta_opt"][0][nidx]
-                            P = calib["P_opt"][0][nidx]
-                            z = cmath.exp(1j * math.radians(td)) * complex(
-                                x, y
-                            ) + complex(P[0], P[1])
-                            x, y = z.real, z.imag
-                        except Exception:
-                            pass
+
                     tracks_list.append(
                         {
                             "track_id": int(t.get("track_id", 0)),

@@ -79,6 +79,30 @@
     line-height: 1.2;
     white-space: nowrap;
   }
+
+  .server-console-btn {
+    padding: 4px 8px;
+    border: 1px solid #8b5cf6;
+    border-radius: 4px;
+    background: linear-gradient(180deg, #2a1d4a 0%, #1b1230 100%);
+    color: #d8b4fe;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.2;
+    white-space: nowrap;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.06);
+  }
+
+  .server-console-btn:hover {
+    background: linear-gradient(180deg, #35255f 0%, #24163f 100%);
+    border-color: #a78bfa;
+    color: #ede9fe;
+  }
+
+  .server-console-btn:active {
+    transform: translateY(1px);
+  }
 </style>
 </head>
 <body>
@@ -117,6 +141,9 @@
     <div id="node-ctrl-list"></div>
     <button id="nodeStatusAll" style="margin-top:4px;padding:4px;border:1px solid #30363d;border-radius:4px;background:#21262d;color:#8b949e;cursor:pointer;font-size:11px">Refresh Status</button>
   </div>
+
+  <button id="server-console-btn" class="server-console-btn" type="button">server console</button>
+
 
   <div class="section-title">MQTT</div>
 
@@ -550,7 +577,7 @@ nodeStatusAll.addEventListener("click", () => {
 let _lastNodeCtrlHash = "";
 function updateNodeCtrl(data) {
   const nodes = data.node_control || [];
-  if (nodes.length === 0) { nodeCtrlList.innerHTML = ""; _lastNodeCtrlHash = ""; return; }
+  if (nodes.length === 0) { nodeCtrlList.innerHTML = ""; _lastNodeCtrlfHash = ""; return; }
   const hash = JSON.stringify(nodes);
   if (hash === _lastNodeCtrlHash) return;
   _lastNodeCtrlHash = hash;
@@ -577,6 +604,14 @@ function updateNodeCtrl(data) {
     nodeCtrlList.appendChild(row);
   }
 }
+
+//console button
+const serverConsoleBtn = document.getElementById("server-console-btn");
+  if (serverConsoleBtn) {
+    serverConsoleBtn.addEventListener("click", () => {
+      window.open("https://fusion-center:5004", "_blank", "noopener,noreferrer");
+    });
+  }
 
 // ── MQTT status ────────────────────────────────
 socket.on("mqtt_status", (s) => {

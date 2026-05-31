@@ -43,6 +43,8 @@ sleep infinity'"
 # ...existing code...
 
 # Second window: 4 panes, one per node
+tmux set-option -g mouse on
+
 tmux new-window -t "$SESSION" -n "logs"
 tmux send-keys -t "$SESSION:1.0" "ssh -t ${NODE1} 'sudo journalctl -u chirp-launcher -f'" C-m
 tmux split-window -h -t "$SESSION:1.0" "ssh -t ${NODE2} 'sudo journalctl -u chirp-launcher -f'"

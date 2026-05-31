@@ -320,6 +320,11 @@ function toCanvas(x, y) {
   return { cx: cssW() / 2 + x * s, cy: cssH() / 2 - y * s };
 }
 
+// Global/world coordinates use the canvas Y flip.
+function globalToCanvas(x, y) {
+  return toCanvas(x, y);
+}
+
 function resize() {
   const rect = wrap.getBoundingClientRect();
   canvas.width = rect.width * devicePixelRatio;
@@ -375,7 +380,7 @@ function drawGrid() {
 
 function drawNodePositions(positions) {
   for (const np of positions) {
-    const { cx: x, cy: y } = toCanvas(np.x, np.y);
+    const { cx: x, cy: y } = globalToCanvas(np.x, np.y);
     ctx.fillStyle = np.color; ctx.beginPath(); ctx.arc(x, y, 8, 0, Math.PI * 2); ctx.fill();
     ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.stroke();
     ctx.fillStyle = "#fff"; ctx.font = "10px monospace"; ctx.textAlign = "center";
@@ -396,7 +401,7 @@ function drawPoints(points) {
 
 function drawTracks(tracks) {
   for (const t of tracks) {
-    const { cx, cy } = toCanvas(t.x, t.y);
+    const { cx, cy } = globalToCanvas(t.x, t.y);
     ctx.fillStyle = t.color; ctx.fillRect(cx - 4, cy - 4, 8, 8);
     ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.5; ctx.strokeRect(cx - 4, cy - 4, 8, 8);
     ctx.fillStyle = "#fff"; ctx.font = "9px monospace"; ctx.textAlign = "center";
@@ -469,7 +474,7 @@ function drawNodeOrientations(calib, nodePositions) {
     const tdeg = theta?.[0]?.[idx];
     if (tdeg === undefined || tdeg === null) continue;
 
-    const { cx, cy } = toCanvas(np.x, np.y);
+    const { cx, cy } = globalToCanvas(np.x, np.y);
     drawArrow(cx, cy, (-Number(tdeg) * Math.PI) / 180, 26, np.color, `${tdeg.toFixed(1)}°`);
   }
 }
@@ -487,13 +492,12 @@ function drawCalibrationLinks(calib, nodePositions) {
     const b = pmap.get(link.to);
     if (!a || !b) continue;
 
-    // draw only one line/text per node pair
     const key = [link.from, link.to].sort().join("|");
     if (seen.has(key)) continue;
     seen.add(key);
 
-    const A = toCanvas(a.x, a.y);
-    const B = toCanvas(b.x, b.y);
+    const A = globalToCanvas(a.x, a.y);
+    const B = globalToCanvas(b.x, b.y);
     const mx = (A.cx + B.cx) / 2;
     const my = (A.cy + B.cy) / 2;
 

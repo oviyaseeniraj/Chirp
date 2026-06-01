@@ -115,7 +115,7 @@ def _apply_calib(
     node_idx: int,
     calib: Optional[Dict],
 ) -> Tuple[float, float]:
-    y_local, x_local = _polar_to_xy(range_m, angle_rad)
+    x_local, y_local = _polar_to_xy(range_m, angle_rad)
     if calib is None or node_idx == 0:
         return x_local, y_local
     try:
@@ -228,7 +228,7 @@ class State:
                             x, y = z.real, z.imag
                         except Exception:
                             pass
-                            
+
                     tracks_list.append(
                         {
                             "track_id": int(t.get("track_id", 0)),

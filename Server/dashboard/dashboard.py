@@ -106,7 +106,7 @@ def _choose_hostname(node_id: str, ip_addr: Optional[str]) -> str:
 
 
 def _polar_to_xy(range_m: float, angle_rad: float) -> Tuple[float, float]:
-    return range_m * math.sin(angle_rad), range_m * math.cos(angle_rad)
+    return range_m * math.cos(angle_rad), range_m * math.sin(angle_rad)
 
 
 def _apply_calib(
@@ -217,6 +217,7 @@ class State:
                     # tracks are provided as local Cartesian (x,y). convert to polar,
                     # run through _apply_calib so tracks use the same transform as clusters.
                     x, y = float(t.get("x", 0)), float(t.get("y", 0))
+                    #local coordinate frame, flipped axes
 
                     if calib and nidx > 0:
                         try:

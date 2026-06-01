@@ -317,12 +317,19 @@ function cssH() { return canvas.height / devicePixelRatio; }
 function pxPerM() { return cssW() / (metersPerDiv * 10); }
 function toCanvas(x, y) {
   const s = pxPerM();
-  return { cx: cssW() / 2 + x * s, cy: cssH() / 2 - y * s };
+  return { cx: cssW() / 2 + x * s, cy: cssH() / 2 + y * s };
 }
 
 // Global/world coordinates use the canvas Y flip.
 function globalToCanvas(x, y) {
   return toCanvas(x, y);
+}
+
+DEBUG = true;
+function debug_print(args) {
+  if (DEBUG === true) {
+      console.log(args);
+  }
 }
 
 function resize() {
@@ -434,7 +441,6 @@ function drawScaleBar() {
 
 function drawArrow(x, y, angleRad, length, color, label) {
 
-  console.log(angleRad)
 
   const x2 = x + Math.cos(angleRad) * length;
   const y2 = y - Math.sin(angleRad) * length;
@@ -470,7 +476,6 @@ function drawNodeOrientations(calib, nodePositions) {
   const ids = calib.nodeIds || [];
   const theta = calib.theta_opt || [];
 
-  console.log(theta);
 
   for (const np of nodePositions) {
     const idx = ids.indexOf(np.node_id);
@@ -480,7 +485,7 @@ function drawNodeOrientations(calib, nodePositions) {
     if (tdeg === undefined || tdeg === null) continue;
 
     const { cx, cy } = globalToCanvas(np.x, np.y);
-    drawArrow(cx, cy, (Number(tdeg) * Math.PI) / 180, 26, np.color, `${tdeg.toFixed(1)}°`);
+    drawArrow(cx, cy, (-Number(tdeg) * Math.PI) / 180, 26, np.color, `${tdeg.toFixed(1)}°`);
   }
 }
 
@@ -559,14 +564,14 @@ socket.on("debug_frame", (data) => {
   if (showTracks.checked && data.tracks) drawTracks(data.tracks);
 
   if (currentCalibration && data.node_positions) {
-    console.log(currentCalibration);
-    console.log(data.node_positions);
     drawCalibrationLinks(currentCalibration, data.node_positions);   // NEW
     drawNodeOrientations(currentCalibration, data.node_positions);   // NEW
   }
 
-  if (currentCalibration) { console.log("found calibration")}
-  if (data.node_positions) { console.log("found position")}
+  debug_print(data.points);
+  debug_print(data.tracks);
+  //if (currentCalibration) { console.log("found calibration")}
+  //if (data.node_positions) { console.log("found position")}
 
   drawScaleBar();
   document.getElementById("fps-counter").textContent = displayFps + " FPS";

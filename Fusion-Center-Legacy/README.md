@@ -6,6 +6,9 @@ The Fusion Center is the base station that connects to all the nodes, issues com
 
 **NOTE:** It will be important to note down the IP address of the "server" node in your network. If the IP address is changed, then communication within the network can break down. The IP address NEEDS to be changed in the `.env` file within the `MQTT-Broker/` directory if the IP address of the server node changes.
 
+# PLEASE NOTE THIS IS LEGACY CODE. Please refer to Chirp/Server for the most recent implementation
+
+
 ## What does the Fusion Center run?
 
 The server node will need to run two things:

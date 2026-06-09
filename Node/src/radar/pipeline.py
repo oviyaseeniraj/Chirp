@@ -315,7 +315,7 @@ def processing_process(raw_queue, processed_queue, node_id, calib_queue=None, de
                     range_bin, doppler_bin = rd_val_to_bin(range_val, vel_val)
                 except TypeError:
                     print("TYPE ERROR OCCURRED =====================================")
-                    print(range_val)
+                    #print(range_val)
 
                 # 3. Populate the visualization maps
                 if 0 <= range_bin < config.RANGE_BINS and 0 <= doppler_bin < config.DOPPLER_BINS:
@@ -458,6 +458,8 @@ def processing_process(raw_queue, processed_queue, node_id, calib_queue=None, de
                 for t in confirmed_tracks:
                     implied_detection = jpda.measurement_model.measurement_function(state).flatten()
 
+                    #print(type(implied_detection))
+
                     #convert back to 
                     serialized_tracks.append({
                         'TrackID': int(t['TrackID']),
@@ -472,8 +474,9 @@ def processing_process(raw_queue, processed_queue, node_id, calib_queue=None, de
                         'Implied Detection': np.array(implied_detection).flatten().tolist()
                     })
 
-                    tracks_for_calibration.append( float(implied_detection) )
+                    tracks_for_calibration.append( implied_detection.astype(float) )
                     
+                #print(tracks_for_calibration)
 
             # Calibration Hook — use DBSCAN centroids instead of raw CFAR detections.
             # Raw detections include heavy static clutter and can bias spatial
@@ -642,6 +645,9 @@ def calibration_mqtt_process(
     client.loop_start()
 
     while True:
+
+        print("entered")
+
         calibration_event.wait()
         calibration_event.clear()
 
@@ -669,6 +675,7 @@ def calibration_mqtt_process(
         while frame_count < max_frames:
             try:
                 item = calib_queue.get(timeout=10.0)
+                print(item)
             except Exception:
                 logging.warning(
                     "Timeout waiting for calibration frame %d/%d commandId=%s",
@@ -689,7 +696,10 @@ def calibration_mqtt_process(
                 # the small (<3 ms) wall-clock differences between nodes.
                 "frameNum": frame_count,
                 "detections": item["detections"],
+                "tracks": item["tracks"]
             }
+            print(frame_payload)
+
             client.publish(frame_pub_topic, payload=json.dumps(frame_payload), qos=1, retain=False)
             logging.info(
                 "Published calibration frame topic=%s payload=%s",

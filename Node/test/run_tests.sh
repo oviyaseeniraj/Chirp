@@ -4,7 +4,7 @@
 
 # Check for root privilege
 if [[ $EUID -ne 0 ]]; then
-   echo "This script must be run as root (sudo)" 
+   echo "This script must be run as root (sudo)"
    exit 1
 fi
 
@@ -193,7 +193,7 @@ case $test_choice in
     1|2)
         # 1. Check/Start Radar Hardware/FPGA
         RADAR_STATUS_FILE="/tmp/chirp_radar_status"
-        
+
         if [ -f "$RADAR_STATUS_FILE" ]; then
             echo ""
             echo ">>> Radar already initialized (Lockfile found at $RADAR_STATUS_FILE). Skipping startup."
@@ -243,7 +243,7 @@ case $test_choice in
 
             echo "Starting hardware trigger in background..."
             # Launch without sudo since script is already root
-            "$TRIGGER_EXE" > /dev/null 2>&1 &
+            "$TRIGGER_EXE" &
             TRIGGER_PID=$!
         fi
 
@@ -266,10 +266,12 @@ case $test_choice in
 
         # 3. Run selected test
         echo ""
-        
+
         if [ "$test_choice" -eq 1 ]; then
             echo ">>> Starting UI server (Node/src/ui/server.py) in background:"
-            $PYTHON_EXEC "$NODE_DIR/src/ui/server.py" > /dev/null 2>&1 &
+            #$PYTHON_EXEC "$NODE_DIR/src/ui/server.py" > /dev/null 2>&1 &
+            $PYTHON_EXEC "$NODE_DIR/src/ui/server.py" &
+
             SERVER_PID=$!
             echo "Waiting for server on port 5001..."
             for _ in $(seq 1 15); do
@@ -279,13 +281,13 @@ case $test_choice in
             if ! (echo >/dev/tcp/127.0.0.1/5001) 2>/dev/null; then
                 echo "Warning: Server socket is not be ready yet. Proceeding with full integration test."
             fi
-            
+
             echo ">>> Starting Full Integration Test"
             $PYTHON_EXEC "$NODE_DIR/test/full_integration_test.py"
 
             # Trap signals to ensure the hardware trigger and UI server (if any) are killed when the script ends
             trap 'echo "Killing hardware trigger..."; kill $TRIGGER_PID 2>/dev/null; [ -n "$SERVER_PID" ] && echo "Stopping UI server (PID: $SERVER_PID)..." && kill $SERVER_PID 2>/dev/null; exit' SIGINT SIGTERM
-        
+
         else
             echo ">>> Starting Data Capture (Target: $DATA_DIR)..."
             read -p "Enter number of frames to capture [100]: " frames
@@ -304,7 +306,9 @@ case $test_choice in
 
     3)
         echo ">>> Starting UI server (Node/src/ui/server.py) in background:"
-        $PYTHON_EXEC "$NODE_DIR/src/ui/server.py" > /dev/null 2>&1 &
+        #$PYTHON_EXEC "$NODE_DIR/src/ui/server.py" > /dev/null 2>&1 &
+        $PYTHON_EXEC "$NODE_DIR/src/ui/server.py" &
+
         SERVER_PID=$!
         echo "Waiting for server on port 5001..."
         for _ in $(seq 1 15); do
@@ -313,25 +317,30 @@ case $test_choice in
         done
         if ! (echo >/dev/tcp/127.0.0.1/5001) 2>/dev/null; then
             echo "Warning: Server socket is not be ready yet. Proceeding with full integration test."
-        fi    
+        fi
         echo ""
         echo ">>> Starting Playback Test from $DATA_DIR..."
         if [ -z "$(ls -A "$DATA_DIR/raw" 2>/dev/null)" ]; then
             echo "Error: $DATA_DIR/raw is empty. Run Data Capture first."
             exit 1
         fi
-        
-        $PYTHON_EXEC "$NODE_DIR/test/playback_test.py" --input-dir "$DATA_DIR/raw" --loop
+
+        read -p "Enter frame delay in ms [50]: " frame_delay_ms
+        frame_delay_ms=${frame_delay_ms:-50}
+        frame_delay_s=$(awk "BEGIN { printf \"%.3f\", $frame_delay_ms/1000 }")
+
+        #echo ${frame_delay_s}
+        $PYTHON_EXEC "$NODE_DIR/test/playback_test.py" --input-dir "$DATA_DIR/raw" --loop --delay "$frame_delay_s"
         ;;
     4)
         echo ""
         echo ">>> Converting Raw Data to .mat..."
         read -p "Enter input directory (default: $DATA_DIR/raw): " input_dir
         input_dir=${input_dir:-$DATA_DIR/raw}
-        
+
         read -p "Enter output filename (default: $DATA_DIR/raw_data.mat): " output_file
         output_file=${output_file:-$DATA_DIR/raw_data.mat}
-        
+
         $PYTHON_EXEC "$NODE_DIR/test/capture_data.py" --convert --input-dir "$input_dir" --output-file "$output_file" --type "raw"
         ;;
     5)

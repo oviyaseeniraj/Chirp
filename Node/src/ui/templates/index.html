@@ -92,7 +92,7 @@
                 <span style="color: #fff;">Show RDM Background</span>
             </label>
             <label style="cursor: pointer; display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
-                <input type="checkbox" id="show-detections" checked style="width: 16px; height: 16px;">
+                <input type="checkbox" id="show-rdm-centroids" checked style="width: 16px; height: 16px;">
                 <span style="color: #ff0000;">Show Raw Detections</span>
             </label>
             <label style="cursor: pointer; display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
@@ -100,8 +100,16 @@
                 <span style="color: #00ffff;">Show 3D Clusters</span>
             </label>
             <label style="cursor: pointer; display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
-                <input type="checkbox" id="show-tracks" checked style="width: 16px; height: 16px;">
+                <input type="checkbox" id="show-confirmed-tracks" checked style="width: 16px; height: 16px;">
                 <span style="color: #ffa500;">Show Confirmed Tracks</span>
+            </label>
+             <label style="cursor: pointer; display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+                <input type="checkbox" id="show-tentative-tracks" checked style="width: 16px; height: 16px;">
+                <span style="color: #ecc70f;">Show Tentative Tracks</span>
+            </label>
+            <label style="cursor: pointer; display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+                <input type="checkbox" id="show-ra-detections" checked style="width: 16px; height: 16px;">
+                <span style="color: #669158;">Show Range-Angle Detections</span>
             </label>
         </div>
     </div>
@@ -210,15 +218,14 @@
             lastTime = now;
         }, 1000);
 
-        function drawRangeAnglePlot(detections, tracks) {
+        const margin = 40;
+        const ctx = rangeAngleCtx;
+        const width = rangeAngleCanvas.width;
+        const height = rangeAngleCanvas.height;
+        const plotWidth = width - 2 * margin;
+        const plotHeight = height - 2 * margin;
+        function drawRangeAnglePlot(detections) {
             if (!rangeAngleCtx) return;
-
-            const ctx = rangeAngleCtx;
-            const width = rangeAngleCanvas.width;
-            const height = rangeAngleCanvas.height;
-            const margin = 40;
-            const plotWidth = width - 2 * margin;
-            const plotHeight = height - 2 * margin;
 
             // 1. Setup Canvas & Background
             ctx.fillStyle = '#1a1a1a';
@@ -269,37 +276,12 @@
             ctx.fillText('Range (m)', 0, 0);
             ctx.restore();
 
-            // 3. Plot Detections
-            if (detections && detections.length) {
-                let maxVelocity = Math.max(...detections.map(d => Math.abs(d.velocity || 0)));
-
-                detections.forEach(({ angle, range_idx, velocity }) => {
-                    if (angle == null || !velocity) return;
-
-                    const x = margin + ((angle + 90) / 180) * plotWidth;
-                    const y = margin + (1 - range_idx / FAST_TIME) * plotHeight;
-                    const vMag = Math.abs(velocity);
-                    const size = maxVelocity > 0 ? 3 + (vMag / maxVelocity) * 10 : 5;
-
-                    ctx.fillStyle = velocity > 0 ? '#00ff00' : '#ff0000';
-                    
-                    ctx.beginPath();
-                    ctx.arc(x, y, size, 0, 2 * Math.PI);
-                    ctx.fill();
-
-                    ctx.strokeStyle = '#fff';
-                    ctx.lineWidth = 1;
-                    ctx.stroke();
-                });
-            }
-
-            // 4. Plot Confirmed Tracks
-
-            if (document.getElementById('show-tracks') !== null && !document.getElementById('show-tracks').checked) return;
+        
+            //if (document.getElementById('show-tracks') !== null && !document.getElementById('show-tracks').checked) return;
             
-            console.log("there exist tracks");
+            //console.log("there exist tracks");
 
-            if (tracks && tracks.length) {
+            /*if (tracks && tracks.length) {
                 const TRACK_COLOR = '#ffa500';
                 const OUTLINE_COLOR = '#c8c800';
 
@@ -330,7 +312,7 @@
                     ctx.textAlign = 'left';
                     ctx.fillText(`T${track_id}`, x + 8, y - 8);
                 });
-            }
+            }*/
         }
 
         function drawRDMGrid() {
@@ -357,6 +339,57 @@
             }
         }
 
+        function drawRangeAngleDetections(detections) {
+            if (detections && detections.length) {
+                let maxVelocity = Math.max(...detections.map(d => Math.abs(d.velocity || 0)));
+
+                detections.forEach(({ angle, range_idx, velocity }) => {
+                    if (angle == null || !velocity) return;
+
+                    const x = margin + ((angle + 90) / 180) * plotWidth;
+                    const y = margin + (1 - range_idx / FAST_TIME) * plotHeight;
+                    const vMag = Math.abs(velocity);
+                    const size = maxVelocity > 0 ? 3 + (vMag / maxVelocity) * 10 : 5;
+
+                    ctx.fillStyle = velocity > 0 ? '#00ff00' : '#ff0000';
+                    
+                    ctx.beginPath();
+                    ctx.arc(x, y, size, 0, 2 * Math.PI);
+                    ctx.fill();
+
+                    ctx.strokeStyle = '#fff';
+                    ctx.lineWidth = 1;
+                    ctx.stroke();
+                });
+            }
+        }
+
+
+        const CLUSTER_COLOR = '#3ca83f';
+
+        function drawRangeAngleClusters(clusters) {
+            if (!clusters || clusters.length === 0 || !rangeAngleCtx) return;
+
+            
+            const CLUSTER_SIZE = 10;
+
+            clusters.forEach(cluster => {
+                const angle = cluster.angle_deg;
+                const rangeIdx = cluster.range_idx;
+
+                if (angle === null || angle === undefined || rangeIdx === null || rangeIdx === undefined) {
+                    return;
+                }
+
+                const x = margin + ((angle + 90) / 180) * plotWidth;
+                const y = margin + (1 - rangeIdx / FAST_TIME) * plotHeight;
+
+                rangeAngleCtx.strokeStyle = CLUSTER_COLOR;
+                rangeAngleCtx.lineWidth = 3;
+                rangeAngleCtx.strokeRect(x - CLUSTER_SIZE / 2, y - CLUSTER_SIZE / 2, CLUSTER_SIZE, CLUSTER_SIZE);
+            });
+        }
+
         function drawClusters(clusters) {
             if (!document.getElementById('show-clusters').checked) return;
 
@@ -369,11 +402,11 @@
                 const x = cluster.doppler_idx * 8;
                 const y = 511 - cluster.range_idx;
 
-                overlayCtx.strokeStyle = '#00ffff';
-                overlayCtx.lineWidth = 1;
+                overlayCtx.strokeStyle = CLUSTER_COLOR;
+                overlayCtx.lineWidth = 3;
                 overlayCtx.strokeRect(x - 5, y - 5, 10, 10);
 
-                overlayCtx.fillStyle = '#00ffff';
+                overlayCtx.fillStyle = '#13570f';
                 overlayCtx.font = '10px Courier New';
                 overlayCtx.fillText(`ID:${cluster.id}`, x + 7, y - 7);
             });
@@ -449,11 +482,22 @@
         }
 
 
-       // ...existing code...
-        function drawConfirmedTracks(tracks) {
-            if (!tracks || tracks.length === 0) return;
+        const CONFIRMED_TRACK_COLOR = '#ffa500';      
+        const TENTATIVE_TRACK_COLOR = '#ecc70f';      
 
-            const TRACK_COLOR = '#ffa500';      
+        // ...existing code...
+        function drawTracks(tracks, confirmed) {
+            if (!tracks || tracks.length === 0) {
+                console.log('no tracks');
+                return
+            };
+
+            if (confirmed) {
+                track_color = CONFIRMED_TRACK_COLOR
+            } else {
+                track_color = TENTATIVE_TRACK_COLOR
+            }
+
             const TRACK_RADIUS = 8;
             const OUTLINE_COLOR = '#c8c800';    
             const OUTLINE_WIDTH = 2;
@@ -465,7 +509,7 @@
                 const px = Math.max(0, Math.min(511, x));
                 const py = Math.max(0, Math.min(511, y));
 
-                overlayCtx.fillStyle = TRACK_COLOR;
+                overlayCtx.fillStyle = track_color;
                 overlayCtx.beginPath();
                 overlayCtx.arc(px, py, TRACK_RADIUS, 0, 2 * Math.PI);
                 overlayCtx.fill();
@@ -478,7 +522,13 @@
                 overlayCtx.font = 'bold 11px Courier New';
                 overlayCtx.textAlign = 'left';
                 overlayCtx.textBaseline = 'top';
-                overlayCtx.fillText(`T${track_id}`, px + 12, py - 10);
+
+                if (confirmed) {
+                    console.log("why you no see this")
+                    overlayCtx.fillText(`C${track_id}`, px + 12, py - 10);
+                } else {
+                    overlayCtx.fillText(`T${track_id}`, px + 12, py - 10);
+                }
 
                 if (angle !== null && angle !== undefined) {
                     const angle_rad = (angle * Math.PI) / 180;
@@ -504,9 +554,46 @@
                     overlayCtx.stroke();
                 }
             });
+
+
+            //Draw on Range Angle Plot
+            tracks.forEach(track => {
+                const { track_id, angle, range_bin } = track;
+                
+                if (angle === null || angle === undefined || range_bin === undefined) {
+                    console.log("bruh")
+                    return;
+                }
+
+                const x = margin + ((angle + 90) / 180) * plotWidth;
+                const y = margin + (1 - range_bin / FAST_TIME) * plotHeight;
+
+                //= rangeAngleCtx
+
+                ctx.fillStyle = track_color;
+                ctx.beginPath();
+                ctx.arc(x, y, 6, 0, 2 * Math.PI);
+                ctx.fill();
+
+                ctx.strokeStyle = OUTLINE_COLOR;
+                ctx.lineWidth = 1.5;
+                ctx.stroke();
+
+                ctx.fillStyle = OUTLINE_COLOR;
+                ctx.font = 'bold 11px Courier New';
+                ctx.textAlign = 'left';
+
+                if (confirmed) {
+                    //console.log("why you no see this")
+                    ctx.fillText(`C${track_id}`, x + 8, y - 8);
+                } else {
+                    ctx.fillText(`T${track_id}`, x + 8, y - 8);
+                }
+            });
         }
-        function drawDetections(detections) {
-            if (!document.getElementById('show-detections').checked) return;
+
+
+        function drawRDMDetections(detections) {
             if (!detections || detections.length === 0) return;
 
             detectionCount = detections.length;
@@ -553,32 +640,75 @@
             latency = now - lastFrameTime;
             lastFrameTime = now;
 
+            overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+            plotCtx.clearRect(0, 0, plotCanvas.width, plotCanvas.height);
+
+            const showImage = document.getElementById('show-rdm').checked;
+            const showRDMcentroids = document.getElementById('show-rdm-centroids').checked;
+            const showRangeAngleDetections = document.getElementById('show-ra-detections').checked;
+            const showConfirmedTracks = document.getElementById('show-confirmed-tracks').checked;
+            const showTentativeTracks = document.getElementById('show-tentative-tracks').checked;
+
+            const showClusters = document.getElementById('show-clusters').checked;
+
+            if (data.image && showImage) {
+                const img = new Image();
+                img.onload = function () {
+                    plotCtx.drawImage(img, 0, 0, plotCanvas.width, plotCanvas.height);
+                    drawRangeAnglePlot(data.detections);
+
+                    if (showRDMcentroids) drawRDMDetections(data.detections);
+                    if (showRangeAngleDetections) drawRangeAngleDetections(data.detections);
+                    if (showConfirmedTracks) {
+                        console.log("there exist confirmed");
+
+                        drawTracks(data.confirmed_tracks, true);
+                    }
+                    if (showTentativeTracks) {
+                        console.log(data.tentative_tracks.length)
+                        drawTracks(data.tentative_tracks, false); 
+                    }
+
+                    if (showClusters) drawClusters(data.clusters);
+                    if (showClusters) drawRangeAngleClusters(data.clusters);
+
+                };
+                img.src = 'data:' + data.mime + ';base64,' + data.image;
+            } else {
+                plotCtx.fillStyle = 'black';
+                plotCtx.fillRect(0, 0, plotCanvas.width, plotCanvas.height);
+
+                drawRangeAnglePlot(data.detections, data.confirmed_tracks);
+
+                if (showRDMcentroids) drawDetections(data.detections);
+                if (showRangeAngleDetections) drawRangeAngleDetections(data.detections);
+                
+                if (showConfirmedTracks) drawTracks(data.confirmed_tracks, true);
+                if (showTentativeTracks) drawTracks(data.tentative_tracks, false); 
+
+                if (showClusters) drawClusters(data.clusters);
+                if (showClusters) drawRangeAngleClusters(data.clusters);
+            }
+        });
+
+
+        /*socket.on('radar_plot', function (data) {
+            const now = Date.now();
+            latency = now - lastFrameTime;
+            lastFrameTime = now;
+
             // Centralized function to manage overlay drawing order
             const renderOverlays = () => {
                 overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
-                
                 //drawRDMGrid();
                 
                 // Draw Range Angle plot for both detections and tracks
                 drawRangeAnglePlot(data.detections, data.confirmed_tracks);
-
                 console.log(data.confirmed_tracks)
-
-                if (data.detections) {
-                    drawDetections(data.detections);
-                }
-
-                if (data.clusters) {
-                    drawClusters(data.clusters);
-                }
-
-                if (data.confirmed_tracks && document.getElementById('show-tracks').checked) {
-                    drawConfirmedTracks(data.confirmed_tracks);
-                }
-                
-                if (data.cluster_count !== undefined) {
-                    clusterCount = data.cluster_count;
-                }
+                if (data.detections && document.getElementById('show-detections').checked) {drawDetections(data.detections);}
+                if (data.clusters) {drawClusters(data.clusters);}
+                if (data.confirmed_tracks && document.getElementById('show-tracks').checked) {drawConfirmedTracks(data.confirmed_tracks);}
+                if (data.cluster_count !== undefined) {clusterCount = data.cluster_count;}
             };
 
             plotCtx.clearRect(0, 0, plotCanvas.width, plotCanvas.height);
@@ -598,6 +728,8 @@
 
             frameCount++;
         });
+*/
+
 
         // Handle connection events
         socket.on('connect', function () {

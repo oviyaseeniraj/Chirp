@@ -5,7 +5,7 @@
 **Team Members:** William Ni, Oivya Seeniraj, Andrey Otvagin, Vihan Jayaraman, Jason Wang  
 **Adivsors:** Anirban Banik (Grad Student), Tien Nguyen (Capstone TA), Prof. Isukapalli, Prof. Madhow
 
-[Final Presentation](docs/Final_Slides.pdf) | [Final Poster](docs/Final_Poster.pdf) | [Demo Video](add link when vid is edited)
+[Final Presentation](docs/Final_Slides.pdf) | [Final Poster](docs/Final_Poster.pdf) | [Demo Video](https://drive.google.com/drive/u/0/folders/1WBsov6OpQ3FqtSe7li7BDqBj0TLQ9Kvv)
 
 ## Dependencies
 With `apt` on Linux (run this command on the Jetson Orin Nano devices):

@@ -12,6 +12,8 @@ With `apt` on Linux (run this command on the Jetson Orin Nano devices):
 1. `sudo apt install libfftw3-dev libopencv-dev libeigen3-dev libfmt-dev`  
     a. use `dpkg -L <package>` to find the location for include errors
 
+2. It is also helpful to run Node/nodeSetup/nodeSetup.sh to install further dependencies. 
+
 ## Understanding the Distributed Setup
 Since we are working with devices in a distributed setup, it can confusing figuring out what programs need to be run on which devices. Hopefully this gives you a better idea of how our network is connected.
 
@@ -24,7 +26,7 @@ The network consists of:
 # Tailscale VPN and Network Setup
 When installing node or server for the first time, it's possible to register the device inside a tailnet. Then, through the tailscale admin console, you can assign a name to the device. The name can be used to address the machine through DNS resolution, avoiding the need to find out the assigned IP address, whenever the node connects to a Wi-Fi network (such as UCSB Wireless Web). 
 
-It will also be necessary to register devices using the UCSB Resnet form. Without doing this step, it's entirely possible that the DHCP lease expires within days, requiring you to repeatedly open a GUI on the Jetson and connect to a UCSB Wireless network. Tailscale only works once a device has access to the Internet, so you may need to complete this step as well to ensure seamless connectivity. (It's unknown whether the same IP 169.231.X.X is assigned to a device once registered using the ResNet form.)
+It will also be necessary to register devices using the [UCSB Resnet form](https://drive.google.com/file/d/1o40qUUis6sTXqpXWGVS30cBEvhHeryXq/view?usp=drive_link). Without doing this step, it's entirely possible that the DHCP lease expires within days, requiring you to repeatedly open a GUI on the Jetson and connect to a UCSB Wireless network. Tailscale only works once a device has access to the Internet, so you may need to complete this step as well to ensure seamless connectivity. (It's unknown whether the same IP 169.231.X.X is assigned to a device once registered using the ResNet form.)
 
 Communication across devices is orchestrated with the MQTT protocol. Without Tailscale, it's important to know that every device in the network needs to know one central IP address: the server node IP
 - This is important, because the server node IP acts as a rendezvous point for all nodes to connect with each other. 
@@ -32,7 +34,7 @@ Communication across devices is orchestrated with the MQTT protocol. Without Tai
 
 For detailed information about how to set up the Fusion Center, please refer to this [README](Fusion-Center/README.md).
 
-# Deprecated, use server dashboard at fusion-center:5002
+# Laptop Trigger is deprecated, use server dashboard at fusion-center:5002
 The laptop trigger should be run in someone's terminal under the `Fusion-Center/Laptop` directory, using this command: `sudo ./start_laptop_trigger.sh --group-id default --calibration --calibration-frames 400`
 - the `--calibration` tag tells the shell script to perform auto-calibration across the network
 - the `--calibration-frames 400` tag tells the script to use 400 frames from each radar node to feed into the auto-calibration algorithm; this number can be changed as a parameter

@@ -19,7 +19,7 @@ sudo sysctl -w net.core.wmem_max=16777216
 pushd ../DCA1000/SourceCode/Release/
 LD_LIBRARY_PATH=$(pwd)
 export LD_LIBRARY_PATH
-sudo ldconfig $(pwd)
+sudo ldconfig $(pwd) 2>/dev/null || true
 popd
 
 pushd ../setup_radar/build/ > /dev/null 2>&1 || { echo "Failed to cd to ../setup_radar/build/"; exit 1; }

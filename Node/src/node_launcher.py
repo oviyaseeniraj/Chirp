@@ -532,7 +532,7 @@ class NodeLauncher:
             return False
 
     def _start_background_services(self) -> None:
-        self._launch_background("logger", LOGGER_SCRIPT)
+        # Logger is already started as a multiprocessing.Process in main()
         self._launch_background("server", SERVER_SCRIPT)
 
     def _stop_background_services(self) -> None:

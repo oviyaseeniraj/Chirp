@@ -4,6 +4,7 @@
 #include <jetgpio.h>
 #include <sched.h>
 #include <signal.h>
+#include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -17,8 +18,9 @@
 typedef struct runtime_config {
   long long start_epoch_ms;
   int pulse_period_ms;
-  int max_pulses; // -1 means run forever.
+  int max_pulses;   // -1 means run forever (live capture).
   int cpu_core;
+  int verbose;      // 1 = log first 10 pulses, 0 = quiet.
 } runtime_config_t;
 
 static volatile sig_atomic_t keep_running = 1;
@@ -37,7 +39,9 @@ static void print_usage(const char *prog) {
   printf("  --pulse-period-ms <ms>  Pulse period in milliseconds (default: %d).\n",
          DEFAULT_PULSE_PERIOD_MS);
   printf("  --max-pulses <n>        Emit n pulses then exit (default: run forever).\n");
-  printf("  --cpu-core <id>         CPU core affinity index (default: %d).\n", DEFAULT_CPU_CORE);
+  printf("  --cpu-core <id>         CPU core affinity index (default: %d).\n",
+         DEFAULT_CPU_CORE);
+  printf("  --quiet                 Suppress per-pulse output (for live capture).\n");
   printf("  --help                  Show this message.\n");
 }
 
@@ -72,11 +76,18 @@ static int parse_args(int argc, char *argv[], runtime_config_t *cfg) {
   cfg->pulse_period_ms = DEFAULT_PULSE_PERIOD_MS;
   cfg->max_pulses = -1;
   cfg->cpu_core = DEFAULT_CPU_CORE;
+  cfg->verbose = 1;
 
   while (i < argc) {
     if (strcmp(argv[i], "--help") == 0) {
       print_usage(argv[0]);
       return 1;
+    }
+
+    if (strcmp(argv[i], "--quiet") == 0) {
+      cfg->verbose = 0;
+      i += 1;
+      continue;
     }
 
     if (strcmp(argv[i], "--start-epoch-ms") == 0) {
@@ -101,7 +112,8 @@ static int parse_args(int argc, char *argv[], runtime_config_t *cfg) {
     }
 
     if (strcmp(argv[i], "--max-pulses") == 0) {
-      if (i + 1 >= argc || parse_int(argv[i + 1], &cfg->max_pulses) != 0 || cfg->max_pulses == 0) {
+      if (i + 1 >= argc || parse_int(argv[i + 1], &cfg->max_pulses) != 0 ||
+          cfg->max_pulses == 0) {
         fprintf(stderr, "Invalid --max-pulses value.\n");
         return -1;
       }
@@ -110,7 +122,8 @@ static int parse_args(int argc, char *argv[], runtime_config_t *cfg) {
     }
 
     if (strcmp(argv[i], "--cpu-core") == 0) {
-      if (i + 1 >= argc || parse_int(argv[i + 1], &cfg->cpu_core) != 0 || cfg->cpu_core < 0) {
+      if (i + 1 >= argc || parse_int(argv[i + 1], &cfg->cpu_core) != 0 ||
+          cfg->cpu_core < 0) {
         fprintf(stderr, "Invalid --cpu-core value.\n");
         return -1;
       }
@@ -167,12 +180,36 @@ static long long now_epoch_ms(void) {
   return (long long)now.tv_sec * 1000LL + (long long)(now.tv_nsec / 1000000L);
 }
 
+/*
+ * Print a status line to stdout and flush immediately so the parent
+ * Python process can consume it in real time via the subprocess pipe.
+ *
+ * Status lines follow the format:
+ *   STATUS:<keyword> [key=value ...]
+ *
+ * Keywords the parent process recognises:
+ *   ARMED       – worker is initialised and waiting for start epoch
+ *   STARTED     – first GPIO pulse has fired
+ *   PULSE       – per-pulse detail (only when verbose)
+ *   DONE        – worker is exiting
+ */
+static void emit_status(const char *keyword, const char *fmt, ...) {
+  va_list args;
+  printf("STATUS:%s ", keyword);
+  va_start(args, fmt);
+  vprintf(fmt, args);
+  va_end(args);
+  printf("\n");
+  fflush(stdout);
+}
+
 int main(int argc, char *argv[]) {
   runtime_config_t cfg;
   struct timespec next_trigger;
   int init_status;
   int mode_status;
   int pulse_count = 0;
+  long long start_pulse_epoch_ms;
 
   int parse_result = parse_args(argc, argv, &cfg);
   if (parse_result > 0) {
@@ -214,43 +251,78 @@ int main(int argc, char *argv[]) {
   next_trigger.tv_nsec = (long)((cfg.start_epoch_ms % 1000LL) * 1000000LL);
 
   gpioWrite(OUTPUT_PIN, 0);
-  printf(
-      "Trigger worker armed: startEpochMs=%lld periodMs=%d cpuCore=%d maxPulses=%d\n",
-      cfg.start_epoch_ms,
-      cfg.pulse_period_ms,
-      cfg.cpu_core,
-      cfg.max_pulses);
+
+  /* Notify parent: armed and waiting for start epoch. */
+  emit_status("ARMED",
+              "startEpochMs=%lld periodMs=%d cpuCore=%d maxPulses=%d",
+              cfg.start_epoch_ms,
+              cfg.pulse_period_ms,
+              cfg.cpu_core,
+              cfg.max_pulses);
 
   while (keep_running && (cfg.max_pulses < 0 || pulse_count < cfg.max_pulses)) {
-    int sleep_result = clock_nanosleep(CLOCK_REALTIME, TIMER_ABSTIME, &next_trigger, NULL);
+    int sleep_result = clock_nanosleep(CLOCK_REALTIME, TIMER_ABSTIME, &next_trigger,
+                                       NULL);
     if (sleep_result != 0) {
       if (sleep_result == EINTR) {
+        /* Signal received (e.g. SIGTERM from parent for re-align).
+         * Check keep_running to decide whether to exit or retry. */
+        if (!keep_running) {
+          break;
+        }
+        /* Otherwise retry (spurious EINTR). */
         continue;
       }
       fprintf(stderr, "clock_nanosleep failed: %s\n", strerror(sleep_result));
       break;
     }
 
-    gpioWrite(OUTPUT_PIN, 1);
-    if (PULSE_WIDTH_NS > 0) {
-      struct timespec pulse_width = {
-          .tv_sec = 0,
-          .tv_nsec = PULSE_WIDTH_NS,
-      };
-      nanosleep(&pulse_width, NULL);
+    /* ---- first pulse fires ---- */
+    if (pulse_count == 0) {
+      start_pulse_epoch_ms = now_epoch_ms();
+      emit_status("STARTED",
+                  "epochMs=%lld periodMs=%d",
+                  start_pulse_epoch_ms,
+                  cfg.pulse_period_ms);
     }
+
+    gpioWrite(OUTPUT_PIN, 1);
+    /* nanosleep resolution is ~50 us on non-RT kernels, so for pulse
+       widths under 500 us we busy-wait via clock_gettime instead. */
+    if (PULSE_WIDTH_NS >= 500000) {
+      struct timespec pw = {.tv_sec = 0, .tv_nsec = PULSE_WIDTH_NS};
+      nanosleep(&pw, NULL);
+    } else if (PULSE_WIDTH_NS >= 1000) {
+      struct timespec target, now;
+      clock_gettime(CLOCK_REALTIME, &target);
+      target.tv_nsec += PULSE_WIDTH_NS;
+      while (target.tv_nsec >= 1000000000L) {
+        target.tv_nsec -= 1000000000L;
+        target.tv_sec += 1;
+      }
+      do {
+        clock_gettime(CLOCK_REALTIME, &now);
+      } while (now.tv_sec < target.tv_sec ||
+               (now.tv_sec == target.tv_sec && now.tv_nsec < target.tv_nsec));
+    }
+    /* else: PULSE_WIDTH_NS < 1000 — back-to-back writes for fastest pulse */
     gpioWrite(OUTPUT_PIN, 0);
 
-    if (pulse_count < 10) {
+    if (cfg.verbose && pulse_count < 10) {
       struct timespec pulse_time;
       clock_gettime(CLOCK_REALTIME, &pulse_time);
-      printf("Pulse %d at %ld.%09ld\n", pulse_count, pulse_time.tv_sec, pulse_time.tv_nsec);
+      emit_status("PULSE",
+                  "n=%d time=%ld.%09ld",
+                  pulse_count,
+                  pulse_time.tv_sec,
+                  pulse_time.tv_nsec);
     }
     pulse_count++;
     add_ms(&next_trigger, cfg.pulse_period_ms);
   }
 
   gpioTerminate();
-  printf("Trigger worker exiting after %d pulse(s).\n", pulse_count);
+
+  emit_status("DONE", "totalPulses=%d", pulse_count);
   return 0;
 }

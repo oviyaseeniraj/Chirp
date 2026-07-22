@@ -3,7 +3,7 @@
 
 // GPIO Configuration
 #define OUTPUT_PIN 8
-#define PULSE_WIDTH_NS 50
+#define PULSE_WIDTH_NS 4000   // 4 us pulse width
 
 // Trigger timing defaults
 #define DEFAULT_PULSE_PERIOD_MS 50

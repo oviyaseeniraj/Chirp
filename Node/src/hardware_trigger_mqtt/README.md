@@ -1,17 +1,58 @@
-# hardware_trigger_mqtt (Phase 1 + Phase 2 + Phase 3)
+# hardware_trigger_mqtt – Time-Calibration Decoupled
 
-This directory contains the isolated Step 3 rollout artifacts:
+This directory contains the MQTT-controlled hardware trigger subsystem
+for Chirp radar nodes.  The architecture has been decoupled so that
+**time synchronisation** (periodic ticks) and **calibration** (on-demand
+solver runs) operate independently.
 
-- Phase 1: absolute-time hardware trigger worker (`trigger_worker`)
-- Phase 2: MQTT control client (`mqtt_trigger_client.py`)
-- Phase 3: command dedup + replay protection (`command_cache.py`)
+## Architecture
 
-## Scope
+| Concern             | Publisher                  | Topic                                 | Frequency      |
+|---------------------|----------------------------|---------------------------------------|----------------|
+| **Time sync**       | `chirp-timesync` service   | `chirp/v1/group/<gid>/capture/start`  | Every 10 s     |
+| **Calibration**     | `chirp-calibration` service| `chirp/v1/group/<gid>/capture/start`  | On demand      |
 
-Phase 1 and Phase 2 are implemented here without modifying legacy files under
-`src/hardware_trigger`.
+The node distinguishes them by inspecting `captureConfig.calibration`:
 
-Legacy trigger code in `src/hardware_trigger` remains untouched.
+- `calibration: false` (or absent) → **time-sync tick**
+- `calibration: true` → **calibration run**
+
+## State Machine
+
+```
+                 ┌─────────────┐
+          ┌─────▶│    IDLE     │◀──────────────┐
+          │      └──────┬──────┘               │
+          │             │ time-sync tick       │
+          │             │ (calibration=false)  │
+          │      ┌──────▼──────┐               │
+          │      │   LIVE      │───────────────┤
+          │      │  CAPTURE    │  time-sync    │
+          │      └──────┬──────┘  tick (re-    │
+          │             │         align)       │
+          │             │                      │
+          │             │ calibration tick     │
+          │             │ (calibration=true)   │
+          │      ┌──────▼──────┐               │
+          │      │ CALIBRATION │               │
+          │      │   BURST     ├───────────────┘
+          │      └──────┬──────┘  burst done →
+          │             │         back to LIVE
+          └─────────────┘
+```
+
+- **IDLE** → **LIVE**:  on first time-sync tick.
+- **LIVE** → **LIVE**:  on each time-sync tick (re-align epoch).
+- **LIVE** → **CALIBRATION**:  on calibration `capture/start`.
+- **CALIBRATION** → **LIVE**:  after publishing `calibration/done`.
+- **Any** → **IDLE**:  on error or explicit stop command.
+
+## Components
+
+- `trigger_worker` – C real-time GPIO pulse generator (SCHED_FIFO, CPU-pinned)
+- `mqtt_trigger_client.py` – Python MQTT client: subscribes to commands,
+  manages worker lifecycle, publishes presence/state/ack
+- `command_cache.py` – TTL-based deduplication for command IDs
 
 ## Build
 
@@ -31,9 +72,10 @@ make
 
 Optional arguments:
 
-- `--pulse-period-ms <ms>` (default: 100)
-- `--max-pulses <n>` (default: run forever)
+- `--pulse-period-ms <ms>` (default: 50)
+- `--max-pulses <n>` (default: run forever — live capture)
 - `--cpu-core <id>` (default: 5)
+- `--quiet` — suppress per-pulse output (recommended for live capture)
 
 Example (trigger 5 seconds in the future):
 
@@ -42,16 +84,6 @@ Example (trigger 5 seconds in the future):
 ```
 
 ### MQTT Control Client
-
-The MQTT client subscribes to:
-
-- `chirp/v1/group/<groupId>/capture/start`
-
-And publishes:
-
-- `chirp/v1/presence/<nodeId>` (retained)
-- `chirp/v1/group/<groupId>/capture/state/<nodeId>` (retained)
-- `chirp/v1/group/<groupId>/capture/ack/<nodeId>` (non-retained)
 
 Environment (defaults shown):
 
@@ -63,31 +95,52 @@ Environment (defaults shown):
 - `MQTT_USERNAME=${NODE_ID}`
 - `MQTT_PASSWORD=`
 - `CHIRP_SCHEMA_VERSION=1`
-- `TRIGGER_WORKER_PATH=./trigger_worker` (auto-resolved to this directory by default)
+- `TRIGGER_WORKER_PATH=./trigger_worker`
 - `PRESENCE_HEARTBEAT_MS=2000`
 - `COMMAND_CACHE_TTL_MS=300000`
 - `COMMAND_REPLAY_MAX_AGE_MS=30000`
 - `COMMAND_START_LATE_GRACE_MS=250`
 - `COMMAND_START_FUTURE_MAX_SKEW_MS=600000`
+- `TIMESYNC_LATE_GRACE_MS=5250` (extended tolerance for time-sync ticks)
 
-Phase 3 behavior:
-- Duplicate `commandId` values within cache TTL are ignored (no second worker launch).
-- Stale start commands (`startEpochMs` too far in the past) are rejected.
-- Replayed payloads with stale `timestampMs` are rejected.
+Run the MQTT trigger client:
 
-If you get an error about the socket connection timing out, the env variable for MQTT_HOST might be off. 
-Do `sudo vim ~/.bashrc` and see if the following lines are pasted in at the very bottom of the file:
-
-```
-# when opening up a new terminal on the radar node, ensure that env variables used in mqtt_trigger_client.py are sourced from Node/.env
-set -a                                  # auto exports all loaded vars so Python sees them via os.getenv
-source /home/chirp/Chirp/Node/.env      
-set +a
-```
-
-This section of Bash code ensure that when opening up a terminal on a radar node, environment variables will be sourced from that .env file. 
-
-Run the MQTT trigger client using the python interpreter defined in the virtual environment, and keep environment variables with the `-E` flag. Need to run as `sudo` so `trigger_worker.c` inherits sudo ownership for GPIO access (necessary for harwdare triggering):
 ```
 sudo -E /home/chirp/Chirp/Node/.venv/bin/python3 mqtt_trigger_client.py
 ```
+
+The `-E` flag preserves environment variables; `sudo` is required so
+`trigger_worker` inherits privileges for GPIO access.
+
+## Subscribed Topics
+
+| Topic                                            | Purpose                     |
+|--------------------------------------------------|-----------------------------|
+| `chirp/v1/group/<gid>/capture/start`             | Time-sync tick + calib cmd  |
+| `chirp/v1/group/<gid>/calibration/result`        | Apply calibration matrix    |
+| `chirp/v1/group/<gid>/node/<nid>/command`        | Dashboard debug commands    |
+
+## Published Topics
+
+| Topic                                             | When                                |
+|---------------------------------------------------|-------------------------------------|
+| `chirp/v1/presence/<nid>`                         | On connect / periodic heartbeat     |
+| `chirp/v1/group/<gid>/capture/state/<nid>`        | State change (idle / live / calib)  |
+| `chirp/v1/group/<gid>/capture/ack/<nid>`          | ACK every capture/start             |
+
+## New Node Join Flow
+
+1. Publish presence: `chirp/v1/presence/<nid>`  (`status: "online"`)
+2. State: `chirp/v1/group/<gid>/capture/state/<nid>`  (`state: "idle"`)
+3. Within ≤10 s receive a time-sync `capture/start` from the timesync service.
+4. Immediately begin hardware frame collection — no calibration required.
+5. At any later time a calibration run may be triggered; the node
+   participates and applies the resulting calibration matrix.
+
+## Compatibility
+
+- The message schema is **unchanged** — nodes that already handle
+  the existing `capture/start` format work without protocol changes.
+- Nodes now do **not** require calibration before starting live capture.
+  They apply an identity (no-op) calibration until a real result arrives.
+- The most recent calibration result is stored and applied to live frames.

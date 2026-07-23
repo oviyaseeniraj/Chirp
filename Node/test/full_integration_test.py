@@ -10,7 +10,6 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 try:
     from src.radar.daq_new import DataAcquisition
     from src.radar.pipeline_updated import (
-        calibration_mqtt_process,
         daq_process,
         post_dbscan_process,
         processing_process,
@@ -19,7 +18,6 @@ try:
 except ImportError:
     from ..src.radar.daq_new import DataAcquisition
     from ..src.radar.pipeline_updated import (
-        calibration_mqtt_process,
         daq_process,
         post_dbscan_process,
         processing_process,
@@ -41,7 +39,6 @@ def main():
     raw_queue = mp.Queue(maxsize=5)
     processed_queue = mp.Queue(maxsize=2)
     dbscan_queue = mp.Queue(maxsize=2)
-    calib_queue = mp.Queue(maxsize=200)
 
     # Create processes using modular components
     p_daq = mp.Process(
@@ -51,7 +48,6 @@ def main():
     p_proc = mp.Process(
         target=processing_process,
         args=(raw_queue, dbscan_queue, NODE_ID),
-        kwargs={"calib_queue": calib_queue},
         name="Processing",
     )
 
@@ -74,26 +70,11 @@ def main():
         name="Socket",
     )
 
-    p_calib = mp.Process(
-        target=calibration_mqtt_process,
-        args=(
-            calib_queue,
-            NODE_ID,
-            GROUP_ID,
-            MQTT_HOST,
-            MQTT_PORT,
-            MQTT_USERNAME,
-            MQTT_PASSWORD,
-        ),
-        name="CalibPublisher",
-    )
-
     # Start processes
     p_daq.start()
     p_proc.start()
     p_post_dbscan.start()
     p_sock.start()
-    p_calib.start()
 
     print(f"Full Integration Test started. Node: {NODE_ID}, Server: {SERVER_URL}")
 
@@ -101,14 +82,12 @@ def main():
         p_daq.join()
         p_proc.join()
         p_sock.join()
-        p_calib.join()
     except KeyboardInterrupt:
         print("Stopping...")
     finally:
         p_daq.terminate()
         p_proc.terminate()
         p_sock.terminate()
-        p_calib.terminate()
         print("Clean exit")
 
 

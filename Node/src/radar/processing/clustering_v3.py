@@ -876,12 +876,13 @@ def dbscan_process(detection_coords, shape, detection_power=None):
         dbscan_data_2d = np.zeros(shape, dtype=np.int32)
         dbscan_angles = np.zeros(shape, dtype=np.float32)
         centroids = {}
+        cluster_labels_3d = np.array([], dtype=np.int32)
 
     zero_doppler_idx = config.DOPPLER_BINS // 2
     dbscan_data_2d[zero_doppler_idx, :] = 0
     dbscan_angles[zero_doppler_idx, :] = 0
 
-    return dbscan_data_2d, dbscan_angles, centroids
+    return dbscan_data_2d, dbscan_angles, centroids, cluster_labels_3d
 
 
 def centroid_process(centroids, shape):

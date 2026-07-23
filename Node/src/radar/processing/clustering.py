@@ -482,12 +482,13 @@ def dbscan_process(detection_coords, shape):
         dbscan_data_2d = np.zeros(shape, dtype=np.int32)
         dbscan_angles = np.zeros(shape, dtype=np.float32)
         centroids = {}
+        cluster_labels_3d = np.array([], dtype=np.int32)
 
     # TODO: remove the zero velocity bins - do this in a more intelligent manner
     dbscan_data_2d[32, :] = 0
     dbscan_angles[32, :] = 0
 
-    return dbscan_data_2d, dbscan_angles, centroids
+    return dbscan_data_2d, dbscan_angles, centroids, cluster_labels_3d
 
 
 # more efficient to compute centroids along with dbscan clustering

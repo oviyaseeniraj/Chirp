@@ -1,8 +1,5 @@
 import json
-import logging
 import os
-import sys
-import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -14,8 +11,6 @@ import psutil
 import socketio
 import torch
 from dotenv import load_dotenv
-from supabase import create_client
-
 from . import config
 from .processing.anirban_jpda_spatial import JPDATracker
 
@@ -26,6 +21,11 @@ DEBUG_LEVEL = 0
 def debug_print(*args):
     if DEBUG_LEVEL >= 1:
         print(*args)
+
+
+def f16(val):
+    """Cast a float to half-precision (float16) to reduce MQTT payload size."""
+    return float(np.float16(val))
 
 
 # from .processing.anirban_jpda import JPDATracker
@@ -47,32 +47,6 @@ else:
 
 node_root_dir = Path(__file__).resolve().parents[2]  # returns path to 'Node' directory
 load_dotenv(node_root_dir / ".env", override=False)
-
-
-def init_supabase_client():
-    """
-    Initialize Supabase once from env vars.
-    Returns (client OR None, db_enabled_bool).
-    """
-    db_write_enabled = os.getenv("DB_WRITE_ENABLED", "false").strip().lower() == "true"
-    if db_write_enabled is False:
-        debug_print("[DB] Writing to Supabase is disabled")
-        return None, False
-
-    supabase_url = os.getenv("SUPABASE_URL")
-    service_role_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-    if not supabase_url or not service_role_key:
-        debug_print("[DB] Missing Supabase URL or Service Role Key in .env file")
-        return None, False
-
-    try:
-        client = create_client(supabase_url, service_role_key)
-        debug_print("[DB] Supabase client initialized")
-        return client, True
-
-    except Exception as e:
-        debug_print(f"[DB] Supabase client initialization failed: {e}")
-        return None, False
 
 
 def reconnect_socketio(server_url):
@@ -329,192 +303,10 @@ def processing_process(raw_queue, dbscan_queue, node_id, device=None, **cfar_kwa
             traceback.print_exc()
 
 
-def calibration_mqtt_process(
-    calib_queue,
-    node_id,
-    group_id,
-    mqtt_host,
-    mqtt_port,
-    mqtt_user,
-    mqtt_pass,
-    schema_version=1,
-):
-    """
-    Subscribes to capture/start and, when calibration mode is requested,
-    drains calib_queue and streams per-frame centroid data to the MQTT broker.
-
-    Publishes to:
-      chirp/v1/group/<groupId>/calibration/frame/<nodeId>  — one message per frame
-      chirp/v1/group/<groupId>/calibration/done/<nodeId>   — when collection is complete
-    """
-    try:
-        psutil.Process(os.getpid()).cpu_affinity([0])
-    except Exception:
-        pass
-
-    # Keep a per-run log file for this subprocess so calibration MQTT
-    # activity is preserved across executions.
-    logs_dir = node_root_dir / "logs" / "calibration_mqtt"
-    logs_dir.mkdir(parents=True, exist_ok=True)
-    run_stamp = time.strftime("%Y%m%d_%H%M%S")
-    log_path = logs_dir / f"calib_mqtt_{node_id}_{run_stamp}.log"
-    log_file = open(log_path, "a", buffering=1, encoding="utf-8")
-    sys.stdout = log_file
-    sys.stderr = log_file
-
-    root_logger = logging.getLogger()
-    root_logger.handlers.clear()
-    root_logger.setLevel(logging.INFO)
-    log_handler = logging.StreamHandler(log_file)
-    log_handler.setFormatter(logging.Formatter("%(asctime)s [CALIB] %(message)s"))
-    root_logger.addHandler(log_handler)
-    logging.info("Calibration MQTT logs redirected to %s", log_path)
-
-    topic_prefix = "chirp/v1"
-    start_topic = f"{topic_prefix}/group/{group_id}/capture/start"
-    frame_pub_topic = f"{topic_prefix}/group/{group_id}/calibration/frame/{node_id}"
-    done_pub_topic = f"{topic_prefix}/group/{group_id}/calibration/done/{node_id}"
-
-    # Shared state between MQTT callback thread and main collection loop
-    calibration_event = threading.Event()
-    active_command: dict = {"id": None, "max_frames": 50, "start_epoch_ms": None}
-
-    def _on_connect(client, userdata, flags, reason_code, properties):
-        if reason_code != 0:
-            logging.error("Calibration MQTT connect failed reason_code=%s", reason_code)
-            return
-        client.subscribe(start_topic, qos=1)
-        logging.info("Calibration publisher connected, subscribed to %s", start_topic)
-
-    def _on_message(client, userdata, msg):
-        try:
-            payload = json.loads(msg.payload.decode()) if msg.payload else {}
-        except json.JSONDecodeError:
-            return
-
-        capture_cfg = payload.get("captureConfig", {}) or {}
-        if not capture_cfg.get("calibration", False):
-            return
-
-        target_ids = payload.get("targetNodeIds")
-        if target_ids and node_id not in [str(t) for t in target_ids]:
-            return
-
-        active_command["id"] = payload.get("commandId")
-        active_command["max_frames"] = int(capture_cfg.get("calibrationFrames", 150))
-        active_command["start_epoch_ms"] = payload.get("startEpochMs")
-        calibration_event.set()
-        logging.info(
-            "Calibration mode activated commandId=%s frames=%d",
-            active_command["id"],
-            active_command["max_frames"],
-        )
-
-    client = mqtt_lib.Client(
-        mqtt_lib.CallbackAPIVersion.VERSION2,
-        client_id=f"calib-{node_id}",
-        clean_session=True,
-    )
-    if mqtt_user:
-        client.username_pw_set(mqtt_user, mqtt_pass)
-    client.on_connect = _on_connect
-    client.on_message = _on_message
-
-    try:
-        client.connect(mqtt_host, mqtt_port, keepalive=30)
-    except Exception as exc:
-        logging.error("Calibration MQTT initial connect failed: %s", exc)
-
-    client.loop_start()
-
-    while True:
-        calibration_event.wait()
-        calibration_event.clear()
-
-        cmd_id = active_command["id"]
-        max_frames = active_command["max_frames"]
-        start_epoch_ms = active_command["start_epoch_ms"]
-
-        # Drain stale items from before the trigger fired
-        if start_epoch_ms is not None:
-            now_ms = int(time.time() * 1000)
-            if start_epoch_ms > now_ms:
-                wait_s = (start_epoch_ms - now_ms) / 1000.0
-                logging.info("Waiting %.2fs for capture start epoch", wait_s)
-                time.sleep(wait_s)
-            # Discard frames that accumulated before the start epoch
-            while True:
-                try:
-                    calib_queue.get_nowait()
-                except Exception:
-                    break
-
-        frame_count = 0
-        logging.info("Collecting %d frames for commandId=%s", max_frames, cmd_id)
-
-        while frame_count < max_frames:
-            try:
-                item = calib_queue.get(timeout=10.0)
-            except Exception:
-                logging.warning(
-                    "Timeout waiting for calibration frame %d/%d commandId=%s",
-                    frame_count,
-                    max_frames,
-                    cmd_id,
-                )
-                break
-
-            frame_payload = {
-                "schemaVersion": schema_version,
-                "timestampMs": int(item.get("timestamp_ms", int(time.time() * 1000))),
-                "nodeId": node_id,
-                "groupId": group_id,
-                "commandId": cmd_id,
-                # Relative index within this calibration session (0, 1, 2, ...) so that
-                # all nodes share the same key for the same physical frame, regardless of
-                # the small (<3 ms) wall-clock differences between nodes.
-                "frameNum": frame_count,
-                "detections": item["detections"],
-                "tracks": item.get("tracks", []),
-            }
-            client.publish(
-                frame_pub_topic, payload=json.dumps(frame_payload), qos=1, retain=False
-            )
-            logging.info(
-                "Published calibration frame topic=%s payload=%s",
-                frame_pub_topic,
-                json.dumps(frame_payload, separators=(",", ":")),
-            )
-            frame_count += 1
-
-        done_payload = {
-            "schemaVersion": schema_version,
-            "timestampMs": int(time.time() * 1000),
-            "nodeId": node_id,
-            "groupId": group_id,
-            "commandId": cmd_id,
-            "totalFrames": frame_count,
-        }
-        client.publish(
-            done_pub_topic, payload=json.dumps(done_payload), qos=1, retain=False
-        )
-        logging.info(
-            "Published calibration done topic=%s payload=%s",
-            done_pub_topic,
-            json.dumps(done_payload, separators=(",", ":")),
-        )
-        logging.info(
-            "Calibration done: published %d frames for commandId=%s",
-            frame_count,
-            cmd_id,
-        )
-
-
 def post_dbscan_process(
     dbscan_queue,
     processed_queue,
     node_id,
-    calib_queue=None,
     visualize_clusters_only=False,
 ):
     global current_frame_time, previous_frame_time
@@ -583,7 +375,7 @@ def post_dbscan_process(
             t1 = time.perf_counter_ns()
 
             # 5. 3D DBSCAN - produce centroids with [range_m, doppler_mps, angle_rad]
-            dbscan_data_2d, dbscan_angles, centroids = dbscan_process(
+            dbscan_data_2d, dbscan_angles, centroids, cluster_labels = dbscan_process(
                 detection_coords_3d,
                 cfar_shape,
                 detection_power,
@@ -593,6 +385,22 @@ def post_dbscan_process(
 
             # 6. Centroid Processing
             centroids_map, centroids_angles = centroid_process(centroids, cfar_shape)
+
+            # Group raw detections by their DBSCAN cluster label
+            # detection_coords_3d: [range_m, doppler_mps, angle_deg] of each CFAR detection
+            # cluster_labels: per-detection label from DBSCAN (-1 = noise)
+            detections_by_cluster: dict = {}
+            if len(detection_coords_3d) > 0 and len(cluster_labels) > 0:
+                for i, label in enumerate(cluster_labels):
+                    if label < 0:  # skip noise points
+                        continue
+                    label = int(label)
+                    if label not in detections_by_cluster:
+                        detections_by_cluster[label] = []
+                    coord = detection_coords_3d[i]
+                    detections_by_cluster[label].append(
+                        [f16(coord[0]), f16(coord[1]), f16(coord[2])]
+                    )
 
             rda_centroids = {}
             for label, cdata in centroids.items():
@@ -740,16 +548,20 @@ def post_dbscan_process(
                         config.DOPPLER_BINS / 2.0
                     )
 
+                    cluster_label = int(label)
                     clusters_meta.append(
                         {
-                            "id": int(label),
-                            "range_idx": float(range_idx),
-                            "doppler_idx": float(doppler_idx),
-                            "range_m": float(range_meters),
-                            "doppler_mps": float(doppler_meters_per_sec),
-                            "angle_rad": angle_rad,
-                            "angle_deg": float(np.rad2deg(angle_rad)),
+                            "id": cluster_label,
+                            "range_idx": f16(range_idx),
+                            "doppler_idx": f16(doppler_idx),
+                            "range_m": f16(range_meters),
+                            "doppler_mps": f16(doppler_meters_per_sec),
+                            "angle_rad": f16(angle_rad),
+                            "angle_deg": f16(float(np.rad2deg(angle_rad))),
                             "mass": int(mass),
+                            "detections": detections_by_cluster.get(
+                                cluster_label, []
+                            ),
                         }
                     )
 
@@ -779,46 +591,16 @@ def post_dbscan_process(
 
                 return track_json
 
-            tracks_for_calibration = []
             if confirmed_tracks:
                 for t in confirmed_tracks:
                     serialized_confirmed_tracks.append(serialize_track(t))
-
-                    s = np.array(t["State"]).flatten()
-                    tracks_for_calibration.append(
-                        {
-                            "track_id": int(t["TrackID"]),
-                            "x": float(s[0]),
-                            "y": float(s[2]),
-                        }
-                    )
 
             for t in tentative_tracks:
                 serialized_tentative_tracks.append(serialize_track(t))
 
             debug_print("tentative:", len(serialized_tentative_tracks))
 
-            # Calibration Hook
             frame_timestamp_ms = int(time.time() * 1000)
-            if calib_queue is not None and clusters_meta:
-                try:
-                    calib_queue.put_nowait(
-                        {
-                            "frame_num": frame_num,
-                            "timestamp_ms": frame_timestamp_ms,
-                            "detections": [
-                                [
-                                    float(c["range_m"]),
-                                    float(c["doppler_mps"]),
-                                    float(c["angle_rad"]),
-                                ]
-                                for c in clusters_meta
-                            ],
-                            "tracks": tracks_for_calibration,
-                        }
-                    )
-                except Full:
-                    pass
 
             output_data = {
                 "node_id": node_id,
@@ -890,8 +672,6 @@ def socket_process(
 
     debug_print(f"[SOCKET] Started on core 4, target: {server_url}")
     sio = None
-    db_client = None
-    db_enabled = None
 
     # MQTT frame publisher (optional)
     frame_topic = f"chirp/v1/group/{group_id}/frames/{node_id}"
@@ -933,21 +713,22 @@ def socket_process(
                     "groupId": group_id,
                     "clusters": [
                         {
-                            "range_m": c.get("range_m", 0.0),
-                            "angle_rad": c.get("angle_rad", 0.0),
-                            "angle_deg": c.get("angle_deg", 0.0),
-                            "doppler_mps": c.get("doppler_mps", 0.0),
+                            "range_m": f16(c.get("range_m", 0.0)),
+                            "angle_rad": f16(c.get("angle_rad", 0.0)),
+                            "angle_deg": f16(c.get("angle_deg", 0.0)),
+                            "doppler_mps": f16(c.get("doppler_mps", 0.0)),
                             "mass": c.get("mass", 1),
+                            "detections": c.get("detections", []),
                         }
                         for c in clusters
                     ],
                     "tracks": [
                         {
                             "track_id": t["TrackID"],
-                            "x": float(t["State"][0]),
-                            "y": float(t["State"][2]),
-                            "vx": float(t["State"][1]),
-                            "vy": float(t["State"][3]),
+                            "x": f16(t["State"][0]),
+                            "y": f16(t["State"][2]),
+                            "vx": f16(t["State"][1]),
+                            "vy": f16(t["State"][3]),
                         }
                         for t in data.get("confirmed_tracks", [])
                     ],
@@ -961,19 +742,6 @@ def socket_process(
                     )
                 except Exception as exc:
                     debug_print(f"[SOCKET] MQTT publish failed: {exc}")
-
-        # --- DB insert -------------------------------------------------
-        if db_enabled and db_client is not None:
-            try:
-                db_row = {
-                    "node_id": node_id,
-                    "timestamp_ms": data.get("timestamp", int(time.time() * 1000)),
-                    "cluster_count": data.get("cluster_count", 0),
-                    "clusters": data.get("clusters", []),
-                }
-                db_client.table("radar_frame_summary").insert(db_row).execute()
-            except Exception as e:
-                debug_print(f"[DB] Insert row failed: {e}")
 
         # --- SocketIO (best-effort; may fail if UI server is down) -----
         if sio is None or not sio.connected:

@@ -29,7 +29,6 @@ from multiprocessing import Process, Queue
 try:
     from .radar.daq_new import DataAcquisition
     from .radar.pipeline_updated import (
-        calibration_mqtt_process,
         daq_process,
         post_dbscan_process,
         processing_process,
@@ -40,7 +39,6 @@ except ImportError:
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from src.radar.daq_new import DataAcquisition  # type: ignore[assignment]
     from src.radar.pipeline_updated import (  # type: ignore[assignment]
-        calibration_mqtt_process,
         daq_process,
         post_dbscan_process,
         processing_process,
@@ -63,9 +61,7 @@ MQTT_PASSWORD = os.getenv("MQTT_PASSWORD", "")
 RAW_QUEUE_SIZE = 5
 DBSCAN_QUEUE_SIZE = 5
 PROCESSED_QUEUE_SIZE = 2
-CALIB_QUEUE_SIZE = 200
 VISUALIZE_CLUSTERS_ONLY = False
-CALIB_FRAMES = int(os.getenv("CALIB_FRAMES", "150"))
 
 
 # ---------------------------------------------------------------------------
@@ -85,7 +81,6 @@ def main() -> None:
     raw_queue: Queue = Queue(maxsize=RAW_QUEUE_SIZE)
     dbscan_queue: Queue = Queue(maxsize=DBSCAN_QUEUE_SIZE)
     processed_queue: Queue = Queue(maxsize=PROCESSED_QUEUE_SIZE)
-    calib_queue: Queue = Queue(maxsize=CALIB_QUEUE_SIZE)
 
     # --- Pipeline processes ---
     p_daq = Process(
@@ -97,7 +92,6 @@ def main() -> None:
     p_proc = Process(
         target=processing_process,
         args=(raw_queue, dbscan_queue, NODE_ID),
-        kwargs={"calib_queue": calib_queue},
         name="Processing",
     )
 
@@ -105,7 +99,6 @@ def main() -> None:
         target=post_dbscan_process,
         args=(dbscan_queue, processed_queue, NODE_ID),
         kwargs={
-            "calib_queue": calib_queue,
             "visualize_clusters_only": VISUALIZE_CLUSTERS_ONLY,
         },
         name="PostDBSCAN",
@@ -124,22 +117,7 @@ def main() -> None:
         name="Socket",
     )
 
-    p_calib = Process(
-        target=calibration_mqtt_process,
-        args=(
-            calib_queue,
-            NODE_ID,
-            GROUP_ID,
-            MQTT_HOST,
-            MQTT_PORT,
-            MQTT_USERNAME,
-            MQTT_PASSWORD,
-            CALIB_FRAMES,
-        ),
-        name="CalibPublisher",
-    )
-
-    processes = [p_daq, p_proc, p_post_dbscan, p_sock, p_calib]
+    processes = [p_daq, p_proc, p_post_dbscan, p_sock]
 
     print(
         f"Pipeline starting  node={NODE_ID}  group={GROUP_ID}  "

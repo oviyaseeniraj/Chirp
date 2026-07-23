@@ -479,27 +479,34 @@ class NodeLauncher:
             log.info("Command: start_pipeline")
             self.pipeline.start()
             self._publish_status()
+            self.client.publish(COMMAND_TOPIC, payload="", qos=1, retain=True)
         elif action == "stop_pipeline":
             log.info("Command: stop_pipeline")
             self.pipeline.stop()
             self._publish_status()
+            self.client.publish(COMMAND_TOPIC, payload="", qos=1, retain=True)
         elif action == "start_radar":
             log.info("Command: start_radar")
             self.pipeline.start_radar()
             self._publish_status()
+            self.client.publish(COMMAND_TOPIC, payload="", qos=1, retain=True)
         elif action == "reset_radar":
             log.info("Command: reset_radar")
             self.pipeline.reset_radar()
             self._publish_status()
+            # Clear the retained command so it does not replay on reconnect
+            self.client.publish(COMMAND_TOPIC, payload="", qos=1, retain=True)
         elif action == "start_trigger":
             mode = payload.get("mode", "mqtt")
             log.info("Command: start_trigger mode=%s", mode)
             self.pipeline.start_trigger(mode)
             self._publish_status()
+            self.client.publish(COMMAND_TOPIC, payload="", qos=1, retain=True)
         elif action == "stop_trigger":
             log.info("Command: stop_trigger")
             self.pipeline.stop_trigger()
             self._publish_status()
+            self.client.publish(COMMAND_TOPIC, payload="", qos=1, retain=True)
         elif action == "status":
             self._publish_status()
         else:

@@ -33,7 +33,10 @@ require_cmd() {
 }
 
 is_dca_reachable() {
+    # DCA1000 does not respond to ICMP ping, but ARP still works.
+    # Send a ping to trigger ARP resolution, then check the neighbor table.
     ping -c "$PING_TRIES" -W "$PING_TIMEOUT_SEC" "$DCA_IP" >/dev/null 2>&1
+    ip neigh show dev "$INTERFACE" | grep -qE "$DCA_IP.*(REACHABLE|STALE|DELAY|PROBE)" 2>/dev/null
 }
 
 show_diag() {
@@ -88,7 +91,9 @@ print_status "NetworkManager reconnect attempt"
 nmcli device disconnect "$INTERFACE" >/dev/null 2>&1 || true
 sleep 1
 nmcli device connect "$INTERFACE" >/dev/null 2>&1 || true
-ip addr replace "$JETSON_IP_CIDR" dev "$INTERFACE" || true
+sleep 2
+# NetworkManager connect may clear the static IP; re-apply it.
+ip addr replace "$JETSON_IP_CIDR" dev "$INTERFACE" || { echo "Failed to set IP $JETSON_IP_CIDR on $INTERFACE"; exit 1; }
 
 print_status "Disabling EEE on interface (best effort)"
 ethtool --set-eee "$INTERFACE" eee off >/dev/null 2>&1 || true

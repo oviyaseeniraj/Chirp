@@ -287,25 +287,6 @@ int main(int argc, char *argv[]) {
     }
 
     gpioWrite(OUTPUT_PIN, 1);
-    /* nanosleep resolution is ~50 us on non-RT kernels, so for pulse
-       widths under 500 us we busy-wait via clock_gettime instead. */
-    if (PULSE_WIDTH_NS >= 500000) {
-      struct timespec pw = {.tv_sec = 0, .tv_nsec = PULSE_WIDTH_NS};
-      nanosleep(&pw, NULL);
-    } else if (PULSE_WIDTH_NS >= 1000) {
-      struct timespec target, now;
-      clock_gettime(CLOCK_REALTIME, &target);
-      target.tv_nsec += PULSE_WIDTH_NS;
-      while (target.tv_nsec >= 1000000000L) {
-        target.tv_nsec -= 1000000000L;
-        target.tv_sec += 1;
-      }
-      do {
-        clock_gettime(CLOCK_REALTIME, &now);
-      } while (now.tv_sec < target.tv_sec ||
-               (now.tv_sec == target.tv_sec && now.tv_nsec < target.tv_nsec));
-    }
-    /* else: PULSE_WIDTH_NS < 1000 — back-to-back writes for fastest pulse */
     gpioWrite(OUTPUT_PIN, 0);
 
     if (cfg.verbose && pulse_count < 10) {
